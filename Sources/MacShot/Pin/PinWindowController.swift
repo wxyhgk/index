@@ -1,37 +1,47 @@
 import AppKit
 
 /// 钉图窗口。独立于主 App 的窗口控制器，生命周期自管。
+///
+/// 持有的是**未标注的底图 + 图层**，而不是合成好的位图 ——
+/// 所以钉图之后继续画仍然是非破坏性的，改动作为新的修订入库。
 @MainActor
 final class PinWindowController: NSWindowController {
 
-    private let image: CGImage
+    private let base: CGImage
     private let shot: Shot?
     private var zoom: CGFloat = 1.0
     private var opacity: CGFloat = 1.0
+    private var savedLayerCount: Int
 
     /// 全局持有，否则窗口会在 ARC 下立刻被回收。
     private static var living: Set<PinWindowController> = []
 
+    private var imageView: PinImageView? { window?.contentView as? PinImageView }
+
     /// 把一张图钉在它被截取的位置上。
-    static func pin(image: CGImage, shot: Shot?, at globalRegion: CGRect) {
+    static func pin(base: CGImage, layers: [Layer], shot: Shot?, at globalRegion: CGRect) {
         let anchor: CGRect = (globalRegion.width >= 20 && globalRegion.height >= 20)
             ? globalRegion
             : .zero
-        let controller = PinWindowController(image: image, shot: shot, anchor: anchor)
+        let controller = PinWindowController(base: base, layers: layers, shot: shot, anchor: anchor)
         controller.showWindow(nil)
         controller.window?.orderFrontRegardless()
     }
 
-    private init(image: CGImage, shot: Shot?, anchor: CGRect) {
-        self.image = image
+    private init(base: CGImage, layers: [Layer], shot: Shot?, anchor: CGRect) {
+        self.base = base
         self.shot = shot
+        self.savedLayerCount = layers.count
+
+        // 图片区域保持在原位，窗口往下多出一条透明条带放工具条。
+        let imageFrame = anchor.isEmpty
+            ? CGRect(x: 200, y: 200,
+                     width: CGFloat(base.width) / 2,
+                     height: CGFloat(base.height) / 2)
+            : anchor
 
         let panel = PinPanel(
-            contentRect: anchor.isEmpty
-                ? CGRect(x: 200, y: 200,
-                         width: CGFloat(image.width) / 2,
-                         height: CGFloat(image.height) / 2)
-                : anchor,
+            contentRect: imageFrame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -43,40 +53,76 @@ final class PinWindowController: NSWindowController {
         panel.hasShadow = true
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        // 不用 isMovableByWindowBackground：否则点悬停工具条会被当成拖窗口。
-        // 拖动改由 PinImageView 在「没点到按钮」时手动发起。
+        // 不用 isMovableByWindowBackground：否则点工具条会被当成拖窗口。
         panel.isMovableByWindowBackground = false
 
-        let view = PinImageView(image: image)
+        let view = PinImageView(base: base, layers: layers)
         view.onScrollZoom = { [weak self] delta in self?.applyZoom(delta) }
         view.onOpacityStep = { [weak self] step in self?.applyOpacity(step) }
         view.onAction = { [weak self] action in self?.perform(action) }
+        view.onAnnotationsChanged = { [weak self] in self?.saveRevisionIfNeeded() }
+        view.onToolbarHeightChanged = { [weak self] in self?.fitWindowToContent() }
         panel.contentView = view
 
         Self.living.insert(self)
+        fitWindowToContent()
+    }
+
+    /// 窗口高度 = 图片高度 + 工具条条带。图片顶边固定，条带在下方伸缩，
+    /// 所以选中工具让工具条多出一行时，图片不会跳。
+    private func fitWindowToContent() {
+        guard let window, let view = imageView else { return }
+        let strip = view.requiredStripHeight
+        let frame = window.frame
+        let imageHeight = CGFloat(base.height) / 2 * zoom
+        let target = imageHeight + strip
+        guard abs(frame.height - target) > 0.5 else { return }
+
+        window.setFrame(
+            CGRect(
+                x: frame.minX,
+                y: frame.maxY - target,
+                width: frame.width,
+                height: target
+            ),
+            display: true
+        )
+        window.invalidateShadow()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     // MARK: - 动作
 
-    private func perform(_ action: PinAction) {
+    private func perform(_ action: ToolbarAction) {
         switch action {
-        case .edit:
-            guard let shot else { return }
-            EditorWindowController.open(shot: shot)
         case .copy:
-            ImageCodec.copyToPasteboard(image)
+            ImageCodec.copyToPasteboard(rendered())
         case .save:
             guard let shot else { return }
-            CaptureActionPerformer.exportToDisk(image: image, shot: shot)
-        case .gallery:
-            guard let shot else { return }
-            GalleryWindowController.shared.show(selecting: shot)
+            CaptureActionPerformer.exportToDisk(image: rendered(), shot: shot)
         case .close:
             close()
+        case .pin, .done:
+            break   // 已经钉住了；done 只在截图阶段由回车触发
         }
     }
+
+    private func rendered() -> CGImage {
+        let layers = imageView?.allLayers ?? []
+        return layers.isEmpty ? base : LayerRenderer.render(base: base, layers: layers)
+    }
+
+    /// 钉图上新画的标注也要进修订链 —— 和截图时画的、图库里改的走同一条链。
+    private func saveRevisionIfNeeded() {
+        guard let shot, let view = imageView else { return }
+        let layers = view.allLayers
+        guard layers.count != savedLayerCount else { return }
+        savedLayerCount = layers.count
+        ShotStore.shared.appendRevision(shot: shot, layers: layers, note: "钉图上标注")
+    }
+
+    // MARK: - 窗口
 
     private func applyZoom(_ delta: CGFloat) {
         guard let window else { return }
@@ -84,10 +130,11 @@ final class PinWindowController: NSWindowController {
         guard abs(next - zoom) > 0.001 else { return }
         zoom = next
 
-        // 以窗口中心为锚点缩放
+        // 以窗口中心为锚点缩放；工具条条带不参与缩放，始终是固定高度。
+        let strip = imageView?.requiredStripHeight ?? 0
         let size = CGSize(
-            width: CGFloat(image.width) / 2 * zoom,
-            height: CGFloat(image.height) / 2 * zoom
+            width: CGFloat(base.width) / 2 * zoom,
+            height: CGFloat(base.height) / 2 * zoom + strip
         )
         let frame = window.frame
         window.setFrame(
@@ -100,6 +147,7 @@ final class PinWindowController: NSWindowController {
             display: true,
             animate: false
         )
+        window.invalidateShadow()
     }
 
     private func applyOpacity(_ step: CGFloat) {
@@ -108,6 +156,7 @@ final class PinWindowController: NSWindowController {
     }
 
     override func close() {
+        saveRevisionIfNeeded()
         super.close()
         Self.living.remove(self)
     }

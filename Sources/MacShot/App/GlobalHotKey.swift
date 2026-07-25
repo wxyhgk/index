@@ -1,54 +1,72 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// 极简全局快捷键。用 Carbon 的 RegisterEventHotKey —— 它是目前唯一不需要辅助功能权限
+/// 全局快捷键。用 Carbon 的 `RegisterEventHotKey` —— 它是目前唯一不需要辅助功能权限
 /// 就能拿到系统级快捷键的公开 API。
+///
+/// 绑定按名字登记，设置里改了快捷键就整体重注册；Carbon 没有「修改」这种操作，
+/// 只能全部注销再注册一遍。
 @MainActor
 final class GlobalHotKeyCenter {
 
     static let shared = GlobalHotKeyCenter()
 
-    private var handlers: [UInt32: () -> Void] = [:]
+    private struct Binding {
+        let shortcut: KeyboardShortcut
+        let handler: () -> Void
+    }
+
+    private var bindings: [String: Binding] = [:]
+    private var order: [String] = []
     private var refs: [EventHotKeyRef?] = []
-    private var nextID: UInt32 = 1
+    private var handlers: [UInt32: () -> Void] = [:]
     private var installed = false
 
     private init() {}
 
-    struct Modifier {
-        static let command = UInt32(cmdKey)
-        static let control = UInt32(controlKey)
-        static let option = UInt32(optionKey)
-        static let shift = UInt32(shiftKey)
+    /// 登记一个绑定并立即生效。同名重复调用会覆盖。
+    func bind(_ name: String, to shortcut: KeyboardShortcut, handler: @escaping () -> Void) {
+        if bindings[name] == nil { order.append(name) }
+        bindings[name] = Binding(shortcut: shortcut, handler: handler)
+        rebuild()
     }
 
-    enum Key: UInt32 {
-        case a = 0
-        case s = 1
-        case g = 5
+    /// 只换快捷键，保留原来的处理逻辑。
+    func update(_ name: String, to shortcut: KeyboardShortcut) {
+        guard let existing = bindings[name] else { return }
+        bindings[name] = Binding(shortcut: shortcut, handler: existing.handler)
+        rebuild()
     }
 
-    func register(key: Key, modifiers: UInt32, handler: @escaping () -> Void) {
+    private func rebuild() {
         installEventHandlerIfNeeded()
 
-        let id = nextID
-        nextID += 1
-        handlers[id] = handler
+        for ref in refs where ref != nil {
+            UnregisterEventHotKey(ref)
+        }
+        refs.removeAll()
+        handlers.removeAll()
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x4D534854), id: id)   // 'MSHT'
-        var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(
-            key.rawValue,
-            modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &ref
-        )
-        if status == noErr {
-            refs.append(ref)
-        } else {
-            NSLog("[MacShot] 注册快捷键失败, status=\(status)（可能已被其它 App 占用）")
+        for (index, name) in order.enumerated() {
+            guard let binding = bindings[name], binding.shortcut.isValid else { continue }
+
+            let id = UInt32(index + 1)
+            handlers[id] = binding.handler
+
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(
+                binding.shortcut.keyCode,
+                binding.shortcut.modifiers,
+                EventHotKeyID(signature: OSType(0x4D534854), id: id),   // 'MSHT'
+                GetApplicationEventTarget(),
+                0,
+                &ref
+            )
+            if status == noErr {
+                refs.append(ref)
+            } else {
+                NSLog("[MacShot] 注册快捷键失败 \(name)=\(binding.shortcut.displayString), status=\(status)（可能已被占用）")
+            }
         }
     }
 
@@ -64,14 +82,7 @@ final class GlobalHotKeyCenter {
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
         )
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            hotKeyEventHandler,
-            1,
-            &spec,
-            nil,
-            nil
-        )
+        InstallEventHandler(GetApplicationEventTarget(), hotKeyEventHandler, 1, &spec, nil, nil)
     }
 }
 

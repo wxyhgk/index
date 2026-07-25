@@ -29,7 +29,13 @@ final class OverlayView: NSView {
     /// 工具条布局按需计算：绘制和命中测试用的是同一份结果，不可能不一致。
     private var slots: [ToolbarSlot] {
         guard model.phase == .confirmed, let rect = model.confirmedRect else { return [] }
-        return ToolbarLayout.slots(for: geometry.viewLocal(fromGlobal: rect), in: bounds)
+        return ToolbarLayout.slots(in: bounds, config: .init(
+            anchor: geometry.viewLocal(fromGlobal: rect),
+            alignment: .trailing,
+            actions: ToolbarAction.capture,
+            tool: annotation.tool,
+            hasAnnotations: !annotation.isEmpty
+        ))
     }
 
     init(model: SelectionModel, isPrimaryScreen: Bool) {
@@ -203,7 +209,15 @@ final class OverlayView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         if annotation.isDrawing {
-            annotation.endDraw(in: model.snapshot)
+            // 马赛克要从冻结画面取原始像素：标注空间是显示器局部左上原点，先换回 AppKit 全局。
+            annotation.endDraw { [snapshot = model.snapshot] rect in
+                snapshot.crop(globalRect: CGRect(
+                    x: snapshot.frame.minX + rect.minX,
+                    y: snapshot.frame.maxY - rect.maxY,
+                    width: rect.width,
+                    height: rect.height
+                ))
+            }
             redraw()
             return
         }
@@ -266,7 +280,7 @@ final class OverlayView: NSView {
         onFinish?(nil)
     }
 
-    func emit(_ action: CaptureAction) {
+    func emit(_ action: ToolbarAction) {
         guard
             model.phase == .confirmed,
             let region = model.confirmedRect,

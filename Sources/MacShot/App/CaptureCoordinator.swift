@@ -79,7 +79,7 @@ final class CaptureCoordinator {
             }
 
             if let id = shot.id {
-                if Settings.runOCR {
+                if AppSettings.shared.runOCR {
                     // OCR 跑原图，标注可能会盖住文字。
                     ImageAnalysisQueue.enqueue(image: result.image, shotID: id)
                 }
@@ -88,24 +88,35 @@ final class CaptureCoordinator {
                 }
             }
 
-            // 给用户的产物（剪贴板、钉图、导出）才是合成后的画面。
-            let output = result.layers.isEmpty
-                ? result.image
-                : LayerRenderer.render(base: result.image, layers: result.layers)
-
-            if Settings.copyToClipboard {
-                ImageCodec.copyToPasteboard(output)
+            if shouldAutoCopy(for: result.action) {
+                ImageCodec.copyToPasteboard(
+                    result.layers.isEmpty
+                        ? result.image
+                        : LayerRenderer.render(base: result.image, layers: result.layers)
+                )
             }
 
+            // 传底图 + 图层而非合成结果 —— 钉图窗口要靠它们继续非破坏性地画。
             CaptureActionPerformer.perform(
                 result.action,
-                image: output,
+                base: result.image,
+                layers: result.layers,
                 shot: shot,
                 region: result.region
             )
         } catch {
             NSLog("[MacShot] 保存失败: \(error)")
             presentError(error)
+        }
+    }
+
+    /// `.done` 是用户明确选择的「完成但不复制」，必须压过全局的自动复制开关，
+    /// 否则设置成「完成不复制」也还是会覆盖剪贴板。
+    /// `.copy` 由动作本身负责，不用在这里重复一次。
+    private func shouldAutoCopy(for action: ToolbarAction) -> Bool {
+        switch action {
+        case .done, .copy: return false
+        default: return AppSettings.shared.copyToClipboard
         }
     }
 

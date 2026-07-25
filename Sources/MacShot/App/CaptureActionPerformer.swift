@@ -6,17 +6,31 @@ import AppKit
 @MainActor
 enum CaptureActionPerformer {
 
-    static func perform(_ action: CaptureAction, image: CGImage, shot: Shot, region: CGRect) {
+    /// 传的是**未标注的底图 + 图层**而不是合成结果 —— 钉图窗口需要它们才能继续非破坏性地画。
+    static func perform(
+        _ action: ToolbarAction,
+        base: CGImage,
+        layers: [Layer],
+        shot: Shot,
+        region: CGRect
+    ) {
         switch action {
         case .pin:
-            PinWindowController.pin(image: image, shot: shot, at: region)
+            PinWindowController.pin(base: base, layers: layers, shot: shot, at: region)
 
         case .copy:
-            ImageCodec.copyToPasteboard(image)
+            ImageCodec.copyToPasteboard(flattened(base: base, layers: layers))
 
         case .save:
-            exportToDisk(image: image, shot: shot)
+            exportToDisk(image: flattened(base: base, layers: layers), shot: shot)
+
+        case .close, .done:
+            break   // 截图已经入库了，这两个不需要额外动作
         }
+    }
+
+    private static func flattened(base: CGImage, layers: [Layer]) -> CGImage {
+        layers.isEmpty ? base : LayerRenderer.render(base: base, layers: layers)
     }
 
     /// 钉图窗口的「保存」也走这里，避免两处各写一遍存盘面板。

@@ -9,7 +9,7 @@ struct SelectionResult {
     let display: DisplayInfo
     /// 单击窗口选中时非空，用于元数据归因。
     let window: WindowInfo?
-    let action: CaptureAction
+    let action: ToolbarAction
     /// 从冻结画面裁好的像素，**不含标注**。
     let image: CGImage
     /// 截图时画的标注，坐标已换算到裁剪图的像素空间。

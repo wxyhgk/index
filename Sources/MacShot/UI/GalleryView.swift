@@ -123,9 +123,12 @@ struct GalleryView: View {
 
     private func pin(_ shot: Shot) {
         guard let base = store.originalImage(for: shot) else { return }
-        let layers = store.latestRevision(for: shot)?.layers ?? []
-        let rendered = LayerRenderer.render(base: base, layers: layers)
-        PinWindowController.pin(image: rendered, shot: shot, at: .zero)
+        PinWindowController.pin(
+            base: base,
+            layers: store.latestRevision(for: shot)?.layers ?? [],
+            shot: shot,
+            at: .zero
+        )
     }
 
     private func copy(_ shot: Shot) {
@@ -239,11 +242,12 @@ private struct ShotDetailPane: View {
             }
             Button {
                 guard let base = store.originalImage(for: shot) else { return }
-                let rendered = LayerRenderer.render(
+                PinWindowController.pin(
                     base: base,
-                    layers: store.latestRevision(for: shot)?.layers ?? []
+                    layers: store.latestRevision(for: shot)?.layers ?? [],
+                    shot: shot,
+                    at: .zero
                 )
-                PinWindowController.pin(image: rendered, shot: shot, at: .zero)
             } label: {
                 Label("钉图", systemImage: "pin")
             }

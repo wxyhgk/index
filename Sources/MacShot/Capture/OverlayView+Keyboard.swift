@@ -59,7 +59,10 @@ extension OverlayView {
                 cancel()
             }
         case Key.returnKey, Key.keypadEnter:
-            emit(.pin)
+            // 「确定」键。是否覆盖剪贴板由设置决定，见 AppSettings.EnterBehavior。
+            // 刻意不绑到钉图：回车最容易在「文字输入刚结束又顺手按了一下」时误触发，
+            // 而误触发复制最多覆盖剪贴板，误触发钉图却会凭空多出一个窗口。
+            emit(AppSettings.shared.enterBehavior == .copyAndFinish ? .copy : .done)
         case Key.c where cmd:
             emit(.copy)
         case Key.s where cmd:
