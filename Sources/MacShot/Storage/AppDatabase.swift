@@ -55,6 +55,10 @@ enum AppDatabase {
             }
         }
 
+        // ⚠️ 给 shot 加可搜索字段时必须**重建** shotFts：
+        // `synchronize(withTable:)` 生成的触发器绑定的是建表那一刻的列集合，
+        // 后续 ALTER TABLE 加的列不会被自动索引，加了也搜不到。
+        // 正确做法是新写一个迁移，drop 掉 shotFts 再按新列集重建（会重新索引全表）。
         migrator.registerMigration("v2_fts") { db in
             // trigram 分词器：对中文子串搜索友好（unicode61 不切分 CJK）。
             try db.create(virtualTable: "shotFts", using: FTS5()) { t in

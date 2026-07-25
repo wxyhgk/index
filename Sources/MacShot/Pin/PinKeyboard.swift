@@ -63,7 +63,7 @@ extension PinImageView {
             // 和截图阶段用同一个设置。选了「完成不复制」时这里什么也不做 ——
             // 钉图已经在屏幕上了，没有别的「完成」可言。
             if AppSettings.shared.enterBehavior == .copyAndFinish {
-                onAction?(.copy)
+                onAction?(ActionID.copy)
             }
         case Key.escape:
             // 先放下画笔，再关窗口 —— 不要一下子把画到一半的东西全丢了。
@@ -72,12 +72,12 @@ extension PinImageView {
                 needsDisplay = true
                 onToolbarHeightChanged?()
             } else {
-                onAction?(.close)
+                onAction?(ActionID.close)
             }
         case Key.c where cmd:
-            onAction?(.copy)
+            onAction?(ActionID.copy)
         case Key.s where cmd:
-            onAction?(.save)
+            onAction?(ActionID.save)
         default:
             super.keyDown(with: event)
         }

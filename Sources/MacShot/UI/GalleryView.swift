@@ -344,10 +344,9 @@ private struct ShotDetailPane: View {
             base: base,
             layers: store.latestRevision(for: shot)?.layers ?? []
         )
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "MacShot-\(shot.sha256.prefix(8)).png"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? ImageCodec.pngData(from: rendered)?.write(to: url)
+        _ = try? ImageExporter.exportWithPanel(
+            rendered,
+            suggestedName: ImageExporter.suggestedName(for: shot)
+        )
     }
 }

@@ -88,35 +88,42 @@ final class CaptureCoordinator {
                 }
             }
 
-            if shouldAutoCopy(for: result.action) {
-                ImageCodec.copyToPasteboard(
-                    result.layers.isEmpty
-                        ? result.image
-                        : LayerRenderer.render(base: result.image, layers: result.layers)
-                )
-            }
-
             // 传底图 + 图层而非合成结果 —— 钉图窗口要靠它们继续非破坏性地画。
-            CaptureActionPerformer.perform(
-                result.action,
+            let context = CaptureContext(
                 base: result.image,
                 layers: result.layers,
                 shot: shot,
-                region: result.region
+                region: result.region,
+                host: nil
             )
+            run(actionID: result.actionID, context: context)
         } catch {
             NSLog("[MacShot] 保存失败: \(error)")
             presentError(error)
         }
     }
 
-    /// `.done` 是用户明确选择的「完成但不复制」，必须压过全局的自动复制开关，
-    /// 否则设置成「完成不复制」也还是会覆盖剪贴板。
-    /// `.copy` 由动作本身负责，不用在这里重复一次。
-    private func shouldAutoCopy(for action: ToolbarAction) -> Bool {
-        switch action {
-        case .done, .copy: return false
-        default: return AppSettings.shared.copyToClipboard
+    /// 协调器不认识任何具体动作 —— 查注册表、决定要不要叠加自动复制、执行。
+    /// 新增动作不会改动这个方法。
+    private func run(actionID: String, context: CaptureContext) {
+        guard let action = CaptureActionRegistry.shared.action(id: actionID) else {
+            NSLog("[MacShot] 未注册的动作: \(actionID)")
+            return
+        }
+
+        // 动作自己管剪贴板时不要再叠加一次。此前这里是个 switch 的 default 分支，
+        // 新动作会默认吃到自动复制 —— 「上传图床」会顺手覆盖剪贴板。
+        if AppSettings.shared.copyToClipboard && !action.suppressesAutoCopy {
+            ImageCodec.copyToPasteboard(context.rendered())
+        }
+
+        Task {
+            do {
+                try await action.perform(context)
+            } catch {
+                NSLog("[MacShot] 动作 \(actionID) 失败: \(error)")
+                presentError(error)
+            }
         }
     }
 

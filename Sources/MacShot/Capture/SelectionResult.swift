@@ -9,7 +9,8 @@ struct SelectionResult {
     let display: DisplayInfo
     /// 单击窗口选中时非空，用于元数据归因。
     let window: WindowInfo?
-    let action: ToolbarAction
+    /// 动作用 id 引用，不带具体类型 —— 捕获层不需要认识任何一个动作实现。
+    let actionID: String
     /// 从冻结画面裁好的像素，**不含标注**。
     let image: CGImage
     /// 截图时画的标注，坐标已换算到裁剪图的像素空间。

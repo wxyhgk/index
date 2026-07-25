@@ -172,15 +172,35 @@ final class ShotStore: ObservableObject {
     }
 
     /// 追加一个新修订。永远不覆盖旧记录 —— 这就是「无限记录」的实现方式。
+    ///
+    /// 「读父节点」和「写新节点」必须在**同一个事务**里：分成两次的话，
+    /// 图库编辑器和钉图窗口同时提交会拿到相同的 parentID，产生非预期的分叉，
+    /// 而下游（latestRevision / EditorView）全部假设修订链是线性的。
     @discardableResult
     func appendRevision(shot: Shot, layers: [Layer], note: String?) -> Revision? {
         guard let shotID = shot.id else { return nil }
-        let parent = latestRevision(for: shot)
-        var rev = Revision.make(shotID: shotID, parentID: parent?.id, layers: layers, note: note)
-        try? dbQueue.write { db in
-            try rev.insert(db)
+
+        do {
+            return try dbQueue.write { db -> Revision in
+                let parent = try Revision
+                    .filter(Revision.Columns.shotID == shotID)
+                    .order(Column("id").desc)
+                    .fetchOne(db)
+
+                var rev = Revision.make(
+                    shotID: shotID,
+                    parentID: parent?.id,
+                    layers: layers,
+                    note: note
+                )
+                try rev.insert(db)
+                return rev
+            }
+        } catch {
+            // 此前是 try?，写失败仍返回一个 id 为 nil 的 Revision，调用方无从分辨。
+            NSLog("[MacShot] 追加修订失败: \(error)")
+            return nil
         }
-        return rev
     }
 
     // MARK: - 查询

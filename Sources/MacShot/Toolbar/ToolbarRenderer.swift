@@ -83,9 +83,9 @@ enum ToolbarRenderer {
                 height: radius * 2
             )).fill()
 
-        case .action(let action):
+        case .action(let descriptor):
             drawSymbol(
-                action.symbolName,
+                descriptor.symbolName,
                 at: CGPoint(x: frame.minX + ToolbarLayout.horizontalPadding, y: frame.midY),
                 pointSize: ToolbarLayout.iconSize
             )
@@ -93,7 +93,7 @@ enum ToolbarRenderer {
                 .font: ToolbarLayout.labelFont,
                 .foregroundColor: NSColor.white
             ]
-            let title = action.title as NSString
+            let title = descriptor.title as NSString
             let size = title.size(withAttributes: attrs)
             title.draw(
                 at: NSPoint(

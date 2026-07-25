@@ -6,8 +6,6 @@ import AppKit
 struct EditorView: View {
 
     let shot: Shot
-    /// 独立窗口打开时由窗口控制器注入；在图库里以 sheet 形式打开时为 nil，走 dismiss。
-    var onClose: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     // 不订阅 store：后台 OCR 回填会触发它发布变更，没必要为此重建整个编辑器。
@@ -383,19 +381,11 @@ struct EditorView: View {
             Button("保存为新版本") { saveRevision() }
                 .keyboardShortcut("s", modifiers: .command)
                 .buttonStyle(.borderedProminent)
-            Button("关闭") { closeSelf() }
+            Button("关闭") { dismiss() }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-    }
-
-    private func closeSelf() {
-        if let onClose {
-            onClose()
-        } else {
-            dismiss()
-        }
     }
 
     private func rendered() -> CGImage? {
@@ -416,10 +406,9 @@ struct EditorView: View {
 
     private func exportRendered() {
         guard let image = rendered() else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "MacShot-\(shot.sha256.prefix(8)).png"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? ImageCodec.pngData(from: image)?.write(to: url)
+        _ = try? ImageExporter.exportWithPanel(
+            image,
+            suggestedName: ImageExporter.suggestedName(for: shot)
+        )
     }
 }

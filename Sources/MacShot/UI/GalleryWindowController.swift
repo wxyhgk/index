@@ -25,14 +25,12 @@ final class GalleryWindowController: NSWindowController, NSWindowDelegate {
         if let shot {
             GallerySelection.shared.selectedID = shot.id
         }
-        // 菜单栏 App 平时是 .accessory，开窗口时切成 .regular 才有正常的窗口行为和菜单。
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        ActivationPolicy.enterRegular()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        ActivationPolicy.leaveRegularIfLastWindow(closing: window)
     }
 }

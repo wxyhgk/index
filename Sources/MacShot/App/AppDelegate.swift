@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = ShotStore.shared          // 提前建库，避免第一次截图时卡顿
+        CaptureActionRegistry.registerBuiltins(into: .shared)
 
         setupStatusItem()
         setupHotKeys()

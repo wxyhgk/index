@@ -30,8 +30,10 @@ enum BrowserURLResolver {
 
     private static let timeout: TimeInterval = 3
 
-    /// 阻塞调用，只应该在后台线程使用。
-    static func resolve(bundleID: String) -> String? {
+    /// - Note: 此前是 `while process.isRunning { usleep(50_000) }` 忙等，
+    ///   最长会把一条协作线程池的线程堵住 3 秒。改成 terminationHandler + 续体，
+    ///   等待期间不占线程；超时用一个看门狗任务把子进程杀掉，杀掉同样会触发 handler。
+    static func resolve(bundleID: String) async -> String? {
         guard supports(bundleID) else { return nil }
 
         let source: String
@@ -59,25 +61,31 @@ enum BrowserURLResolver {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
 
-        do {
-            try process.run()
-        } catch {
-            NSLog("[MacShot] 无法启动 osascript: \(error)")
+        // 超时看门狗：到点就杀掉子进程。子进程能被杀，被阻塞的线程不能 ——
+        // 这也是这里用 osascript 子进程而不是 NSAppleScript 的原因。
+        let watchdog = Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            if process.isRunning { process.terminate() }
+        }
+
+        // terminationHandler 必须在 run() 之前装好，否则子进程秒退时会错过回调。
+        let started = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            process.terminationHandler = { _ in continuation.resume(returning: true) }
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                NSLog("[MacShot] 无法启动 osascript: \(error)")
+                continuation.resume(returning: false)
+            }
+        }
+        watchdog.cancel()
+
+        guard started else { return nil }
+        guard process.terminationStatus == 0 else {
+            NSLog("[MacShot] 取浏览器地址失败或超时: \(bundleID)")
             return nil
         }
-
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning && Date() < deadline {
-            usleep(50_000)
-        }
-
-        if process.isRunning {
-            process.terminate()
-            NSLog("[MacShot] 取浏览器地址超时，已放弃: \(bundleID)")
-            return nil
-        }
-
-        guard process.terminationStatus == 0 else { return nil }
 
         let data = output.fileHandleForReading.readDataToEndOfFile()
         let value = String(data: data, encoding: .utf8)?
@@ -92,7 +100,7 @@ enum BrowserURLQueue {
     static func enqueue(bundleID: String, shotID: Int64) {
         guard BrowserURLResolver.supports(bundleID) else { return }
         Task.detached(priority: .utility) {
-            guard let url = BrowserURLResolver.resolve(bundleID: bundleID) else { return }
+            guard let url = await BrowserURLResolver.resolve(bundleID: bundleID) else { return }
             await MainActor.run {
                 ShotStore.shared.updateSourceURL(shotID: shotID, url: url)
             }

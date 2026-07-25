@@ -7,7 +7,7 @@ enum ToolbarItem: Equatable {
     case width(Int)
     case undo
     case separator
-    case action(ToolbarAction)
+    case action(ToolbarActionDescriptor)
 
     var isInteractive: Bool {
         if case .separator = self { return false }
@@ -46,7 +46,7 @@ enum ToolbarLayout {
         /// 工具条依附的矩形，视图局部坐标。
         var anchor: CGRect
         var alignment: Alignment
-        var actions: [ToolbarAction]
+        var actions: [ToolbarActionDescriptor]
         var tool: AnnotationTool?
         var hasAnnotations: Bool
         var placement: Placement = .adaptive
@@ -80,8 +80,8 @@ enum ToolbarLayout {
         case .color: return colorWidth
         case .width: return widthStepWidth
         case .separator: return separatorWidth
-        case .action(let action):
-            let text = (action.title as NSString)
+        case .action(let descriptor):
+            let text = (descriptor.title as NSString)
                 .size(withAttributes: [.font: labelFont]).width
             return horizontalPadding * 2 + iconSize + iconGap + text
         }

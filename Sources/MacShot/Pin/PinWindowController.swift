@@ -5,13 +5,14 @@ import AppKit
 /// 持有的是**未标注的底图 + 图层**，而不是合成好的位图 ——
 /// 所以钉图之后继续画仍然是非破坏性的，改动作为新的修订入库。
 @MainActor
-final class PinWindowController: NSWindowController {
+final class PinWindowController: NSWindowController, CaptureActionHost {
 
     private let base: CGImage
     private let shot: Shot?
     private var zoom: CGFloat = 1.0
     private var opacity: CGFloat = 1.0
-    private var savedLayerCount: Int
+    /// 上次落库的图层内容。比数量更可靠 —— 撤销一层再画一层，数量不变但内容变了。
+    private var savedLayers: [Layer]
 
     /// 全局持有，否则窗口会在 ARC 下立刻被回收。
     private static var living: Set<PinWindowController> = []
@@ -31,7 +32,7 @@ final class PinWindowController: NSWindowController {
     private init(base: CGImage, layers: [Layer], shot: Shot?, anchor: CGRect) {
         self.base = base
         self.shot = shot
-        self.savedLayerCount = layers.count
+        self.savedLayers = layers
 
         // 图片区域保持在原位，窗口往下多出一条透明条带放工具条。
         let imageFrame = anchor.isEmpty
@@ -59,7 +60,7 @@ final class PinWindowController: NSWindowController {
         let view = PinImageView(base: base, layers: layers)
         view.onScrollZoom = { [weak self] delta in self?.applyZoom(delta) }
         view.onOpacityStep = { [weak self] step in self?.applyOpacity(step) }
-        view.onAction = { [weak self] action in self?.perform(action) }
+        view.onAction = { [weak self] actionID in self?.perform(actionID) }
         view.onAnnotationsChanged = { [weak self] in self?.saveRevisionIfNeeded() }
         view.onToolbarHeightChanged = { [weak self] in self?.fitWindowToContent() }
         panel.contentView = view
@@ -94,31 +95,36 @@ final class PinWindowController: NSWindowController {
 
     // MARK: - 动作
 
-    private func perform(_ action: ToolbarAction) {
-        switch action {
-        case .copy:
-            ImageCodec.copyToPasteboard(rendered())
-        case .save:
-            guard let shot else { return }
-            CaptureActionPerformer.exportToDisk(image: rendered(), shot: shot)
-        case .close:
-            close()
-        case .pin, .done:
-            break   // 已经钉住了；done 只在截图阶段由回车触发
+    /// 钉图窗口不认识任何具体动作，只负责把上下文交给注册表里的实现。
+    private func perform(_ actionID: String) {
+        guard let action = CaptureActionRegistry.shared.action(id: actionID) else { return }
+        let context = CaptureContext(
+            base: base,
+            layers: imageView?.allLayers ?? [],
+            shot: shot,
+            region: nil,
+            host: self
+        )
+        Task {
+            do {
+                try await action.perform(context)
+            } catch {
+                NSLog("[MacShot] 动作 \(actionID) 失败: \(error)")
+            }
         }
     }
 
-    private func rendered() -> CGImage {
-        let layers = imageView?.allLayers ?? []
-        return layers.isEmpty ? base : LayerRenderer.render(base: base, layers: layers)
+    /// CaptureActionHost —— 「关闭」动作靠它作用回窗口自己。
+    func dismiss() {
+        close()
     }
 
     /// 钉图上新画的标注也要进修订链 —— 和截图时画的、图库里改的走同一条链。
     private func saveRevisionIfNeeded() {
         guard let shot, let view = imageView else { return }
         let layers = view.allLayers
-        guard layers.count != savedLayerCount else { return }
-        savedLayerCount = layers.count
+        guard layers != savedLayers else { return }
+        savedLayers = layers
         ShotStore.shared.appendRevision(shot: shot, layers: layers, note: "钉图上标注")
     }
 
@@ -163,6 +169,6 @@ final class PinWindowController: NSWindowController {
 }
 
 /// 无边框浮动面板。默认不能成为 key，但我们需要它接收键盘事件。
-private final class PinPanel: NSPanel {
+private final class PinPanel: NSPanel, TransientWindow {
     override var canBecomeKey: Bool { true }
 }

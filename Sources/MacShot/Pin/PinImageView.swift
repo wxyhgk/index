@@ -11,7 +11,7 @@ final class PinImageView: NSView {
 
     var onScrollZoom: ((CGFloat) -> Void)?
     var onOpacityStep: ((CGFloat) -> Void)?
-    var onAction: ((ToolbarAction) -> Void)?
+    var onAction: ((String) -> Void)?
     var onAnnotationsChanged: (() -> Void)?
     /// 工具条行数变化时通知控制器调整窗口高度。
     var onToolbarHeightChanged: (() -> Void)?
@@ -91,7 +91,7 @@ final class PinImageView: NSView {
         .init(
             anchor: anchor,
             alignment: .center,
-            actions: ToolbarAction.pinned,
+            actions: CaptureActionRegistry.shared.descriptors(in: .pinned),
             tool: annotation.tool,
             hasAnnotations: !annotation.isEmpty,
             placement: .below
@@ -122,8 +122,8 @@ final class PinImageView: NSView {
             annotation.undo()
             refreshCanvas()
             onAnnotationsChanged?()
-        case .action(let action):
-            onAction?(action)
+        case .action(let descriptor):
+            onAction?(descriptor.id)
             return
         case .separator:
             return
@@ -200,7 +200,7 @@ final class PinImageView: NSView {
         annotation.endTextEditing()
 
         if event.clickCount == 2 {
-            onAction?(.copy)
+            onAction?(ActionID.copy)
             return
         }
 

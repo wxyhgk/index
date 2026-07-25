@@ -20,19 +20,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     func show() {
-        // 菜单栏 App 平时是 .accessory，开窗口时切成 .regular 才有正常的窗口行为。
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        ActivationPolicy.enterRegular()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
-        let hasOther = NSApp.windows.contains {
-            $0.isVisible && $0 !== window && !($0 is NSPanel)
-        }
-        if !hasOther {
-            NSApp.setActivationPolicy(.accessory)
-        }
+        ActivationPolicy.leaveRegularIfLastWindow(closing: window)
     }
 }

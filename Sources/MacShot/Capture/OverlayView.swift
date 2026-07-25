@@ -32,7 +32,7 @@ final class OverlayView: NSView {
         return ToolbarLayout.slots(in: bounds, config: .init(
             anchor: geometry.viewLocal(fromGlobal: rect),
             alignment: .trailing,
-            actions: ToolbarAction.capture,
+            actions: CaptureActionRegistry.shared.descriptors(in: .capture),
             tool: annotation.tool,
             hasAnnotations: !annotation.isEmpty
         ))
@@ -265,8 +265,8 @@ final class OverlayView: NSView {
             annotation.widthIndex = index
         case .undo:
             annotation.undo()
-        case .action(let action):
-            emit(action)
+        case .action(let descriptor):
+            emit(descriptor.id)
             return
         case .separator:
             return
@@ -280,7 +280,7 @@ final class OverlayView: NSView {
         onFinish?(nil)
     }
 
-    func emit(_ action: ToolbarAction) {
+    func emit(_ actionID: String) {
         guard
             model.phase == .confirmed,
             let region = model.confirmedRect,
@@ -297,7 +297,7 @@ final class OverlayView: NSView {
             region: region,
             display: model.snapshot.display,
             window: model.confirmedWindow,
-            action: action,
+            actionID: actionID,
             image: image,
             layers: layers
         ))
