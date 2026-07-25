@@ -43,6 +43,10 @@ final class PinWindowController: NSWindowController {
             ImageCodec.copyToPasteboard(self.image)
         }
         view.onOpacityStep = { [weak self] step in self?.applyOpacity(step) }
+        view.onEdit = { [weak self] in
+            guard let shot = self?.shot else { return }
+            EditorWindowController.open(shot: shot)
+        }
         view.onOpenInGallery = { [weak self] in
             guard let shot = self?.shot else { return }
             GalleryWindowController.shared.show(selecting: shot)
@@ -116,6 +120,7 @@ private final class PinImageView: NSView {
     var onCopy: (() -> Void)?
     var onOpacityStep: ((CGFloat) -> Void)?
     var onOpenInGallery: (() -> Void)?
+    var onEdit: (() -> Void)?
 
     private let cgImage: CGImage
 
@@ -170,6 +175,7 @@ private final class PinImageView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
         menu.addItem(withTitle: "复制图片", action: #selector(copyImage), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "编辑标注…", action: #selector(editAnnotations), keyEquivalent: "").target = self
         menu.addItem(withTitle: "在图库中打开", action: #selector(openGallery), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "关闭", action: #selector(closePin), keyEquivalent: "").target = self
@@ -177,6 +183,7 @@ private final class PinImageView: NSView {
     }
 
     @objc private func copyImage() { onCopy?() }
+    @objc private func editAnnotations() { onEdit?() }
     @objc private func openGallery() { onOpenInGallery?() }
     @objc private func closePin() { onClose?() }
 }

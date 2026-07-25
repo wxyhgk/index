@@ -66,23 +66,40 @@ final class CaptureCoordinator {
 
         do {
             // 不管用户点了哪个按钮，都先入库 —— 自动保存是这个 App 的前提。
+            // 注意存进去的是**未标注**的原始像素：截图时画的标注和后期编辑一样，
+            // 只是一条 revision，原图永远保持干净、可回溯。
             let shot = try ShotStore.shared.save(image: result.image, metadata: metadata)
+
+            if !result.layers.isEmpty {
+                ShotStore.shared.appendRevision(
+                    shot: shot,
+                    layers: result.layers,
+                    note: "截图时标注"
+                )
+            }
 
             if let id = shot.id {
                 if Settings.runOCR {
+                    // OCR 跑原图，标注可能会盖住文字。
                     ImageAnalysisQueue.enqueue(image: result.image, shotID: id)
                 }
                 if let bundleID = metadata.appBundleID {
                     BrowserURLQueue.enqueue(bundleID: bundleID, shotID: id)
                 }
             }
+
+            // 给用户的产物（剪贴板、钉图、导出）才是合成后的画面。
+            let output = result.layers.isEmpty
+                ? result.image
+                : LayerRenderer.render(base: result.image, layers: result.layers)
+
             if Settings.copyToClipboard {
-                ImageCodec.copyToPasteboard(result.image)
+                ImageCodec.copyToPasteboard(output)
             }
 
             CaptureActionPerformer.perform(
                 result.action,
-                image: result.image,
+                image: output,
                 shot: shot,
                 region: result.region
             )

@@ -9,6 +9,8 @@ struct SelectionResult {
     let action: CaptureAction
     /// 已经从冻结画面裁好的像素 —— 到这一步不需要再截屏了。
     let image: CGImage
+    /// 截图时画的标注，坐标已换算到裁剪图的像素空间。原图保持干净，这些作为修订入库。
+    let layers: [Layer]
 }
 
 /// 覆盖所有显示器的选区层。
@@ -50,10 +52,15 @@ final class SelectionOverlayController {
 
             let window = OverlayWindow(screen: screen)
             window.contentView = view
-            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
             windows.append(window)
             views.append(view)
         }
+
+        // 鼠标当前所在的那块屏优先拿 key —— 否则键盘事件会落到别的屏上。
+        let mouse = NSEvent.mouseLocation
+        let preferred = windows.first { $0.frame.contains(mouse) } ?? windows.first
+        preferred?.makeKeyAndOrderFront(nil)
 
         NSApp.activate(ignoringOtherApps: true)
         NSCursor.crosshair.push()
@@ -92,6 +99,7 @@ private final class OverlayWindow: NSWindow {
         hasShadow = false
         level = .screenSaver
         ignoresMouseEvents = false
+        acceptsMouseMovedEvents = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         setFrame(screen.frame, display: true)
     }
@@ -119,13 +127,14 @@ private final class OverlayView: NSView {
 
     private let imageLayer = CALayer()
     private let chrome = ChromeView()
+    private let annotation = AnnotationState()
 
-    private var hoveredAction: CaptureAction?
+    private var hoveredItem: ToolbarItem?
 
     /// 工具条布局按需计算：绘制和命中测试用的是同一份结果，不可能不一致。
-    private var buttons: [ToolbarButton] {
+    private var slots: [ToolbarSlot] {
         guard model.phase == .confirmed, let rect = model.confirmedRect else { return [] }
-        return ToolbarLayout.buttons(for: localRect(rect), in: bounds)
+        return ToolbarLayout.slots(for: localRect(rect), in: bounds)
     }
 
     init(model: SelectionModel, isPrimaryScreen: Bool) {
@@ -145,8 +154,9 @@ private final class OverlayView: NSView {
         chrome.render = { [unowned self] ctx, bounds in
             OverlayRenderer.draw(
                 model: self.model,
-                buttons: self.buttons,
-                hoveredAction: self.hoveredAction,
+                annotation: self.annotation,
+                slots: self.slots,
+                hoveredItem: self.hoveredItem,
                 isPrimaryScreen: self.isPrimaryScreen,
                 in: bounds,
                 ctx: ctx
@@ -158,6 +168,10 @@ private final class OverlayView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// 覆盖层铺在每块屏上，但同一时刻只有一个窗口是 key。默认情况下点击非 key 窗口时，
+    /// 第一次点击只会激活窗口、不传给视图 —— 表现就是「副屏要点两次才有反应」。
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func layout() {
         super.layout()
@@ -212,19 +226,37 @@ private final class OverlayView: NSView {
         convert(event.locationInWindow, from: nil)
     }
 
+    /// 视图局部（左下原点）→ 显示器局部左上原点。标注图层就存在这个坐标系里。
+    private func annotationPoint(_ viewLocal: CGPoint) -> CGPoint {
+        CGPoint(x: viewLocal.x, y: bounds.height - viewLocal.y)
+    }
+
+    private var selectionInAnnotationSpace: CGRect? {
+        guard let rect = model.confirmedRect else { return nil }
+        let local = localRect(rect)
+        return CGRect(
+            x: local.minX,
+            y: bounds.height - local.maxY,
+            width: local.width,
+            height: local.height
+        )
+    }
+
     // MARK: 事件
 
     override func mouseMoved(with event: NSEvent) {
         switch model.phase {
         case .confirmed:
             let local = localPoint(of: event)
-            let hit = buttons.first { $0.frame.contains(local) }?.action
-            if hit != hoveredAction {
-                hoveredAction = hit
+            let hit = slots.first { $0.item.isInteractive && $0.frame.contains(local) }?.item
+            if hit != hoveredItem {
+                hoveredItem = hit
                 redraw()
             }
             if hit != nil {
                 NSCursor.arrow.set()
+            } else if annotation.tool != nil {
+                NSCursor.crosshair.set()
             } else {
                 cursor(for: model.handle(at: toGlobal(local))).set()
             }
@@ -253,13 +285,29 @@ private final class OverlayView: NSView {
 
         // 工具条命中优先
         if model.phase == .confirmed,
-           let hit = buttons.first(where: { $0.frame.contains(local) }) {
-            emit(hit.action)
+           let slot = slots.first(where: { $0.item.isInteractive && $0.frame.contains(local) }) {
+            handleToolbar(slot.item)
             return
         }
 
         let global = toGlobal(local)
-        hoveredAction = nil
+        hoveredItem = nil
+
+        // 手上有标注工具时，选区内的拖拽是画标注，不是调整选区
+        if model.phase == .confirmed,
+           annotation.tool != nil,
+           let selection = model.confirmedRect, selection.contains(global) {
+            annotation.beginDraw(at: annotationPoint(local))
+            redraw()
+            return
+        }
+
+        // 有工具在手却点在选区外：忽略，避免误删已画的内容
+        if annotation.tool != nil, model.phase == .confirmed {
+            return
+        }
+
+        annotation.endTextEditing()
 
         // 点在已有选区的控制点或内部 → 调整，而不是重画
         if let handle = model.handle(at: global) {
@@ -273,8 +321,34 @@ private final class OverlayView: NSView {
         redraw()
     }
 
+    private func handleToolbar(_ item: ToolbarItem) {
+        switch item {
+        case .tool(let tool):
+            annotation.endTextEditing()
+            annotation.tool = tool
+        case .color(let index):
+            annotation.colorIndex = index
+        case .width(let index):
+            annotation.widthIndex = index
+        case .undo:
+            annotation.undo()
+        case .action(let action):
+            emit(action)
+            return
+        case .separator:
+            return
+        }
+        redraw()
+    }
+
     override func mouseDragged(with event: NSEvent) {
-        let global = toGlobal(localPoint(of: event))
+        let local = localPoint(of: event)
+        if annotation.isDrawing {
+            redrawIfNeeded(annotation.updateDraw(to: annotationPoint(local)))
+            return
+        }
+
+        let global = toGlobal(local)
         switch model.phase {
         case .adjusting:
             redrawIfNeeded(model.updateAdjust(to: global))
@@ -284,14 +358,20 @@ private final class OverlayView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if annotation.isDrawing {
+            annotation.endDraw(in: model.snapshot)
+            redraw()
+            return
+        }
+
         switch model.phase {
         case .adjusting:
             model.endAdjust()
-            hoveredAction = nil
+            hoveredItem = nil
             NSCursor.arrow.set()
         default:
             if model.endDrag() {
-                hoveredAction = nil
+                hoveredItem = nil
                 NSCursor.arrow.set()
             }
         }
@@ -299,7 +379,13 @@ private final class OverlayView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        if model.phase == .confirmed {
+        if annotation.isEditingText {
+            annotation.endTextEditing()
+            redraw()
+        } else if annotation.tool != nil {
+            annotation.tool = nil
+            redraw()
+        } else if model.phase == .confirmed {
             model.reset()
             redraw()
         } else {
@@ -308,23 +394,61 @@ private final class OverlayView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // 正在输入文字时，除了 ESC / Return 之外的按键都送进文字图层。
+        if annotation.isEditingText {
+            switch event.keyCode {
+            case 53, 36, 76:
+                annotation.endTextEditing()
+            case 51:
+                annotation.deleteBackward()
+            default:
+                guard let text = event.characters, !text.isEmpty,
+                      !event.modifierFlags.contains(.command) else { return }
+                annotation.insertText(text)
+            }
+            redraw()
+            return
+        }
+
         let cmd = event.modifierFlags.contains(.command)
+        if cmd, event.keyCode == 6 {          // ⌘Z 撤销标注
+            redrawIfNeeded(annotation.undo())
+            return
+        }
+
         switch event.keyCode {
         case 53:                        // ESC
-            onFinish?(nil)
+            if annotation.tool != nil {
+                annotation.tool = nil
+                redraw()
+            } else {
+                onFinish?(nil)
+            }
         case 36, 76:                    // Return / 小键盘 Enter
             emit(.pin)
         case 8 where cmd:               // ⌘C
             emit(.copy)
         case 1 where cmd:               // ⌘S
             emit(.save)
-        case 14:                        // E
-            emit(.annotate)
+        case 9:  selectTool(nil)        // V 指针
+        case 15: selectTool(.rect)      // R 矩形
+        case 31: selectTool(.ellipse)   // O 椭圆
+        case 0:  selectTool(.arrow)     // A 箭头
+        case 17: selectTool(.text)      // T 文字
+        case 4:  selectTool(.highlight) // H 高亮
+        case 35: selectTool(.pixelate)  // P 马赛克
         case 123, 124, 125, 126:        // ← → ↓ ↑
             nudge(keyCode: event.keyCode, modifiers: event.modifierFlags)
         default:
             super.keyDown(with: event)
         }
+    }
+
+    private func selectTool(_ tool: AnnotationTool?) {
+        guard model.phase == .confirmed else { return }
+        annotation.endTextEditing()
+        annotation.tool = tool
+        redraw()
     }
 
     /// 方向键微调选区：默认移动 1pt，⇧ 变 10pt，⌥ 改为拖动右上角（调尺寸）。
@@ -349,12 +473,18 @@ private final class OverlayView: NSView {
             let image = model.makeCroppedImage()
         else { return }
 
+        annotation.endTextEditing()
+        let layers = selectionInAnnotationSpace.map {
+            annotation.exportLayers(selection: $0, scale: model.snapshot.scale)
+        } ?? []
+
         onFinish?(SelectionResult(
             region: region,
             display: model.snapshot.display,
             window: model.confirmedWindow,
             action: action,
-            image: image
+            image: image,
+            layers: layers
         ))
     }
 }

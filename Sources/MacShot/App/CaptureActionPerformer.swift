@@ -14,9 +14,6 @@ enum CaptureActionPerformer {
         case .copy:
             ImageCodec.copyToPasteboard(image)
 
-        case .annotate:
-            EditorWindowController.open(shot: shot)
-
         case .save:
             exportToDisk(image: image, shot: shot)
         }

@@ -38,9 +38,7 @@ enum LayerRenderer {
         ctx.translateBy(x: 0, y: CGFloat(height))
         ctx.scaleBy(x: 1, y: -1)
 
-        for layer in layers where layer.kind != .pixelate && layer.kind != .crop {
-            draw(layer, in: ctx)
-        }
+        drawVectors(layers, in: ctx)
 
         guard var result = ctx.makeImage() else { return base }
 
@@ -55,6 +53,34 @@ enum LayerRenderer {
         }
 
         return result
+    }
+
+    /// 在**已经是左上原点、Y 向下**的上下文里绘制矢量图层。
+    ///
+    /// 离屏导出和截图覆盖层的实时预览共用这一份代码 —— 所见即所得靠的就是这个，
+    /// 而不是两套各自维护的绘制逻辑。
+    static func drawVectors(_ layers: [Layer], in ctx: CGContext) {
+        for layer in layers where layer.kind != .pixelate && layer.kind != .crop {
+            draw(layer, in: ctx)
+        }
+    }
+
+    /// 把整张小图马赛克化。覆盖层用它给每个马赛克图层预先算好贴片。
+    static func pixelated(_ image: CGImage) -> CGImage? {
+        let width = CGFloat(image.width)
+        let height = CGFloat(image.height)
+        let blockSize = max(6, min(width, height) / 12)
+
+        guard let filter = CIFilter(name: "CIPixellate") else { return nil }
+        filter.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
+        filter.setValue(blockSize, forKey: kCIInputScaleKey)
+        filter.setValue(CIVector(x: width / 2, y: height / 2), forKey: kCIInputCenterKey)
+
+        guard let output = filter.outputImage else { return nil }
+        return ciContext.createCGImage(
+            output,
+            from: CGRect(x: 0, y: 0, width: width, height: height)
+        )
     }
 
     // MARK: - 单个图层
