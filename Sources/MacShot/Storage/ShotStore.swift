@@ -128,6 +128,17 @@ final class ShotStore: ObservableObject {
         reload()
     }
 
+    /// 浏览器地址异步回填。
+    func updateSourceURL(shotID: Int64, url: String) {
+        try? dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE shot SET sourceURL = ? WHERE id = ?",
+                arguments: [url, shotID]
+            )
+        }
+        reload()
+    }
+
     func delete(_ shot: Shot) {
         guard let id = shot.id else { return }
         _ = try? dbQueue.write { db in

@@ -12,8 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupHotKeys()
 
-        if !CaptureEngine.hasPermission() {
-            CaptureEngine.requestPermission()
+        if !ScreenRecordingPermission.isGranted {
+            ScreenRecordingPermission.request()
         }
     }
 
