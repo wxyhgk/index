@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>MacShot</string>
+    <key>CFBundleDisplayName</key>
+    <string>MacShot</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.wxyhgk.macshot</string>
+    <key>CFBundleExecutable</key>
+    <string>MacShot</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <!-- 菜单栏常驻，不占 Dock -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- 取浏览器当前标签页地址需要 Apple Events 授权 -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>MacShot 需要询问浏览器当前页面的网址，以便把它记录到截图的元数据里。</string>
+</dict>
+</plist>
