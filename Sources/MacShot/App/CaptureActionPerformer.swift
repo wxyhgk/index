@@ -19,7 +19,8 @@ enum CaptureActionPerformer {
         }
     }
 
-    private static func exportToDisk(image: CGImage, shot: Shot) {
+    /// 钉图窗口的「保存」也走这里，避免两处各写一遍存盘面板。
+    static func exportToDisk(image: CGImage, shot: Shot) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         panel.nameFieldStringValue = defaultFileName(for: shot)
@@ -31,7 +32,7 @@ enum CaptureActionPerformer {
         try? ImageCodec.pngData(from: image)?.write(to: url)
     }
 
-    private static func defaultFileName(for shot: Shot) -> String {
+    static func defaultFileName(for shot: Shot) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
         let app = shot.appName.map { "-\($0)" } ?? ""
