@@ -6,8 +6,9 @@ import Foundation
 /// 「自动化」授权框时，调用方会一直等（默认超时是分钟级的）。之前直接在主线程跑 NSAppleScript，
 /// 结果就是截图完点任何按钮整个 App 假死。
 ///
-/// 现在改成：走子进程 + 硬超时，在后台线程执行，拿到结果再异步回填数据库。
 /// 用 osascript 子进程而不是 NSAppleScript，是因为**子进程可以被杀掉**，被阻塞的线程不行。
+///
+/// 它只负责「问出地址」，问到之后往哪儿放由 `BrowserURLProcessor` 决定。
 enum BrowserURLResolver {
 
     /// 已知支持 AppleScript 取地址的浏览器。Firefox 不支持（需退回 Accessibility），暂不处理。
@@ -91,19 +92,5 @@ enum BrowserURLResolver {
         let value = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return (value?.isEmpty ?? true) ? nil : value
-    }
-}
-
-enum BrowserURLQueue {
-
-    /// 后台解析并回填。失败或超时都只是没有地址，不影响任何其它环节。
-    static func enqueue(bundleID: String, shotID: Int64) {
-        guard BrowserURLResolver.supports(bundleID) else { return }
-        Task.detached(priority: .utility) {
-            guard let url = await BrowserURLResolver.resolve(bundleID: bundleID) else { return }
-            await MainActor.run {
-                ShotStore.shared.updateSourceURL(shotID: shotID, url: url)
-            }
-        }
     }
 }

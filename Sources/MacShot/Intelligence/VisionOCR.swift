@@ -2,18 +2,13 @@ import Foundation
 import Vision
 import CoreGraphics
 
-/// 分类/理解能力的第 1 层：系统自带 Vision，零成本、无需下载模型。
-/// 识别出的文本回填到 shot.ocrText，由 FTS5 索引 —— 于是「搜截图里的字」直接可用。
+/// 系统自带的文字识别。零成本、无需下载模型。
 ///
-/// 第 2 层（MobileCLIP embedding + 语义检索 / zero-shot 分类）后续接在这个协议下面，
-/// 核心存储层不需要改动。
-protocol ImageUnderstanding {
-    func analyze(_ image: CGImage) async -> String
-}
+/// 它只负责「认出字」，认完往哪儿放由 `OCRProcessor` 和 `ShotAttributeWriter` 决定。
+/// 此前这里还兼管排队和写数据库，那让一个 OCR 引擎知道了 SQLite 的存在。
+struct VisionOCR {
 
-struct VisionOCR: ImageUnderstanding {
-
-    func analyze(_ image: CGImage) async -> String {
+    func recognizeText(in image: CGImage) async -> String {
         await withCheckedContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 guard error == nil,
@@ -37,22 +32,6 @@ struct VisionOCR: ImageUnderstanding {
             } catch {
                 NSLog("[MacShot] OCR 失败: \(error)")
                 continuation.resume(returning: "")
-            }
-        }
-    }
-}
-
-enum ImageAnalysisQueue {
-
-    private static let engine: ImageUnderstanding = VisionOCR()
-
-    /// 后台跑 OCR，完成后回主线程写库。失败不影响任何东西。
-    static func enqueue(image: CGImage, shotID: Int64) {
-        Task.detached(priority: .utility) {
-            let text = await engine.analyze(image)
-            guard !text.isEmpty else { return }
-            await MainActor.run {
-                ShotStore.shared.updateOCR(shotID: shotID, text: text)
             }
         }
     }

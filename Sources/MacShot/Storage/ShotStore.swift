@@ -117,24 +117,50 @@ final class ShotStore: ObservableObject {
         return shot
     }
 
-    /// OCR 异步回填。
-    func updateOCR(shotID: Int64, text: String) {
-        try? dbQueue.write { db in
-            try db.execute(
-                sql: "UPDATE shot SET ocrText = ? WHERE id = ?",
-                arguments: [text, shotID]
-            )
-        }
-        reload()
-    }
+    /// 派生属性的统一落库入口。后处理器只认 key 和值，不知道它最终存在哪。
+    ///
+    /// `ocr.text` 和 `source.url` 仍写回 shot 表的原有列 —— 它们是一等元数据，
+    /// 且既有的 shotFts 索引和详情页都依赖那两列。其余 key 一律进通用属性表，
+    /// 所以新增派生能力不需要动 schema。
+    func writeAttribute(shotID: Int64, key: String, value: AttributeValue) {
+        do {
+            switch (key, value) {
+            case (AttributeKey.ocrText, .text(let text)):
+                try dbQueue.write { db in
+                    try db.execute(
+                        sql: "UPDATE shot SET ocrText = ? WHERE id = ?",
+                        arguments: [text, shotID]
+                    )
+                }
 
-    /// 浏览器地址异步回填。
-    func updateSourceURL(shotID: Int64, url: String) {
-        try? dbQueue.write { db in
-            try db.execute(
-                sql: "UPDATE shot SET sourceURL = ? WHERE id = ?",
-                arguments: [url, shotID]
-            )
+            case (AttributeKey.sourceURL, .text(let url)):
+                try dbQueue.write { db in
+                    try db.execute(
+                        sql: "UPDATE shot SET sourceURL = ? WHERE id = ?",
+                        arguments: [url, shotID]
+                    )
+                }
+
+            default:
+                var record = ShotAttribute(
+                    id: nil,
+                    shotID: shotID,
+                    key: key,
+                    text: value.searchableText,
+                    payload: value.payload,
+                    createdAt: Date()
+                )
+                try dbQueue.write { db in
+                    // 同一张图的同一个 key 只保留最新一份。
+                    try ShotAttribute
+                        .filter(Column("shotID") == shotID && Column("key") == key)
+                        .deleteAll(db)
+                    try record.insert(db)
+                }
+            }
+        } catch {
+            NSLog("[MacShot] 写入属性 \(key) 失败: \(error)")
+            return
         }
         reload()
     }
@@ -217,13 +243,20 @@ final class ShotStore: ObservableObject {
             // trigram 分词器下用带引号的原始串做子串匹配。
             let escaped = query.replacingOccurrences(of: "\"", with: "\"\"")
             let pattern = "\"\(escaped)\""
+            // 同时搜 shot 本身的字段和派生属性 —— 新的后处理器产出的文本
+            // 自动可搜，不需要再改这条查询。
             return try Shot.fetchAll(db, sql: """
                 SELECT shot.* FROM shot
-                JOIN shotFts ON shotFts.rowid = shot.id
-                WHERE shotFts MATCH ?
+                WHERE shot.id IN (
+                    SELECT shotFts.rowid FROM shotFts WHERE shotFts MATCH :pattern
+                    UNION
+                    SELECT shotAttribute.shotID FROM shotAttribute
+                    JOIN attributeFts ON attributeFts.rowid = shotAttribute.id
+                    WHERE attributeFts MATCH :pattern
+                )
                 ORDER BY shot.capturedAt DESC
                 LIMIT 500
-                """, arguments: [pattern])
+                """, arguments: ["pattern": pattern])
         }) ?? []
     }
 

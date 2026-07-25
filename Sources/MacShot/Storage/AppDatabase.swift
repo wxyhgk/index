@@ -71,6 +71,35 @@ enum AppDatabase {
             }
         }
 
+        // 通用派生属性表。取代「一个派生属性 = 一个数据库列 + 一个 updateXXX 方法」，
+        // 让新的后处理器（CLIP 向量、自动标签、分类结果）落地时不必改 schema。
+        migrator.registerMigration("v3_attributes") { db in
+            try db.create(table: "shotAttribute") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("shotID", .integer)
+                    .notNull()
+                    .indexed()
+                    .references("shot", onDelete: .cascade)
+                t.column("key", .text).notNull()
+                /// 可搜索的文本表示。
+                t.column("text", .text)
+                /// 二进制载荷（向量之类）。
+                t.column("payload", .blob)
+                t.column("createdAt", .datetime).notNull()
+
+                // 同一张图的同一个 key 只保留最新的一份。
+                t.uniqueKey(["shotID", "key"])
+            }
+
+            // 属性单独一张 FTS 表，而不是往 shotFts 上加列 ——
+            // synchronize 的触发器绑定建表时的列集合，加列不会被索引。
+            try db.create(virtualTable: "attributeFts", using: FTS5()) { t in
+                t.tokenizer = FTS5TokenizerDescriptor(components: ["trigram"])
+                t.synchronize(withTable: "shotAttribute")
+                t.column("text")
+            }
+        }
+
         return migrator
     }
 }

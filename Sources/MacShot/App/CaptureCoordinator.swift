@@ -79,13 +79,14 @@ final class CaptureCoordinator {
             }
 
             if let id = shot.id {
-                if AppSettings.shared.runOCR {
-                    // OCR 跑原图，标注可能会盖住文字。
-                    ImageAnalysisQueue.enqueue(image: result.image, shotID: id)
-                }
-                if let bundleID = metadata.appBundleID {
-                    BrowserURLQueue.enqueue(bundleID: bundleID, shotID: id)
-                }
+                // 派生处理全部交给流水线。协调器不知道有几个处理器、各自做什么。
+                // 新增能力不会改动这里 —— 这正是此前 OCR 和浏览器地址各写一份
+                // 「detached → 算 → MainActor.run → updateXXX」拷贝的原因。
+                CapturePipeline.shared.run(PostProcessInput(
+                    shotID: id,
+                    image: result.image,   // 跑原图，标注可能盖住文字
+                    appBundleID: metadata.appBundleID
+                ))
             }
 
             // 传底图 + 图层而非合成结果 —— 钉图窗口要靠它们继续非破坏性地画。
