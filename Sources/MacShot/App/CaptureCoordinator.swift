@@ -147,10 +147,45 @@ final class CaptureCoordinator {
                 region: result.region,
                 host: nil
             )
+            // 自动副本排在动作之前：它只依赖「已入库」，用户点了哪个按钮、
+            // 动作成功与否都不该影响副本落地。
+            saveAutoCopy(of: context)
             run(actionID: result.actionID, context: context)
         } catch {
             NSLog("[MacShot] 保存失败: \(error)")
             presentError(error)
+        }
+    }
+
+    /// 「自动保存副本」：入库成功后往用户指定目录写一份成品 PNG，
+    /// 配合 Obsidian 等监听文件夹让截图直接进知识库。
+    /// 尽力而为 —— 未开启、目录不存在都静默跳过，写失败只记日志不打扰。
+    private func saveAutoCopy(of context: CaptureContext) {
+        let settings = AppSettings.shared
+        guard settings.autoCopyEnabled else { return }
+
+        let path = settings.autoCopyDirectory
+        var isDirectory: ObjCBool = false
+        guard !path.isEmpty,
+              FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return }
+
+        // 合成与取名在主 actor 上完成（模板读设置），后台只做编码和写盘。
+        let image = context.rendered()
+        let name = ImageExporter.suggestedName(for: context.shot)
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+
+        Task.detached(priority: .utility) {
+            guard let data = ImageCodec.pngData(from: image) else {
+                NSLog("[MacShot] 自动副本：PNG 编码失败")
+                return
+            }
+            do {
+                try ImageExporter.writePNG(data, into: directory, preferredName: name)
+            } catch {
+                NSLog("[MacShot] 自动副本写入失败: \(error)")
+            }
         }
     }
 

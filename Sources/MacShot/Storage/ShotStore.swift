@@ -570,6 +570,28 @@ final class ShotStore: ObservableObject {
         }) ?? []
     }
 
+    /// 自动清理的候选：拍摄早于 `cutoff`、未收藏、且从未标注过。
+    ///
+    /// 「从未标注过」= 修订数 ≤ 1，即只有入库时自动建的那条「原始」空修订 ——
+    /// 截图时标注、钉图上画、编辑器里改，任何一笔都会追加修订、让计数超过 1，
+    /// 从而永久脱离清理范围。按时间升序：一批删不完时先删最老的，剩下的留给下次。
+    func cleanupCandidates(olderThan cutoff: Date, limit: Int) -> [Shot] {
+        (try? dbQueue.read { db in
+            try Shot.fetchAll(db, sql: """
+                SELECT shot.* FROM shot
+                LEFT JOIN revision ON revision.shotID = shot.id
+                WHERE shot.capturedAt < :cutoff
+                  AND shot.id NOT IN (
+                      SELECT shotID FROM shotAttribute WHERE key = 'favorite'
+                  )
+                GROUP BY shot.id
+                HAVING COUNT(revision.id) <= 1
+                ORDER BY shot.capturedAt ASC
+                LIMIT :limit
+                """, arguments: ["cutoff": cutoff, "limit": limit])
+        }) ?? []
+    }
+
     /// 还没有指定 key 属性的截图。启动回填用。
     func shotsMissingAttribute(key: String) -> [Shot] {
         (try? dbQueue.read { db in
