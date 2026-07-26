@@ -12,10 +12,14 @@ final class SelectionOverlayController {
 
     var isActive: Bool { !windows.isEmpty }
 
-    /// - Parameter snapshots: 每块屏的冻结画面，必须在覆盖层出现**之前**拍好。
+    /// - Parameters:
+    ///   - snapshots: 每块屏的冻结画面，必须在覆盖层出现**之前**拍好。
+    ///   - finishOnConfirm: 简单模式 —— 松手（或单击窗口）确认选区后立刻返回，
+    ///     不显示工具条、不进标注阶段。滚动截图用它只拿 region + display。
     func begin(
         snapshots: [DisplaySnapshot],
         windowList: [WindowInfo],
+        finishOnConfirm: Bool = false,
         completion: @escaping (SelectionResult?) -> Void
     ) {
         guard !isActive, !snapshots.isEmpty else { return }
@@ -30,6 +34,7 @@ final class SelectionOverlayController {
 
             let model = SelectionModel(snapshot: snapshot, windows: windowList)
             let view = OverlayView(model: model, isPrimaryScreen: snapshot.display.id == primaryID)
+            view.finishOnConfirm = finishOnConfirm
             view.onFinish = { [weak self] result in self?.finish(result) }
             view.onBecameActive = { [weak self] owner in
                 // 一次只允许一块屏处于活动状态。

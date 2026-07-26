@@ -75,7 +75,7 @@ protocol CaptureSource {
 
 **规范**：新增捕获方式 = 新增一个 `CaptureSource` 实现并注册。不改 `CaptureCoordinator`。
 
-现状差距：`CaptureSource` 协议 + `CaptureSourceRegistry` 已落地（`Capture/CaptureSource.swift`），协调器按 id 取源、注册表可注入。剩余差距：`makeSnapshots()` 仍返回 `[DisplaySnapshot]`，而 `DisplaySnapshot` 强绑 `DisplayInfo`，把「捕获源必须是整块显示器」写进了类型 —— 换成上面的 `CaptureCanvas` 是这个契约的最后一步，滚动/单窗口截图靠它解锁。
+现状差距：`CaptureSource` 协议 + `CaptureSourceRegistry` 已落地（`Capture/CaptureSource.swift`），协调器按 id 取源、注册表可注入。剩余差距：`makeSnapshots()` 仍返回 `[DisplaySnapshot]`，而 `DisplaySnapshot` 强绑 `DisplayInfo`，把「捕获源必须是整块显示器」写进了类型 —— 换成上面的 `CaptureCanvas` 是这个契约的最后一步。注意：滚动截图最终**没有**走这条路（原因见阶段 4 注），`CaptureCanvas` 现在只剩单窗口截图这一个需求方。
 
 ### 2.2 中间：`CapturePostProcessor` —— 功能怎么挂上去
 
@@ -210,4 +210,6 @@ extension Layers where Space == CanvasSpace {
 
 阶段 1 和 2 优先：它们直接消除已经存在的重复，而不是为假想需求做准备。
 
-阶段 4 现状：`CaptureSource` 协议、`CaptureSourceRegistry` 与两个实现（立即 / 延时）已落地，`CaptureCoordinator.begin(sourceID:)` 从注册表取源、注册表可注入。**未完成**的一半是 `CaptureCanvas`：`makeSnapshots` 仍返回 `[DisplaySnapshot]`（画布强绑显示器），单窗口和滚动截图所需的「不绑定显示器的通用画布」是下一步。
+阶段 4 现状：`CaptureSource` 协议、`CaptureSourceRegistry` 与两个实现（立即 / 延时）已落地，`CaptureCoordinator.begin(sourceID:)` 从注册表取源、注册表可注入。**未完成**的一半是 `CaptureCanvas`：`makeSnapshots` 仍返回 `[DisplaySnapshot]`（画布强绑显示器），单窗口截图所需的「不绑定显示器的通用画布」是下一步。
+
+**滚动截图的落地方式与当初设想不同**：原以为滚动截图需要 `CaptureCanvas` 解锁，实际落地（`App/ScrollCaptureController` + `Capture/ScrollStitcher`）完全绕开了覆盖层的快照机制 —— 框选只借用覆盖层的简单模式（`finishOnConfirm`，松手即返回选区），之后定时采集屏幕区域、纯函数拼接、直接产出 CGImage 走 `ShotStore.save` 入库，全程不产生也不消费 `DisplaySnapshot` 之外的画布类型。既有 `[DisplaySnapshot]` 路径零改动，所以**没有**为滚动截图去做 CaptureCanvas 重构；该重构如今仅由单窗口截图驱动，做不做视其需求而定。

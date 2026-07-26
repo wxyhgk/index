@@ -13,6 +13,10 @@ final class OverlayView: NSView {
     var onFinish: ((SelectionResult?) -> Void)?
     var onBecameActive: ((OverlayView) -> Void)?
 
+    /// 简单模式：选区一确认（松手 / 单击窗口）立刻 emit，不停留在 confirmed 阶段，
+    /// 工具条与标注都不会出现。滚动截图用它复用冻结选区来框选滚动区域。
+    var finishOnConfirm = false
+
     let model: SelectionModel
     let annotation = AnnotationState()
 
@@ -283,6 +287,11 @@ final class OverlayView: NSView {
             NSCursor.arrow.set()
         default:
             if model.endDrag() {
+                if finishOnConfirm {
+                    // 简单模式：确认即返回，不进 confirmed 阶段的工具条/标注流程。
+                    emit(ActionID.finish)
+                    return
+                }
                 hoveredControlID = nil
                 NSCursor.arrow.set()
             }
