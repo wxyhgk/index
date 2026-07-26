@@ -75,7 +75,7 @@ protocol CaptureSource {
 
 **规范**：新增捕获方式 = 新增一个 `CaptureSource` 实现并注册。不改 `CaptureCoordinator`。
 
-现状差距：`ScreenFreezing` 已经是这个形状，但返回 `[DisplaySnapshot]`，而 `DisplaySnapshot` 强绑 `DisplayInfo`，把「捕获源必须是整块显示器」写进了类型。且 `CaptureCoordinator.shared` 架空了 `init(freezer:)` 这个注入口 —— 生产路径永远走默认实现。
+现状差距：`CaptureSource` 协议 + `CaptureSourceRegistry` 已落地（`Capture/CaptureSource.swift`），协调器按 id 取源、注册表可注入。剩余差距：`makeSnapshots()` 仍返回 `[DisplaySnapshot]`，而 `DisplaySnapshot` 强绑 `DisplayInfo`，把「捕获源必须是整块显示器」写进了类型 —— 换成上面的 `CaptureCanvas` 是这个契约的最后一步，滚动/单窗口截图靠它解锁。
 
 ### 2.2 中间：`CapturePostProcessor` —— 功能怎么挂上去
 
@@ -204,8 +204,10 @@ extension Layers where Space == CanvasSpace {
 | **1** | 出口契约：`CaptureAction` 协议 + 注册表 | 加动作 = 加一个文件 |
 | **2** | 中间契约：`CapturePostProcessor` + `ShotAttributeWriter` + `shotAttribute` 表 | 加派生能力 = 加一个文件，不动 schema |
 | **3** | 平台副作用收敛：`ImageExporter` / `Clipboard` / `WindowRegistry` / `ActivationPolicyManager` | 消除三份存盘面板与激活策略 bug |
-| **4** | 入口契约：`CaptureSource` + `CaptureCanvas` | 延时、单窗口、滚动截图 |
+| **4** 🟡 部分完成 | 入口契约：`CaptureSource` + `CaptureCanvas` | 延时、单窗口、滚动截图 |
 | **5** | 坐标系 phantom type；三套绘制合一；单一快捷键表 | 消除静默错位与所见非所得 |
 | **6** | 拆 `ShotStore`；DB 读写移出主线程 | 存储可测、可替换 |
 
 阶段 1 和 2 优先：它们直接消除已经存在的重复，而不是为假想需求做准备。
+
+阶段 4 现状：`CaptureSource` 协议、`CaptureSourceRegistry` 与两个实现（立即 / 延时）已落地，`CaptureCoordinator.begin(sourceID:)` 从注册表取源、注册表可注入。**未完成**的一半是 `CaptureCanvas`：`makeSnapshots` 仍返回 `[DisplaySnapshot]`（画布强绑显示器），单窗口和滚动截图所需的「不绑定显示器的通用画布」是下一步。

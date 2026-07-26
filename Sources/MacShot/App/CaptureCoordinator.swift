@@ -2,40 +2,79 @@ import AppKit
 
 /// 串起一次完整截图。只做编排，具体工作都委托出去：
 ///
-///   冻结屏幕(ScreenFreezing) → 选区(SelectionOverlayController)
-///   → 采元数据(MetadataCollector) → 入库(ShotStore) → 执行动作(CaptureActionPerformer)
+///   捕获(CaptureSource) → 选区(SelectionOverlayController)
+///   → 采元数据(MetadataCollector) → 入库(ShotStore) → 执行动作(CaptureAction)
 ///
-/// 注意捕获发生在**最前面**：按下快捷键就把屏幕定格。之后用户在选区上停留多久都无所谓，
-/// 存下来的永远是他框选时看到的那一帧。
+/// 捕获方式从注册表按 id 取 —— 协调器不认识任何具体实现，
+/// 新增捕获方式（延时、单窗口、滚动）不会改动这里。
 @MainActor
 final class CaptureCoordinator {
 
     static let shared = CaptureCoordinator()
 
     private let overlay = SelectionOverlayController()
-    private let freezer: ScreenFreezing
+    private let sources: CaptureSourceRegistry
     private var isPreparing = false
+    /// 进行中的准备任务（冻结屏幕 / 延时等待）。取消它就打断整次捕获。
+    private var prepareTask: Task<Void, Never>?
+    /// 当前准备任务是否允许用户取消（延时等待可以，瞬时冻结不行）。
+    private var pendingIsCancellable = false
 
-    init(freezer: ScreenFreezing = ScreenCaptureKitFreezer()) {
-        self.freezer = freezer
+    /// 倒计时期间临时监听 ⎋ 用的绑定名。
+    private static let cancelHotKeyName = "cancel-pending-capture"
+
+    /// 注册表可注入（测试用替身）；不传就用全局共享的那份。
+    /// 默认值在方法体里取而不是写成默认参数 —— 默认参数在调用方上下文求值，拿不到主线程隔离。
+    init(sources: CaptureSourceRegistry? = nil) {
+        self.sources = sources ?? .shared
     }
 
-    func begin() {
-        guard !overlay.isActive, !isPreparing else { return }
+    func begin(sourceID: String = CaptureSourceID.immediate) {
+        // 延时等待期间再按快捷键 = 取消，而不是叠加第二次捕获。
+        if isPreparing {
+            if pendingIsCancellable { prepareTask?.cancel() }
+            return
+        }
+        guard !overlay.isActive else { return }
+
+        guard let source = sources.source(id: sourceID) else {
+            NSLog("[MacShot] 未注册的捕获方式: \(sourceID)")
+            return
+        }
 
         guard ScreenRecordingPermission.isGranted else {
             requestPermissionThenPrompt()
             return
         }
 
-        // 关键：覆盖层一旦拿到焦点，frontmostApplication 就变成我们自己了，必须提前记下来。
-        let previousApp = SystemNavigator.frontmostApplication
-
         isPreparing = true
-        Task {
-            defer { isPreparing = false }
+        pendingIsCancellable = source.isCancellableWhilePreparing
+        if pendingIsCancellable {
+            // 倒计时期间 ⎋ 全局可取消。裸键绑定只在这个窗口期存在，结束立即注销。
+            GlobalHotKeyCenter.shared.bindTransient(
+                Self.cancelHotKeyName,
+                to: KeyboardShortcut(keyCode: 53, modifiers: 0)   // ⎋
+            ) { [weak self] in
+                self?.prepareTask?.cancel()
+            }
+        }
+
+        prepareTask = Task {
+            defer {
+                isPreparing = false
+                prepareTask = nil
+                if pendingIsCancellable {
+                    GlobalHotKeyCenter.shared.unbind(Self.cancelHotKeyName)
+                    pendingIsCancellable = false
+                }
+            }
             do {
-                let snapshots = try await freezer.freezeAllDisplays()
+                let snapshots = try await source.makeSnapshots()
+
+                // 关键：覆盖层一旦拿到焦点，frontmostApplication 就变成我们自己了，
+                // 必须在覆盖层出现前记下来。放在捕获之后记 —— 延时等待期间用户可能切换了 App，
+                // 定格瞬间的前台应用才是截图的真实来源。
+                let previousApp = SystemNavigator.frontmostApplication
                 let windowList = WindowLister.onScreenWindows(
                     excludingPID: ProcessInfo.processInfo.processIdentifier
                 )
@@ -44,8 +83,10 @@ final class CaptureCoordinator {
                     guard let self, let result else { return }
                     self.handle(result, previousApp: previousApp)
                 }
+            } catch is CancellationError {
+                // 用户主动取消延时，静默返回。
             } catch {
-                NSLog("[MacShot] 冻结屏幕失败: \(error)")
+                NSLog("[MacShot] 捕获失败(\(sourceID)): \(error)")
                 presentError(error)
             }
         }

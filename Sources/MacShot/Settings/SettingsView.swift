@@ -61,6 +61,18 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("延时截图") {
+                Picker("等待时长", selection: $settings.captureDelay) {
+                    ForEach(AppSettings.captureDelayChoices, id: \.self) { seconds in
+                        Text("\(seconds) 秒").tag(seconds)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text("倒计时显示在屏幕右下角。按 ⎋、点击倒计时或再按一次快捷键取消。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("识别") {
                 Toggle("自动识别截图中的文字", isOn: $settings.runOCR)
                 Text("在后台运行，识别结果进入全文索引，可以直接搜截图里的字。")
@@ -92,6 +104,10 @@ private struct ShortcutSettings: View {
             Section("全局快捷键") {
                 LabeledContent("截图") {
                     ShortcutRecorder(shortcut: $settings.captureShortcut)
+                        .frame(width: 130, height: 24)
+                }
+                LabeledContent("延时截图") {
+                    ShortcutRecorder(shortcut: $settings.delayedCaptureShortcut)
                         .frame(width: 130, height: 24)
                 }
                 LabeledContent("打开图库") {
