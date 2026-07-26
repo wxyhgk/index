@@ -5,6 +5,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private let settings = AppSettings.shared
+    /// 录制中每秒刷一次菜单里的「停止录制（mm:ss）」计时。
+    private var recordingTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = ShotStore.shared          // 提前建库，避免第一次截图时卡顿
@@ -19,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AttributeBackfill.runIfNeeded()   // 给老截图补缺失的派生属性，后台串行，不影响启动
 
         settings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
+        RecordingCoordinator.shared.onStateChanged = { [weak self] in
+            self?.recordingStateChanged()
+        }
 
         if !ScreenRecordingPermission.isGranted {
             ScreenRecordingPermission.request()
@@ -68,6 +73,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         delayed.tag = Tag.delayedCapture
         menu.addItem(delayed)
 
+        let record = NSMenuItem(title: "录屏…", action: #selector(toggleRecording), keyEquivalent: "")
+        record.target = self
+        record.tag = Tag.record
+        menu.addItem(record)
+
         let gallery = NSMenuItem(title: "图库…", action: #selector(openGallery), keyEquivalent: "")
         gallery.target = self
         gallery.tag = Tag.gallery
@@ -97,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         static let capture = 1
         static let gallery = 2
         static let delayedCapture = 3
+        static let record = 4
     }
 
     // MARK: - 快捷键
@@ -108,6 +119,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.bind("capture-delayed", to: settings.delayedCaptureShortcut) { [weak self] in
             self?.startDelayedCapture()
         }
+        GlobalHotKeyCenter.shared.bind("record", to: settings.recordingShortcut) { [weak self] in
+            self?.toggleRecording()
+        }
         GlobalHotKeyCenter.shared.bind("gallery", to: settings.galleryShortcut) { [weak self] in
             self?.openGallery()
         }
@@ -116,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshHotKeys() {
         GlobalHotKeyCenter.shared.update("capture", to: settings.captureShortcut)
         GlobalHotKeyCenter.shared.update("capture-delayed", to: settings.delayedCaptureShortcut)
+        GlobalHotKeyCenter.shared.update("record", to: settings.recordingShortcut)
         GlobalHotKeyCenter.shared.update("gallery", to: settings.galleryShortcut)
     }
 
@@ -130,8 +145,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CaptureCoordinator.shared.begin(sourceID: CaptureSourceID.delayed)
     }
 
+    @objc private func toggleRecording() {
+        RecordingCoordinator.shared.toggle()
+    }
+
     @objc private func openGallery() {
         GalleryWindowController.shared.show()
+    }
+
+    // MARK: - 录制状态
+
+    private func recordingStateChanged() {
+        refreshStatusIcon()
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+
+        if ScreenRecorder.shared.isRecording {
+            // .common 模式：菜单开着（追踪运行循环）时计时也要走字。
+            let timer = Timer(timeInterval: 1, repeats: true) { _ in
+                Task { @MainActor in self.updateRecordingMenuItem() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            recordingTimer = timer
+        }
+        updateRecordingMenuItem()
+    }
+
+    /// 录制中换成红色圆点 —— 菜单栏是唯一常驻界面，必须一眼看出正在录。
+    private func refreshStatusIcon() {
+        let recording = ScreenRecorder.shared.isRecording
+        var image = NSImage(
+            systemSymbolName: recording ? "record.circle.fill" : "camera.viewfinder",
+            accessibilityDescription: "MacShot"
+        )
+        if recording {
+            image = image?.withSymbolConfiguration(.init(paletteColors: [.systemRed]))
+            image?.isTemplate = false   // 模板渲染会抹掉红色
+        }
+        statusItem?.button?.image = image
+    }
+
+    private func updateRecordingMenuItem() {
+        guard let item = statusItem?.menu?.item(withTag: Tag.record) else { return }
+        if let startedAt = ScreenRecorder.shared.startedAt {
+            let elapsed = Int(Date().timeIntervalSince(startedAt))
+            let clock = String(format: "%02d:%02d", elapsed / 60, elapsed % 60)
+            item.title = "停止录制（\(clock)）\t\(settings.recordingShortcut.displayString)"
+        } else {
+            item.title = "录屏…\t\(settings.recordingShortcut.displayString)"
+        }
     }
 
     @objc private func openSettings() {
@@ -146,5 +208,6 @@ extension AppDelegate: NSMenuDelegate {
         menu.item(withTag: Tag.delayedCapture)?.title =
             "延时截图（\(settings.captureDelay) 秒）\t\(settings.delayedCaptureShortcut.displayString)"
         menu.item(withTag: Tag.gallery)?.title = "图库…\t\(settings.galleryShortcut.displayString)"
+        updateRecordingMenuItem()
     }
 }

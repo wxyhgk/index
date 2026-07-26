@@ -21,6 +21,10 @@ struct KeyboardShortcut: Codable, Equatable {
         keyCode: 2,                                    // D
         modifiers: UInt32(controlKey) | UInt32(cmdKey)
     )
+    static let recordingDefault = KeyboardShortcut(
+        keyCode: 15,                                   // R
+        modifiers: UInt32(controlKey) | UInt32(cmdKey)
+    )
 
     /// 至少要有一个修饰键，否则会把普通打字全劫走。
     var isValid: Bool { modifiers != 0 }

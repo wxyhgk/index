@@ -29,6 +29,9 @@ final class CaptureCoordinator {
         self.sources = sources ?? .shared
     }
 
+    /// 截图流程是否进行中（准备或框选）。录屏入口用它做互斥。
+    var isBusy: Bool { isPreparing || overlay.isActive }
+
     func begin(sourceID: String = CaptureSourceID.immediate) {
         // 延时等待期间再按快捷键 = 取消，而不是叠加第二次捕获。
         if isPreparing {
@@ -36,6 +39,12 @@ final class CaptureCoordinator {
             return
         }
         guard !overlay.isActive else { return }
+
+        // 录屏进行中（或正在框选录制区域）不开截图 —— 两套覆盖层会互相打架。
+        guard !ScreenRecorder.shared.isRecording, !RecordingCoordinator.shared.isSelecting else {
+            NSLog("[MacShot] 录屏进行中，截图请求被拒绝")
+            return
+        }
 
         guard let source = sources.source(id: sourceID) else {
             NSLog("[MacShot] 未注册的捕获方式: \(sourceID)")
