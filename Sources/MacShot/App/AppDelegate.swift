@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CaptureActionRegistry.registerBuiltins(into: .shared)
         CapturePipeline.registerBuiltins(into: .shared)
         ToolbarRegistry.registerBuiltins(into: .shared)
+        registerCaptureSources()
 
         setupStatusItem()
         setupHotKeys()
@@ -25,6 +26,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+
+    // MARK: - 捕获方式
+
+    /// 延时秒数由闭包注入 —— 采集层不引用 AppSettings，配置只在这里交汇。
+    private func registerCaptureSources() {
+        let immediate = ImmediateScreenSource()
+        CaptureSourceRegistry.shared.register(immediate)
+        CaptureSourceRegistry.shared.register(DelayedScreenSource(wrapping: immediate) {
+            AppSettings.shared.captureDelay
+        })
+    }
 
     // MARK: - 菜单栏
 
@@ -46,6 +58,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         capture.target = self
         capture.tag = Tag.capture
         menu.addItem(capture)
+
+        let delayed = NSMenuItem(
+            title: "延时截图",
+            action: #selector(startDelayedCapture),
+            keyEquivalent: ""
+        )
+        delayed.target = self
+        delayed.tag = Tag.delayedCapture
+        menu.addItem(delayed)
 
         let gallery = NSMenuItem(title: "图库…", action: #selector(openGallery), keyEquivalent: "")
         gallery.target = self
@@ -75,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum Tag {
         static let capture = 1
         static let gallery = 2
+        static let delayedCapture = 3
     }
 
     // MARK: - 快捷键
@@ -83,6 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.bind("capture", to: settings.captureShortcut) { [weak self] in
             self?.startCapture()
         }
+        GlobalHotKeyCenter.shared.bind("capture-delayed", to: settings.delayedCaptureShortcut) { [weak self] in
+            self?.startDelayedCapture()
+        }
         GlobalHotKeyCenter.shared.bind("gallery", to: settings.galleryShortcut) { [weak self] in
             self?.openGallery()
         }
@@ -90,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func refreshHotKeys() {
         GlobalHotKeyCenter.shared.update("capture", to: settings.captureShortcut)
+        GlobalHotKeyCenter.shared.update("capture-delayed", to: settings.delayedCaptureShortcut)
         GlobalHotKeyCenter.shared.update("gallery", to: settings.galleryShortcut)
     }
 
@@ -97,6 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func startCapture() {
         CaptureCoordinator.shared.begin()
+    }
+
+    /// 倒计时期间再触发一次 = 取消（begin 内部处理）。
+    @objc private func startDelayedCapture() {
+        CaptureCoordinator.shared.begin(sourceID: CaptureSourceID.delayed)
     }
 
     @objc private func openGallery() {
@@ -112,6 +143,8 @@ extension AppDelegate: NSMenuDelegate {
     /// 菜单里显示当前生效的快捷键，改了设置立刻反映出来。
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.item(withTag: Tag.capture)?.title = "截图\t\(settings.captureShortcut.displayString)"
+        menu.item(withTag: Tag.delayedCapture)?.title =
+            "延时截图（\(settings.captureDelay) 秒）\t\(settings.delayedCaptureShortcut.displayString)"
         menu.item(withTag: Tag.gallery)?.title = "图库…\t\(settings.galleryShortcut.displayString)"
     }
 }

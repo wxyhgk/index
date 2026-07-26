@@ -14,6 +14,8 @@ final class GlobalHotKeyCenter {
     private struct Binding {
         let shortcut: KeyboardShortcut
         let handler: () -> Void
+        /// 允许无修饰键的裸键（如 ⎋）。裸键会劫走全局按键，只能用于短暂的临时绑定。
+        var allowsBareKey: Bool = false
     }
 
     private var bindings: [String: Binding] = [:]
@@ -38,6 +40,22 @@ final class GlobalHotKeyCenter {
         rebuild()
     }
 
+    /// 临时绑定，允许裸键（无修饰键）。目前只用于延时截图倒计时期间监听 ⎋。
+    /// 用完必须 `unbind`，否则会一直劫走这个按键。
+    func bindTransient(_ name: String, to shortcut: KeyboardShortcut, handler: @escaping () -> Void) {
+        if bindings[name] == nil { order.append(name) }
+        bindings[name] = Binding(shortcut: shortcut, handler: handler, allowsBareKey: true)
+        rebuild()
+    }
+
+    /// 解除绑定并立即注销对应的系统快捷键。
+    func unbind(_ name: String) {
+        guard bindings[name] != nil else { return }
+        bindings[name] = nil
+        order.removeAll { $0 == name }
+        rebuild()
+    }
+
     private func rebuild() {
         installEventHandlerIfNeeded()
 
@@ -48,7 +66,10 @@ final class GlobalHotKeyCenter {
         handlers.removeAll()
 
         for (index, name) in order.enumerated() {
-            guard let binding = bindings[name], binding.shortcut.isValid else { continue }
+            guard
+                let binding = bindings[name],
+                binding.shortcut.isValid || binding.allowsBareKey
+            else { continue }
 
             let id = UInt32(index + 1)
             handlers[id] = binding.handler

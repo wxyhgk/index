@@ -23,17 +23,15 @@ enum ScreenRecordingPermission {
     static func request() -> Bool { CGRequestScreenCaptureAccess() }
 }
 
-/// 把屏幕定格成位图。抽成协议是为了让选区层不依赖 ScreenCaptureKit —— 便于替换实现和测试。
-protocol ScreenFreezing {
-    func freezeAllDisplays() async throws -> [DisplaySnapshot]
-}
+/// 「立即截图」：按下快捷键立刻把屏幕定格成位图。
+/// ScreenCaptureKit 实现 —— 不使用 CGWindowListCreateImage，它在 macOS 14+ 已废弃且拿不到完整内容。
+struct ImmediateScreenSource: CaptureSource {
 
-/// ScreenCaptureKit 实现。
-/// 不使用 CGWindowListCreateImage —— 它在 macOS 14+ 已废弃且拿不到完整内容。
-struct ScreenCaptureKitFreezer: ScreenFreezing {
+    let id = CaptureSourceID.immediate
+    let title = "立即截图"
+    let symbolName = "camera.viewfinder"
 
-    @MainActor
-    func freezeAllDisplays() async throws -> [DisplaySnapshot] {
+    func makeSnapshots() async throws -> [DisplaySnapshot] {
         guard ScreenRecordingPermission.isGranted else { throw CaptureError.noPermission }
 
         // 整个流程只查一次 SCShareableContent。之前是每次截图都查，窗口多时要几十到几百毫秒。

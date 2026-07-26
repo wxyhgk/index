@@ -61,8 +61,10 @@ final class AppSettings: ObservableObject {
         static let enterBehavior = "enterBehavior"
         static let defaultColorIndex = "defaultColorIndex"
         static let defaultWidthIndex = "defaultWidthIndex"
+        static let captureDelay = "captureDelay"
         static let captureShortcut = "captureShortcut"
         static let galleryShortcut = "galleryShortcut"
+        static let delayedCaptureShortcut = "delayedCaptureShortcut"
         static let uploadEndpoint = "uploadEndpoint"
         static let uploadFieldName = "uploadFieldName"
         static let uploadHeaders = "uploadHeaders"
@@ -85,6 +87,13 @@ final class AppSettings: ObservableObject {
     /// 选区时在光标旁显示像素放大镜和取色读数。
     @Published var showMagnifier: Bool {
         didSet { defaults.set(showMagnifier, forKey: Keys.showMagnifier) }
+    }
+
+    /// 「延时截图」等待的秒数。
+    static let captureDelayChoices = [3, 5, 10]
+
+    @Published var captureDelay: Int {
+        didSet { defaults.set(captureDelay, forKey: Keys.captureDelay) }
     }
 
     // MARK: - 标注默认值
@@ -155,6 +164,13 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var delayedCaptureShortcut: KeyboardShortcut {
+        didSet {
+            store(delayedCaptureShortcut, forKey: Keys.delayedCaptureShortcut)
+            onShortcutsChanged?()
+        }
+    }
+
     /// 由 AppDelegate 装上：快捷键一改就重新注册。
     var onShortcutsChanged: (() -> Void)?
 
@@ -168,6 +184,7 @@ final class AppSettings: ObservableObject {
             Keys.autoClassify: true,
             Keys.detectSensitive: true,
             Keys.showMagnifier: true,
+            Keys.captureDelay: 3,
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
             Keys.defaultColorIndex: 0,
             Keys.defaultWidthIndex: 1,
@@ -183,6 +200,7 @@ final class AppSettings: ObservableObject {
         autoClassify = defaults.bool(forKey: Keys.autoClassify)
         detectSensitive = defaults.bool(forKey: Keys.detectSensitive)
         showMagnifier = defaults.bool(forKey: Keys.showMagnifier)
+        captureDelay = defaults.integer(forKey: Keys.captureDelay)
         enterBehavior = defaults.string(forKey: Keys.enterBehavior)
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish
         defaultColorIndex = defaults.integer(forKey: Keys.defaultColorIndex)
@@ -195,11 +213,14 @@ final class AppSettings: ObservableObject {
             .flatMap(UploadLinkFormat.init(rawValue:)) ?? .raw
         captureShortcut = Self.load(Keys.captureShortcut, from: defaults) ?? .captureDefault
         galleryShortcut = Self.load(Keys.galleryShortcut, from: defaults) ?? .galleryDefault
+        delayedCaptureShortcut = Self.load(Keys.delayedCaptureShortcut, from: defaults)
+            ?? .delayedCaptureDefault
     }
 
     func resetShortcuts() {
         captureShortcut = .captureDefault
         galleryShortcut = .galleryDefault
+        delayedCaptureShortcut = .delayedCaptureDefault
     }
 
     private func store(_ shortcut: KeyboardShortcut, forKey key: String) {
