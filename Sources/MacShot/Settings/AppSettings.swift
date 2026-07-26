@@ -30,6 +30,28 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// 上传成功后放进剪贴板的链接格式。
+    enum UploadLinkFormat: String, CaseIterable, Identifiable {
+        case raw
+        case markdown
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .raw:      return "纯链接"
+            case .markdown: return "Markdown"
+            }
+        }
+
+        func format(_ url: String) -> String {
+            switch self {
+            case .raw:      return url
+            case .markdown: return "![](\(url))"
+            }
+        }
+    }
+
     private enum Keys {
         static let copyToClipboard = "copyToClipboard"
         static let runOCR = "runOCR"
@@ -40,6 +62,11 @@ final class AppSettings: ObservableObject {
         static let defaultWidthIndex = "defaultWidthIndex"
         static let captureShortcut = "captureShortcut"
         static let galleryShortcut = "galleryShortcut"
+        static let uploadEndpoint = "uploadEndpoint"
+        static let uploadFieldName = "uploadFieldName"
+        static let uploadHeaders = "uploadHeaders"
+        static let uploadResponsePath = "uploadResponsePath"
+        static let uploadLinkFormat = "uploadLinkFormat"
     }
 
     private let defaults = UserDefaults.standard
@@ -80,6 +107,32 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(autoClassify, forKey: Keys.autoClassify) }
     }
 
+    // MARK: - 上传图床
+
+    /// 图床上传接口地址。空 = 未配置，「上传」动作会提示先去设置。
+    @Published var uploadEndpoint: String {
+        didSet { defaults.set(uploadEndpoint, forKey: Keys.uploadEndpoint) }
+    }
+
+    /// multipart/form-data 里图片文件的字段名。PicGo / uPic 系图床通常是 "file"。
+    @Published var uploadFieldName: String {
+        didSet { defaults.set(uploadFieldName, forKey: Keys.uploadFieldName) }
+    }
+
+    /// 自定义请求头，每行一条 "Key: Value"。可能含 token，明文存 UserDefaults（与同类工具一致）。
+    @Published var uploadHeaders: String {
+        didSet { defaults.set(uploadHeaders, forKey: Keys.uploadHeaders) }
+    }
+
+    /// 从 JSON 响应里取链接的点分路径（如 "data.url"）。留空 = 整个响应体就是链接。
+    @Published var uploadResponsePath: String {
+        didSet { defaults.set(uploadResponsePath, forKey: Keys.uploadResponsePath) }
+    }
+
+    @Published var uploadLinkFormat: UploadLinkFormat {
+        didSet { defaults.set(uploadLinkFormat.rawValue, forKey: Keys.uploadLinkFormat) }
+    }
+
     // MARK: - 快捷键
 
     @Published var captureShortcut: KeyboardShortcut {
@@ -110,7 +163,12 @@ final class AppSettings: ObservableObject {
             Keys.showMagnifier: true,
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
             Keys.defaultColorIndex: 0,
-            Keys.defaultWidthIndex: 1
+            Keys.defaultWidthIndex: 1,
+            Keys.uploadEndpoint: "",
+            Keys.uploadFieldName: "file",
+            Keys.uploadHeaders: "",
+            Keys.uploadResponsePath: "",
+            Keys.uploadLinkFormat: UploadLinkFormat.raw.rawValue
         ])
 
         copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
@@ -121,6 +179,12 @@ final class AppSettings: ObservableObject {
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish
         defaultColorIndex = defaults.integer(forKey: Keys.defaultColorIndex)
         defaultWidthIndex = defaults.integer(forKey: Keys.defaultWidthIndex)
+        uploadEndpoint = defaults.string(forKey: Keys.uploadEndpoint) ?? ""
+        uploadFieldName = defaults.string(forKey: Keys.uploadFieldName) ?? "file"
+        uploadHeaders = defaults.string(forKey: Keys.uploadHeaders) ?? ""
+        uploadResponsePath = defaults.string(forKey: Keys.uploadResponsePath) ?? ""
+        uploadLinkFormat = defaults.string(forKey: Keys.uploadLinkFormat)
+            .flatMap(UploadLinkFormat.init(rawValue:)) ?? .raw
         captureShortcut = Self.load(Keys.captureShortcut, from: defaults) ?? .captureDefault
         galleryShortcut = Self.load(Keys.galleryShortcut, from: defaults) ?? .galleryDefault
     }

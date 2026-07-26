@@ -40,6 +40,7 @@ enum ActionID {
     static let pin = "pin"
     static let copy = "copy"
     static let save = "save"
+    static let upload = "upload"
     static let close = "close"
     static let bugReport = "bug-report"
     static let copyText = "copy-text"
