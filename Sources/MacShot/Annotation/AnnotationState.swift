@@ -27,6 +27,11 @@ final class AnnotationState {
     /// 这样不管画布怎么缩放，画出来的线在屏幕上都是同样粗细。
     var strokeScale: Double = 1
 
+    /// 画布单位到**图像像素**的倍率。测量标注的数值按它换算：
+    /// 覆盖层画布是显示器的点（Retina 上 1 点 = 2 像素），钉图/编辑器画布本身就是像素（保持 1）。
+    /// 数值在生成图层时烤进 `text`，投影导出后不再重算 —— 预览和成品显示同一个数。
+    var pixelScale: Double = 1
+
     private(set) var layers = Layers<CanvasSpace>()
     private(set) var editingTextID: UUID?
 
@@ -119,7 +124,7 @@ final class AnnotationState {
     private func makeLayer(tool: AnnotationTool, from a: CGPoint, to b: CGPoint) -> Layer {
         var c = color
         if tool == .highlight { c.a = 0.4 }
-        return Layer(
+        var layer = Layer(
             kind: tool.layerKind,
             rect: LRect(from: a, to: b),
             color: c,
@@ -127,6 +132,35 @@ final class AnnotationState {
             text: "",
             fontSize: fontSize
         )
+        if tool == .dimension {
+            prepareDimension(&layer)
+        }
+        return layer
+    }
+
+    /// 测量层的整形：拖拽过程中每帧都会经过这里（`pendingLayer` 重建图层）。
+    ///   · 近似横/竖的拖拽（薄轴不足 8 像素）吸附成单维 —— 薄轴收拢为 0，
+    ///     渲染层据此退化为双箭头线段，只标长度
+    ///   · 标签数值按 `pixelScale` 换算成图像像素后烤进 `text`：
+    ///     覆盖层画布是点、导出是像素，只有生成时算好才能保证预览和成品显示同一个数
+    private func prepareDimension(_ layer: inout Layer) {
+        var r = layer.rect.cg.standardized
+        if min(r.width, r.height) * pixelScale < 8 {
+            r = r.width >= r.height
+                ? CGRect(x: r.minX, y: r.midY, width: r.width, height: 0)
+                : CGRect(x: r.midX, y: r.minY, width: 0, height: r.height)
+        }
+        layer.rect = LRect(r)
+
+        let w = Int((r.width * pixelScale).rounded())
+        let h = Int((r.height * pixelScale).rounded())
+        if r.height == 0 {
+            layer.text = "\(w) px"
+        } else if r.width == 0 {
+            layer.text = "\(h) px"
+        } else {
+            layer.text = "\(w) × \(h) px"
+        }
     }
 
     // MARK: - 输入

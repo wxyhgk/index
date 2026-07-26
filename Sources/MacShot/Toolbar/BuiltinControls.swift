@@ -202,7 +202,7 @@ struct ActionControl: ToolbarControl {
 
 extension ToolbarRegistry {
 
-    /// 常驻工具条的工具。椭圆、高亮、聚光灯只保留快捷键（O / H / S）——
+    /// 常驻工具条的工具。椭圆、高亮、聚光灯、测量只保留快捷键（O / H / S / M）——
     /// 截图标注里「指出、框住、写字、打码、标步骤」是绝对主力。
     static let pinnedTools: [AnnotationTool] = [.rect, .arrow, .text, .pixelate, .counter]
 

@@ -65,6 +65,9 @@ final class OverlayView: NSView {
         self.isPrimaryScreen = isPrimaryScreen
         super.init(frame: .zero)
 
+        // 覆盖层画布是显示器的点；测量标注要报图像像素，倍率从冻结快照取。
+        annotation.pixelScale = Double(model.snapshot.scale)
+
         wantsLayer = true
 
         imageLayer.contents = model.snapshot.image

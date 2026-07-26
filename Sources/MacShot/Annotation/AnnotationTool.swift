@@ -15,6 +15,8 @@ enum AnnotationTool: CaseIterable {
     case counter
     /// 聚光灯：矩形亮区，区域外整体压暗。
     case spotlight
+    /// 测量：拖出矩形/线段，旁边标注图像像素尺寸。
+    case dimension
 
     var layerKind: Layer.Kind {
         switch self {
@@ -28,6 +30,7 @@ enum AnnotationTool: CaseIterable {
         case .crop: return .crop
         case .counter: return .counter
         case .spotlight: return .spotlight
+        case .dimension: return .dimension
         }
     }
 
@@ -66,7 +69,8 @@ extension AnnotationTool {
         ToolShortcut(keyCode: KeyCode.x, tool: .crop,      label: "X"),
         ToolShortcut(keyCode: KeyCode.n, tool: .counter,   label: "N"),
         // 裸 S 选聚光灯；⌘S 在两处键盘路由里都先判修饰键，保存不受影响。
-        ToolShortcut(keyCode: KeyCode.s, tool: .spotlight, label: "S")
+        ToolShortcut(keyCode: KeyCode.s, tool: .spotlight, label: "S"),
+        ToolShortcut(keyCode: KeyCode.m, tool: .dimension, label: "M")
     ]
 
     /// 返回值是双层可选：外层 nil 表示这个键没绑工具，内层 nil 表示指针模式。
