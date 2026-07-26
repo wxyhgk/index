@@ -91,9 +91,45 @@ struct GalleryView: View {
                 }
                 .buttonStyle(.plain)
             }
+            categoryMenu
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// 分类筛选。选项按现有数据聚合，选中后与搜索条件叠加。
+    private var categoryMenu: some View {
+        Menu {
+            Button {
+                store.categoryFilter = nil
+                store.reload()
+            } label: {
+                if store.categoryFilter == nil {
+                    Label("全部", systemImage: "checkmark")
+                } else {
+                    Text("全部")
+                }
+            }
+            Divider()
+            ForEach(store.categories(), id: \.name) { category in
+                Button {
+                    store.categoryFilter = category.name
+                    store.reload()
+                } label: {
+                    if store.categoryFilter == category.name {
+                        Label("\(category.name)（\(category.count)）", systemImage: "checkmark")
+                    } else {
+                        Text("\(category.name)（\(category.count)）")
+                    }
+                }
+            }
+        } label: {
+            Label(store.categoryFilter ?? "分类", systemImage: "tag")
+                .font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .foregroundStyle(store.categoryFilter == nil ? Color.secondary : Color.accentColor)
     }
 
     private var emptyLibrary: some View {
@@ -196,6 +232,8 @@ private struct ShotDetailPane: View {
 
     /// 修订历史只在切换截图 / 关闭编辑器时查一次数据库，不再挂在 body 上。
     @State private var revisions: [RevisionSummary] = []
+    /// 派生属性同理，切换截图时查一次。
+    @State private var category: String?
 
     var body: some View {
         ScrollView {
@@ -210,7 +248,10 @@ private struct ShotDetailPane: View {
             .padding(16)
         }
         .background(.background.secondary)
-        .task(id: shot.id) { loadRevisions() }
+        .task(id: shot.id) {
+            loadRevisions()
+            category = shot.id.flatMap { store.attributeText(shotID: $0, key: AttributeKey.category) }
+        }
         .onChange(of: selection.editing) { _, newValue in
             if newValue == nil { loadRevisions() }
         }
@@ -265,6 +306,7 @@ private struct ShotDetailPane: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("来源").font(.headline)
             row("App", shot.appName)
+            row("分类", category)
             row("Bundle ID", shot.appBundleID)
             row("版本", shot.appVersion.map { v in
                 shot.appBuild.map { "\(v) (\($0))" } ?? v

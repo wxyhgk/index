@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupHotKeys()
 
+        AttributeBackfill.runIfNeeded()   // 给老截图补分类，后台串行，不影响启动
+
         settings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
 
         if !ScreenRecordingPermission.isGranted {
