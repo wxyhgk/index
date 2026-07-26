@@ -100,6 +100,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         delayed.tag = Tag.delayedCapture
         menu.addItem(delayed)
 
+        let scroll = NSMenuItem(
+            title: "滚动截图",
+            action: #selector(startScrollCapture),
+            keyEquivalent: ""
+        )
+        scroll.target = self
+        scroll.tag = Tag.scrollCapture
+        menu.addItem(scroll)
+
         let record = NSMenuItem(title: "录屏…", action: #selector(toggleRecording), keyEquivalent: "")
         record.target = self
         record.tag = Tag.record
@@ -135,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         static let gallery = 2
         static let delayedCapture = 3
         static let record = 4
+        static let scrollCapture = 5
     }
 
     // MARK: - 快捷键
@@ -149,6 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.bind("record", to: settings.recordingShortcut) { [weak self] in
             self?.toggleRecording()
         }
+        GlobalHotKeyCenter.shared.bind("capture-scroll", to: settings.scrollCaptureShortcut) { [weak self] in
+            self?.startScrollCapture()
+        }
         GlobalHotKeyCenter.shared.bind("gallery", to: settings.galleryShortcut) { [weak self] in
             self?.openGallery()
         }
@@ -158,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.update("capture", to: settings.captureShortcut)
         GlobalHotKeyCenter.shared.update("capture-delayed", to: settings.delayedCaptureShortcut)
         GlobalHotKeyCenter.shared.update("record", to: settings.recordingShortcut)
+        GlobalHotKeyCenter.shared.update("capture-scroll", to: settings.scrollCaptureShortcut)
         GlobalHotKeyCenter.shared.update("gallery", to: settings.galleryShortcut)
     }
 
@@ -174,6 +188,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleRecording() {
         RecordingCoordinator.shared.toggle()
+    }
+
+    /// 采集期间再触发一次 = 完成（begin 内部处理）。
+    @objc private func startScrollCapture() {
+        ScrollCaptureController.shared.begin()
     }
 
     @objc private func openGallery() {
@@ -246,6 +265,8 @@ extension AppDelegate: NSMenuDelegate {
         menu.item(withTag: Tag.capture)?.title = "截图\t\(settings.captureShortcut.displayString)"
         menu.item(withTag: Tag.delayedCapture)?.title =
             "延时截图（\(settings.captureDelay) 秒）\t\(settings.delayedCaptureShortcut.displayString)"
+        menu.item(withTag: Tag.scrollCapture)?.title =
+            "滚动截图\t\(settings.scrollCaptureShortcut.displayString)"
         menu.item(withTag: Tag.gallery)?.title = "图库…\t\(settings.galleryShortcut.displayString)"
         updateRecordingMenuItem()
     }

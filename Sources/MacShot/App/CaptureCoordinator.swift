@@ -180,7 +180,8 @@ final class CaptureCoordinator {
 
     // MARK: - 权限
 
-    private func requestPermissionThenPrompt() {
+    /// 滚动截图入口也复用这份引导，避免出现第二份权限弹窗实现。
+    func requestPermissionThenPrompt() {
         // 这一步会触发系统的授权弹窗（首次）。
         ScreenRecordingPermission.request()
 

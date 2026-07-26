@@ -67,6 +67,7 @@ final class AppSettings: ObservableObject {
         static let galleryShortcut = "galleryShortcut"
         static let delayedCaptureShortcut = "delayedCaptureShortcut"
         static let recordingShortcut = "recordingShortcut"
+        static let scrollCaptureShortcut = "scrollCaptureShortcut"
         static let uploadEndpoint = "uploadEndpoint"
         static let uploadFieldName = "uploadFieldName"
         static let uploadHeaders = "uploadHeaders"
@@ -185,6 +186,13 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var scrollCaptureShortcut: KeyboardShortcut {
+        didSet {
+            store(scrollCaptureShortcut, forKey: Keys.scrollCaptureShortcut)
+            onShortcutsChanged?()
+        }
+    }
+
     /// 由 AppDelegate 装上：快捷键一改就重新注册。
     var onShortcutsChanged: (() -> Void)?
 
@@ -232,6 +240,8 @@ final class AppSettings: ObservableObject {
         delayedCaptureShortcut = Self.load(Keys.delayedCaptureShortcut, from: defaults)
             ?? .delayedCaptureDefault
         recordingShortcut = Self.load(Keys.recordingShortcut, from: defaults) ?? .recordingDefault
+        scrollCaptureShortcut = Self.load(Keys.scrollCaptureShortcut, from: defaults)
+            ?? .scrollCaptureDefault
     }
 
     func resetShortcuts() {
@@ -239,6 +249,7 @@ final class AppSettings: ObservableObject {
         galleryShortcut = .galleryDefault
         delayedCaptureShortcut = .delayedCaptureDefault
         recordingShortcut = .recordingDefault
+        scrollCaptureShortcut = .scrollCaptureDefault
     }
 
     private func store(_ shortcut: KeyboardShortcut, forKey key: String) {

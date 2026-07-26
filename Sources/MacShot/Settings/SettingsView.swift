@@ -202,6 +202,10 @@ private struct ShortcutSettings: View {
                     ShortcutRecorder(shortcut: $settings.recordingShortcut)
                         .frame(width: 130, height: 24)
                 }
+                LabeledContent("滚动截图") {
+                    ShortcutRecorder(shortcut: $settings.scrollCaptureShortcut)
+                        .frame(width: 130, height: 24)
+                }
                 LabeledContent("打开图库") {
                     ShortcutRecorder(shortcut: $settings.galleryShortcut)
                         .frame(width: 130, height: 24)
