@@ -139,7 +139,11 @@ final class GalleryKeyboard {
     /// 放得下 n 列的条件是 n·zoom + (n-1)·s4 ≤ width - 2·s4，
     /// 解出 n = floor((width - 2·s4 + s4) / (zoom + s4))。
     /// 超出 minimum 的富余只会拉宽已有列（maximum = 1.5×），不会改变列数。
+    /// 网格实际使用的列数（fixedColumns 算好上报）。有它就不再反推。
+    var columnCountOverride: Int?
+
     func columnCount() -> Int {
+        if let count = columnCountOverride { return count }
         var zoom = UserDefaults.standard.double(forKey: "galleryZoom")
         if zoom <= 0 { zoom = 200 } // @AppStorage("galleryZoom") 的默认值
         let available = gridWidth - 2 * DS.s4 + DS.s4

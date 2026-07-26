@@ -88,6 +88,9 @@ struct GalleryView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var modelStore = CLIPModelStore.shared
 
+    /// 网格列的稳定宽度（外层量取，不受常驻滚动条挤压），列数由它算。
+    @State private var gridWidth: CGFloat = 900
+
     /// 详情栏（inspector）开关，跨启动记住。
     @AppStorage("galleryInspectorShown") private var showInspector = true
 
@@ -121,7 +124,7 @@ struct GalleryView: View {
             GallerySidebar()
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } detail: {
-            GalleryGrid()
+            GalleryGrid(width: gridWidth)
                 .background(gridWidthReader)
         }
         .inspector(isPresented: $showInspector) {
@@ -200,6 +203,7 @@ struct GalleryView: View {
             Color.clear
                 .onChange(of: proxy.size.width, initial: true) { _, width in
                     GalleryKeyboard.shared.gridWidth = width
+                    gridWidth = width
                 }
         }
     }
@@ -457,6 +461,9 @@ private struct ShotSection: Identifiable {
 
 private struct GalleryGrid: View {
 
+    /// 外层（不受滚动条出没影响的）可用宽度，列数由它显式算出。
+    let width: CGFloat
+
     @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
 
@@ -473,8 +480,20 @@ private struct GalleryGrid: View {
     @State private var timelineShot: Shot?
     @State private var similarShot: Shot?
 
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: zoom, maximum: zoom * 1.5), spacing: DS.s4)]
+    /// 列布局用**固定列宽**，由外层稳定宽度显式算出，绝不用 .adaptive ——
+    /// 接实体鼠标时 macOS 显示常驻滚动条：内容超高 → 滚动条挤窄内容区 →
+    /// adaptive 重排少一列 → 内容变矮 → 滚动条消失 → 变宽 → 翻回来……
+    /// 自持振荡，表现为尾部卡片无输入也一直闪。列数只看外层宽度就稳了。
+    private func fixedColumns(for width: CGFloat) -> (items: [GridItem], count: Int) {
+        var count = max(1, Int((width - 2 * DS.s4 + DS.s4) / (zoom + DS.s4)))
+        // 给常驻滚动条预留：列宽按可用宽扣除 16pt 计算，列数不受它出没影响。
+        let usable = width - 2 * DS.s4 - 16 - CGFloat(count - 1) * DS.s4
+        if usable < CGFloat(count) * zoom * 0.6 { count = max(1, count - 1) }
+        let itemWidth = max(80, (width - 2 * DS.s4 - 16 - CGFloat(count - 1) * DS.s4) / CGFloat(count))
+        return (
+            Array(repeating: GridItem(.fixed(itemWidth), spacing: DS.s4), count: count),
+            count
+        )
     }
 
     /// 网格内容的重算触发器：模式切换或数据变化都要重新分组。
@@ -559,24 +578,32 @@ private struct GalleryGrid: View {
     }
 
     private var grid: some View {
-        ScrollViewReader { proxy in
+        let layout = fixedColumns(for: width)
+        return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: DS.s2, pinnedViews: [.sectionHeaders]) {
+                // 单层 LazyVGrid + Section：嵌套懒容器（LazyVStack>LazyVGrid）
+                // 在内容尾部有已知的重排抖动，扁平化后吸顶头由网格自己管。
+                LazyVGrid(
+                    columns: layout.items,
+                    alignment: .leading,
+                    spacing: DS.s4,
+                    pinnedViews: [.sectionHeaders]
+                ) {
                     ForEach(sections) { section in
                         Section {
-                            LazyVGrid(columns: columns, spacing: DS.s4) {
-                                ForEach(section.shots) { shot in
-                                    card(for: shot)
-                                }
+                            ForEach(section.shots) { shot in
+                                card(for: shot)
                             }
-                            .padding(.horizontal, DS.s4)
-                            .padding(.bottom, DS.s3)
                         } header: {
                             sectionHeader(for: section)
                         }
                     }
                 }
+                .padding(.horizontal, DS.s4)
                 .padding(.bottom, DS.s3)
+            }
+            .onChange(of: layout.count, initial: true) { _, count in
+                GalleryKeyboard.shared.columnCountOverride = count
             }
             // 时间线 / 相似 sheet 里选中某张后要能真的滚到它。
             // anchor 用 nil = 最小滚动：目标已可见就一动不动 ——
