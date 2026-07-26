@@ -105,7 +105,7 @@ struct WidthControl: ToolbarControl {
     }
 }
 
-// MARK: - 撤销
+// MARK: - 撤销 / 重做
 
 struct UndoControl: ToolbarControl {
     let id = "undo"
@@ -113,8 +113,9 @@ struct UndoControl: ToolbarControl {
     var group: ToolbarGroup { .history }
     var order: Int { 0 }
 
-    /// 没东西可撤的时候不占位置。
-    func isVisible(_ context: ToolbarContext) -> Bool { !context.annotation.isEmpty }
+    /// 没操作可撤的时候不占位置。看的是操作栈而不是图层数 ——
+    /// 移动、删除、改样式都可撤，哪怕图层数没变。
+    func isVisible(_ context: ToolbarContext) -> Bool { context.annotation.canUndo }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         ToolbarStyle.drawCenteredSymbol("arrow.uturn.backward", in: frame, pointSize: 13)
@@ -122,6 +123,23 @@ struct UndoControl: ToolbarControl {
 
     func activate(_ context: ToolbarContext) {
         context.annotation.undo()
+    }
+}
+
+struct RedoControl: ToolbarControl {
+    let id = "redo"
+    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var group: ToolbarGroup { .history }
+    var order: Int { 1 }
+
+    func isVisible(_ context: ToolbarContext) -> Bool { context.annotation.canRedo }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("arrow.uturn.forward", in: frame, pointSize: 13)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        context.annotation.redo()
     }
 }
 
@@ -174,5 +192,6 @@ extension ToolbarRegistry {
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
         AnnotationState.widths.indices.forEach { registry.register(WidthControl(index: $0)) }
         registry.register(UndoControl())
+        registry.register(RedoControl())
     }
 }

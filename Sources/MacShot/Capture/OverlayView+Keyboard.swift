@@ -14,7 +14,12 @@ extension OverlayView {
         let cmd = event.modifierFlags.contains(.command)
 
         if cmd, event.keyCode == KeyCode.z {
-            redrawIfNeeded(annotation.undo())
+            // ⇧⌘Z 是重做，必须先于单独的 ⌘Z 判断。
+            if event.modifierFlags.contains(.shift) {
+                redrawIfNeeded(annotation.redo())
+            } else {
+                redrawIfNeeded(annotation.undo())
+            }
             return
         }
 

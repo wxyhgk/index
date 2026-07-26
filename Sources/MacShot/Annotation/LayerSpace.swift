@@ -30,6 +30,11 @@ struct Layers<Space: LayerSpace>: Equatable {
 
     mutating func append(_ layer: Layer) { elements.append(layer) }
 
+    /// 按指定位置插回（撤销删除时恢复图层的叠放次序用）。越界时收敛到末尾。
+    mutating func insert(_ layer: Layer, at index: Int) {
+        elements.insert(layer, at: min(max(index, 0), elements.count))
+    }
+
     @discardableResult
     mutating func removeLast() -> Layer? { elements.popLast() }
 
