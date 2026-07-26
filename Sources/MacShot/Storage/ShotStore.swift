@@ -29,6 +29,18 @@ final class ShotStore: ObservableObject {
 
     @Published var filter: GalleryFilter = .all
 
+    /// 图库搜索模式：false = 精确（FTS），true = 语义（CLIP 向量）。
+    @Published var semanticMode = false
+    /// 语义搜索结果。nil = 还没搜过（网格显示 shots），非 nil = 显示它。
+    @Published private(set) var semanticResults: [Shot]?
+    /// 语义搜索进行中（文本编码 + 全库比对），UI 显示进度用。
+    @Published private(set) var isSemanticSearching = false
+
+    /// 图库网格实际展示的内容。语义模式下已出结果就用结果，否则退回常规列表。
+    var displayShots: [Shot] {
+        semanticMode ? (semanticResults ?? shots) : shots
+    }
+
     /// 收藏的截图 ID。随 reload() 一起刷新，UI 直接读集合，不逐卡片查库。
     @Published private(set) var favoriteIDs: Set<Int64> = []
 
@@ -448,6 +460,61 @@ final class ShotStore: ObservableObject {
         let fetched = shots(ids: rankedIDs)
         let byID = Dictionary(uniqueKeysWithValues: fetched.compactMap { s in s.id.map { ($0, s) } })
         // IN 查询不保序，按距离升序重排。
+        return rankedIDs.compactMap { byID[$0] }
+    }
+
+    // MARK: - 语义搜索
+
+    /// 用当前搜索框文本跑一次语义搜索，结果写进 `semanticResults`。
+    /// 空查询等于清空 —— 网格退回常规列表。
+    func runSemanticSearch() async {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            semanticResults = nil
+            return
+        }
+        isSemanticSearching = true
+        semanticResults = await semanticSearch(query: query)
+        isSemanticSearching = false
+    }
+
+    /// 退出语义模式或清空搜索时调用。
+    func clearSemanticResults() {
+        semanticResults = nil
+    }
+
+    /// 按自然语言描述搜截图：查询文本过 CLIP 文本编码器，
+    /// 与全部图像向量算余弦相似度（向量已归一化，等于点积），降序取前 `limit` 张。
+    ///
+    /// 线程边界与 `similarShots` 相同：候选载荷在主 actor 上一次性拉出，
+    /// 反序列化和点积挪到后台，算完回主 actor 按 ID 取 Shot。
+    /// 全量线性扫描，512 维 × 几千张在毫秒量级。
+    func semanticSearch(query: String, limit: Int = 30) async -> [Shot] {
+        guard let queryVector = await CLIPEncoder.shared.embedText(query) else { return [] }
+
+        let candidates = attributePayloads(key: AttributeKey.clipEmbedding)
+        guard !candidates.isEmpty else { return [] }
+
+        let rankedIDs = await Task.detached(priority: .userInitiated) { () -> [Int64] in
+            var scored: [(shotID: Int64, similarity: Float)] = []
+            scored.reserveCapacity(candidates.count)
+            for candidate in candidates {
+                // 载荷损坏或维度不匹配（未来换模型）的直接跳过。
+                guard let vector = CLIPEncoder.vector(from: candidate.payload),
+                      vector.count == queryVector.count
+                else { continue }
+                scored.append((candidate.shotID, CLIPEncoder.dot(queryVector, vector)))
+            }
+            return scored
+                .sorted { $0.similarity > $1.similarity }
+                .prefix(limit)
+                .map(\.shotID)
+        }.value
+        guard !rankedIDs.isEmpty else { return [] }
+
+        let fetched = shots(ids: rankedIDs)
+        let byID = Dictionary(uniqueKeysWithValues: fetched.compactMap { s in s.id.map { ($0, s) } })
+        // IN 查询不保序，按相似度降序重排。
         return rankedIDs.compactMap { byID[$0] }
     }
 

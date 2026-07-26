@@ -55,6 +55,10 @@ enum AttributeKey {
     /// Vision 图像特征指纹（NSKeyedArchiver 序列化的 VNFeaturePrintObservation）。
     /// 二进制载荷，text 必须为 nil（不进全文索引）。
     static let featurePrint = "vision.featureprint"
+    /// MobileCLIP-S0 图像向量（512 维 Float32 的原始字节，已归一化）。
+    /// 二进制载荷，text 必须为 nil（不进全文索引）。key 带版本号 ——
+    /// 换模型时换 key，新旧向量不会被误比。
+    static let clipEmbedding = "clip.embedding.v1"
     /// 敏感内容检测结果（[SensitiveRegion] 的 JSON）。
     /// searchableText 只放命中的**种类**汇总（如 "邮箱,密钥"）——
     /// 具体内容（邮箱地址、密钥本身）绝不进全文索引。

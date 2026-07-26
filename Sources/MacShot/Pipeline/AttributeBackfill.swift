@@ -27,6 +27,10 @@ enum AttributeBackfill {
         if AppSettings.shared.detectSensitive {
             jobs.append(Job(key: AttributeKey.sensitiveRegions, processor: SensitiveContentProcessor()))
         }
+        // 仅在模型就绪时回填 —— 未下载时排进任务只会逐张空跑一遍。
+        if AppSettings.shared.semanticSearch && CLIPModelStore.shared.isReady {
+            jobs.append(Job(key: AttributeKey.clipEmbedding, processor: CLIPEmbeddingProcessor()))
+        }
         return jobs
     }
 

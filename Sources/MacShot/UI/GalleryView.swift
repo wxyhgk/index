@@ -18,9 +18,18 @@ struct GalleryView: View {
 
     @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
+    // 语义模式切换只在「开关已开 + 模型已就绪」时出现，所以要订阅这两个。
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var modelStore = CLIPModelStore.shared
+
+    private var semanticAvailable: Bool {
+        settings.semanticSearch && modelStore.isReady
+    }
 
     private var selectedShot: Shot? {
-        store.shots.first { $0.id == selection.selectedID }
+        // 语义结果可能不在常规列表（最近 500 张）里，两边都找。
+        store.displayShots.first { $0.id == selection.selectedID }
+            ?? store.shots.first { $0.id == selection.selectedID }
     }
 
     var body: some View {
@@ -46,9 +55,39 @@ struct GalleryView: View {
         .searchable(
             text: $store.searchText,
             placement: .toolbar,
-            prompt: "搜 App、标题、网址或截图里的字"
+            prompt: store.semanticMode
+                ? "描述画面内容，回车搜索（英文效果最好）"
+                : "搜 App、标题、网址或截图里的字"
         )
-        .onChange(of: store.searchText) { _, _ in store.reload() }
+        .onChange(of: store.searchText) { _, newValue in
+            if store.semanticMode {
+                // 语义搜索按回车触发；清空输入即恢复常规列表。
+                if newValue.trimmingCharacters(in: .whitespaces).isEmpty {
+                    store.clearSemanticResults()
+                }
+            } else {
+                store.reload()
+            }
+        }
+        .onSubmit(of: .search) {
+            guard store.semanticMode else { return }
+            Task { await store.runSemanticSearch() }
+        }
+        .toolbar {
+            if semanticAvailable {
+                ToolbarItem(placement: .primaryAction) {
+                    Picker("搜索模式", selection: $store.semanticMode) {
+                        Text("精确").tag(false)
+                        Text("语义").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .help("精确：全文匹配文字与元数据；语义：用自然语言描述画面，按回车搜索")
+                }
+            }
+        }
+        .onChange(of: store.semanticMode) { _, semantic in
+            if !semantic { store.clearSemanticResults() }
+        }
         .frame(minWidth: 1000, minHeight: 600)
         .sheet(item: $selection.editing) { shot in
             EditorView(shot: shot)
@@ -231,9 +270,15 @@ private struct GalleryGrid: View {
         [GridItem(.adaptive(minimum: zoom, maximum: zoom * 1.5), spacing: 16)]
     }
 
+    /// 网格内容的重算触发器：模式切换或数据变化都要重新分组。
+    private struct GridKey: Equatable {
+        let semanticMode: Bool
+        let shots: [Shot]
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            if store.shots.isEmpty {
+            if store.displayShots.isEmpty {
                 emptyState
             } else {
                 ScrollView {
@@ -270,27 +315,60 @@ private struct GalleryGrid: View {
             bottomBar
         }
         .background(.background)
-        .task(id: store.shots) { sections = ShotSection.group(store.shots) }
+        .task(id: GridKey(semanticMode: store.semanticMode, shots: store.displayShots)) {
+            // 语义结果本身就是排序（相似度降序），按时间分组会打乱它 —— 单段平铺。
+            if store.semanticMode, let results = store.semanticResults {
+                sections = results.isEmpty
+                    ? []
+                    : [ShotSection(id: "语义", title: "按相似度排序", shots: results)]
+            } else {
+                sections = ShotSection.group(store.displayShots)
+            }
+        }
     }
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label(
-                store.searchText.isEmpty ? "还没有截图" : "没有匹配的结果",
-                systemImage: store.searchText.isEmpty
-                    ? "photo.on.rectangle.angled" : "magnifyingglass"
-            )
+            Label(emptyTitle, systemImage: emptyIcon)
         } description: {
-            Text(store.searchText.isEmpty ? "按 ⌃⌘A 开始截图" : "换个关键词，或清除侧边栏筛选")
+            Text(emptyDescription)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var emptyTitle: String {
+        if store.semanticMode && store.semanticResults != nil { return "没有语义匹配的结果" }
+        return store.searchText.isEmpty ? "还没有截图" : "没有匹配的结果"
+    }
+
+    private var emptyIcon: String {
+        if store.semanticMode && store.semanticResults != nil { return "sparkle.magnifyingglass" }
+        return store.searchText.isEmpty ? "photo.on.rectangle.angled" : "magnifyingglass"
+    }
+
+    private var emptyDescription: String {
+        if store.semanticMode && store.semanticResults != nil {
+            return "截图可能还没完成向量分析，或换种描述再试（英文效果最好）"
+        }
+        return store.searchText.isEmpty ? "按 ⌃⌘A 开始截图" : "换个关键词，或清除侧边栏筛选"
+    }
+
     private var bottomBar: some View {
         HStack(spacing: 12) {
-            Text("\(store.shots.count) 张截图")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if store.isSemanticSearching {
+                ProgressView().controlSize(.mini)
+                Text("语义搜索中…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if store.semanticMode, store.semanticResults != nil {
+                Text("语义搜索：最相关的 \(store.displayShots.count) 张")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("\(store.displayShots.count) 张截图")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             Image(systemName: "photo")
                 .font(.system(size: 9))
