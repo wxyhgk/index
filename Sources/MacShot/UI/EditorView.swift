@@ -38,7 +38,8 @@ struct EditorView: View {
 
     /// 编辑器工具栏的展示顺序。`nil` 是指针模式。
     private static let toolOrder: [AnnotationTool?] =
-        [nil, .rect, .ellipse, .arrow, .line, .text, .counter, .highlight, .spotlight, .pixelate, .crop]
+        [nil, .rect, .ellipse, .arrow, .line, .text, .counter, .highlight, .spotlight,
+         .dimension, .pixelate, .crop]
 
     var body: some View {
         // 读一下计数器，让所有标注变更都能触发 body 重算。
