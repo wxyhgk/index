@@ -70,8 +70,12 @@ final class AnnotationState {
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
 
+    /// `setText` 连续针对哪一层在合并撤销记录。任何其它记录入栈都会打断合并。
+    private var coalescingTextID: UUID?
+
     /// 所有写路径的唯一入口：新动作发生后，之前撤销掉的分支就不可再重做。
     private func record(_ mutation: Mutation) {
+        coalescingTextID = nil
         undoStack.append(mutation)
         redoStack.removeAll()
     }
@@ -172,6 +176,14 @@ final class AnnotationState {
         if layer.kind == .pixelate {
             pixelatePreviews[layer.id] = pixelSource(r).flatMap(LayerRenderer.pixelated)
         }
+        // 裁剪同时只允许存在一个：旧的记成可撤销的删除，再落新的。
+        if layer.kind == .crop {
+            while let index = layers.elements.firstIndex(where: { $0.kind == .crop }) {
+                let old = layers[index]
+                record(.remove(old, index: index, preview: nil))
+                layers.remove(id: old.id)
+            }
+        }
         layers.append(layer)
         record(.add(layer, preview: pixelatePreviews[layer.id]))
         return true
@@ -181,10 +193,31 @@ final class AnnotationState {
     func clear() {
         endTextEditing()
         selectedID = nil
+        dragStart = nil
+        dragCurrent = nil
+        moveID = nil
+        moveLastPoint = nil
+        moveFromRect = nil
+        moveFromPreview = nil
         layers.removeAll()
         pixelatePreviews.removeAll()
         undoStack.removeAll()
         redoStack.removeAll()
+    }
+
+    /// 载入已有图层继续编辑（图库编辑器专用；覆盖层/钉图都从空白开始，不需要它）。
+    ///
+    /// **只适用于画布空间就是图像像素的画布** —— 内部按恒等变换收进 `CanvasSpace`，
+    /// 导出时再经 `projected(onto: .zero, scale: 1)` 恒等换回。
+    /// 载入即换底，撤销栈一并清空。
+    /// - Parameter pixelSource: 与 `endDraw` 的同名参数一致：给画布空间矩形返回原始像素，
+    ///   用来为载入的马赛克图层重建预览贴片。
+    func load(_ source: Layers<ImageSpace>, pixelSource: (CGRect) -> CGImage?) {
+        clear()
+        layers = Layers<CanvasSpace>(source.elements)
+        for layer in layers.elements where layer.kind == .pixelate {
+            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap(LayerRenderer.pixelated)
+        }
     }
 
     // MARK: - 选中与拖动
@@ -214,6 +247,8 @@ final class AnnotationState {
     func select(_ id: UUID?) -> Bool {
         guard selectedID != id else { return false }
         selectedID = id
+        // 换了选中对象，文字替换的撤销合并就该重新开一条记录。
+        coalescingTextID = nil
         return true
     }
 
@@ -329,6 +364,25 @@ final class AnnotationState {
         layers[index].text.removeLast()
     }
 
+    /// 整段替换某一层的文字。图库编辑器的文本框走这里 ——
+    /// 覆盖层/钉图是逐键输入（`insertText`），编辑器是绑定一个完整字符串。
+    ///
+    /// 针对同一层的连续替换合并成一条 style 记录：撤销一次回到编辑前，
+    /// 而不是逐键回退出几十条历史。
+    func setText(id: UUID, _ text: String) {
+        guard let index = layers.firstIndex(id: id), layers[index].text != text else { return }
+        let before = layers[index]
+        layers[index].text = text
+
+        if coalescingTextID == id,
+           case .style(let sid, let original, _)? = undoStack.last, sid == id {
+            undoStack[undoStack.count - 1] = .style(id: id, before: original, after: layers[index])
+        } else {
+            record(.style(id: id, before: before, after: layers[index]))
+            coalescingTextID = id
+        }
+    }
+
     /// 结束输入。空文字图层直接丢弃，避免留下看不见的空壳。
     /// 入栈时机在这里而不是落点时：新建层写出了内容算 add，
     /// 空着丢弃算「add 的取消」不入栈；已有层内容变了算 style。
@@ -363,6 +417,7 @@ final class AnnotationState {
     @discardableResult
     func undo() -> Bool {
         endTextEditing()
+        coalescingTextID = nil
         guard let mutation = undoStack.popLast() else { return false }
         revert(mutation)
         redoStack.append(mutation)
@@ -374,6 +429,7 @@ final class AnnotationState {
         // 不结束文字编辑：endTextEditing 可能入栈新操作并清空 redoStack，
         // 那样这里就会「先毁掉再来重做」。正在输入时直接视为无事可做。
         guard editingTextID == nil, let mutation = redoStack.popLast() else { return false }
+        coalescingTextID = nil
         apply(mutation)
         undoStack.append(mutation)
         return true
