@@ -17,7 +17,11 @@ final class GalleryWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 1240, height: 760))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.toolbarStyle = .unified
-        window.center()
+        // 记住窗口位置与大小；首次启动没有记录时才居中。
+        if !window.setFrameUsingName("MacShotGallery") {
+            window.center()
+        }
+        _ = window.setFrameAutosaveName("MacShotGallery")
         super.init(window: window)
     }
 

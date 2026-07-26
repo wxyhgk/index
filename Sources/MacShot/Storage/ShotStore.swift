@@ -22,11 +22,15 @@ final class ShotStore: ObservableObject {
     /// 图库侧边栏选中的筛选维度。
     enum GalleryFilter: Hashable {
         case all
+        case favorites
         case category(String)
         case app(String)
     }
 
     @Published var filter: GalleryFilter = .all
+
+    /// 收藏的截图 ID。随 reload() 一起刷新，UI 直接读集合，不逐卡片查库。
+    @Published private(set) var favoriteIDs: Set<Int64> = []
 
     let rootDirectory: URL
     let originalsDirectory: URL
@@ -174,6 +178,47 @@ final class ShotStore: ObservableObject {
         reload()
     }
 
+    /// 删除一条派生属性。取消收藏这类「有即为真」的标记需要真正删除记录，
+    /// 而不是写一个空值 —— 筛选和计数都靠 EXISTS 判断。
+    func removeAttribute(shotID: Int64, key: String) {
+        do {
+            try dbQueue.write { db in
+                try ShotAttribute
+                    .filter(Column("shotID") == shotID && Column("key") == key)
+                    .deleteAll(db)
+            }
+        } catch {
+            NSLog("[MacShot] 删除属性 \(key) 失败: \(error)")
+            return
+        }
+        reload()
+    }
+
+    // MARK: - 收藏
+
+    func isFavorite(shotID: Int64) -> Bool {
+        favoriteIDs.contains(shotID)
+    }
+
+    func favoriteCount() -> Int {
+        favoriteIDs.count
+    }
+
+    func toggleFavorite(_ shot: Shot) {
+        guard let id = shot.id else { return }
+        if isFavorite(shotID: id) {
+            removeAttribute(shotID: id, key: AttributeKey.favorite)
+        } else {
+            // searchableText 必须是 nil：收藏是标记不是内容，进了 attributeFts
+            // 会让全文搜索命中所有收藏。
+            writeAttribute(
+                shotID: id,
+                key: AttributeKey.favorite,
+                value: .data(Data([1]), searchableText: nil)
+            )
+        }
+    }
+
     func delete(_ shot: Shot) {
         guard let id = shot.id else { return }
         _ = try? dbQueue.write { db in
@@ -251,6 +296,12 @@ final class ShotStore: ObservableObject {
             switch filter {
             case .all:
                 filterClause = ""
+            case .favorites:
+                filterClause = """
+                    AND shot.id IN (
+                        SELECT shotID FROM shotAttribute WHERE key = 'favorite'
+                    )
+                    """
             case .category(let name):
                 filterClause = """
                     AND shot.id IN (
@@ -290,6 +341,12 @@ final class ShotStore: ObservableObject {
                 LIMIT 500
                 """, arguments: StatementArguments(arguments))
         }) ?? []
+
+        favoriteIDs = Set((try? dbQueue.read { db in
+            try Int64.fetchAll(db, sql: """
+                SELECT shotID FROM shotAttribute WHERE key = 'favorite'
+                """)
+        }) ?? [])
     }
 
     var totalCount: Int {
