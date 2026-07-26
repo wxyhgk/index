@@ -25,6 +25,7 @@ final class ShotStore: ObservableObject {
         case favorites
         case category(String)
         case app(String)
+        case tag(String)
     }
 
     @Published var filter: GalleryFilter = .all
@@ -231,6 +232,129 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    // MARK: - 标签
+    //
+    // `tag` 是**多值 key**（一张图多行），绕开 `writeAttribute` —— 它的
+    // default 分支是「同 key 先删后插」的单值语义，走它会把旧标签全冲掉。
+    // 这里直接插行 / 按 (shotID, key, text) 精确删行，幂等靠 EXISTS 预查。
+
+    /// 给截图加一个标签。重复添加幂等（先查 EXISTS）；空白名忽略。
+    func addTag(shotID: Int64, _ tag: String) {
+        let name = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        do {
+            try dbQueue.write { db in
+                let exists = try Bool.fetchOne(db, sql: """
+                    SELECT EXISTS (
+                        SELECT 1 FROM shotAttribute
+                        WHERE shotID = ? AND key = ? AND text = ?
+                    )
+                    """, arguments: [shotID, AttributeKey.tag, name]) ?? false
+                guard !exists else { return }
+                var record = ShotAttribute(
+                    id: nil,
+                    shotID: shotID,
+                    key: AttributeKey.tag,
+                    text: name,
+                    payload: nil,
+                    createdAt: Date()
+                )
+                try record.insert(db)
+            }
+        } catch {
+            NSLog("[MacShot] 添加标签 \(name) 失败: \(error)")
+            return
+        }
+        reload()
+    }
+
+    /// 移除截图上的一个标签：按 (shotID, key, text) 精确删行 ——
+    /// 现有 `removeAttribute` 按 key 全删，会把其它标签一起带走，不能用。
+    func removeTag(shotID: Int64, _ tag: String) {
+        do {
+            try dbQueue.write { db in
+                _ = try ShotAttribute
+                    .filter(
+                        Column("shotID") == shotID
+                            && Column("key") == AttributeKey.tag
+                            && Column("text") == tag
+                    )
+                    .deleteAll(db)
+            }
+        } catch {
+            NSLog("[MacShot] 移除标签 \(tag) 失败: \(error)")
+            return
+        }
+        reload()
+    }
+
+    /// 一张截图的全部标签，按添加顺序。
+    func tags(shotID: Int64) -> [String] {
+        (try? dbQueue.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT text FROM shotAttribute
+                WHERE shotID = ? AND key = ? AND text IS NOT NULL
+                ORDER BY id ASC
+                """, arguments: [shotID, AttributeKey.tag])
+        }) ?? []
+    }
+
+    /// 现有标签及各自的截图数量，按数量降序。侧边栏和输入建议用。
+    func allTags() -> [(name: String, count: Int)] {
+        (try? dbQueue.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT text AS name, COUNT(*) AS count FROM shotAttribute
+                WHERE key = ? AND text IS NOT NULL
+                GROUP BY text
+                ORDER BY count DESC, name ASC
+                """, arguments: [AttributeKey.tag])
+                .map { (name: $0["name"] as String, count: $0["count"] as Int) }
+        }) ?? []
+    }
+
+    /// 全局重命名标签。目标名已存在的图先删旧名行再整体 UPDATE，
+    /// 避免同图同名出现两行；UPDATE 会触发 attributeFts 的同步触发器，
+    /// 全文索引跟着改。侧边栏若正选中旧名，跟着切到新名。
+    func renameTag(_ old: String, to new: String) {
+        let name = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != old else { return }
+        do {
+            try dbQueue.write { db in
+                try db.execute(sql: """
+                    DELETE FROM shotAttribute
+                    WHERE key = :key AND text = :old AND shotID IN (
+                        SELECT shotID FROM shotAttribute WHERE key = :key AND text = :new
+                    )
+                    """, arguments: ["key": AttributeKey.tag, "old": old, "new": name])
+                try db.execute(sql: """
+                    UPDATE shotAttribute SET text = :new WHERE key = :key AND text = :old
+                    """, arguments: ["key": AttributeKey.tag, "old": old, "new": name])
+            }
+        } catch {
+            NSLog("[MacShot] 重命名标签 \(old) 失败: \(error)")
+            return
+        }
+        if filter == .tag(old) { filter = .tag(name) }
+        reload()
+    }
+
+    /// 全局删除标签：只删标签行，截图本身不动。
+    /// 侧边栏若正选中该标签，退回「全部」。
+    func deleteTag(_ tag: String) {
+        do {
+            try dbQueue.write { db in
+                _ = try ShotAttribute
+                    .filter(Column("key") == AttributeKey.tag && Column("text") == tag)
+                    .deleteAll(db)
+            }
+        } catch {
+            NSLog("[MacShot] 删除标签 \(tag) 失败: \(error)")
+            return
+        }
+        if filter == .tag(tag) { filter = .all }
+        reload()
+    }
+
     func delete(_ shot: Shot) {
         guard let id = shot.id else { return }
         _ = try? dbQueue.write { db in
@@ -324,6 +448,14 @@ final class ShotStore: ObservableObject {
                 arguments["filterValue"] = name
             case .app(let name):
                 filterClause = "AND shot.appName = :filterValue"
+                arguments["filterValue"] = name
+            case .tag(let name):
+                filterClause = """
+                    AND EXISTS (
+                        SELECT 1 FROM shotAttribute
+                        WHERE shotID = shot.id AND key = 'tag' AND text = :filterValue
+                    )
+                    """
                 arguments["filterValue"] = name
             }
 
@@ -601,11 +733,12 @@ final class ShotStore: ObservableObject {
         }) ?? []
     }
 
-    /// 自动清理的候选：拍摄早于 `cutoff`、未收藏、且从未标注过。
+    /// 自动清理的候选：拍摄早于 `cutoff`、未收藏、没打过标签、且从未标注过。
     ///
     /// 「从未标注过」= 修订数 ≤ 1，即只有入库时自动建的那条「原始」空修订 ——
     /// 截图时标注、钉图上画、编辑器里改，任何一笔都会追加修订、让计数超过 1，
-    /// 从而永久脱离清理范围。按时间升序：一批删不完时先删最老的，剩下的留给下次。
+    /// 从而永久脱离清理范围。打过标签同理豁免 —— 用户亲手组织过的图，
+    /// 就是在说「我在意它」。按时间升序：一批删不完时先删最老的，剩下的留给下次。
     func cleanupCandidates(olderThan cutoff: Date, limit: Int) -> [Shot] {
         (try? dbQueue.read { db in
             try Shot.fetchAll(db, sql: """
@@ -614,6 +747,10 @@ final class ShotStore: ObservableObject {
                 WHERE shot.capturedAt < :cutoff
                   AND shot.id NOT IN (
                       SELECT shotID FROM shotAttribute WHERE key = 'favorite'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM shotAttribute
+                      WHERE shotID = shot.id AND key = 'tag'
                   )
                 GROUP BY shot.id
                 HAVING COUNT(revision.id) <= 1

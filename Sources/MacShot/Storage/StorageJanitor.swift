@@ -1,8 +1,8 @@
 import Foundation
 
-/// 启动时的存储清理：删掉「超过保留天数、未收藏、且从未标注过」的旧截图。
+/// 启动时的存储清理：删掉「超过保留天数、未收藏、没打过标签、且从未标注过」的旧截图。
 ///
-/// 修订链的价值反过来定义了什么值得留 —— 收藏的和标注过的永远不删。
+/// 修订链的价值反过来定义了什么值得留 —— 收藏的、打过标签的和标注过的永远不删。
 /// 「从未标注过」由修订数判定（≤ 1，只有入库时的「原始」空修订），
 /// 判定 SQL 在 `ShotStore.cleanupCandidates`；删除走 `ShotStore.delete`，
 /// 复用它的内容寻址引用计数逻辑，不会误删被其它记录共享的原图文件。
@@ -27,6 +27,6 @@ enum StorageJanitor {
         for shot in candidates {
             ShotStore.shared.delete(shot)
         }
-        NSLog("[MacShot] 存储清理：删除 \(candidates.count) 张（超过 \(days) 天、未收藏、未标注）")
+        NSLog("[MacShot] 存储清理：删除 \(candidates.count) 张（超过 \(days) 天、未收藏、无标签、未标注）")
     }
 }

@@ -212,10 +212,16 @@ private struct GallerySidebar: View {
     @ObservedObject private var store = ShotStore.shared
 
     @State private var categories: [(name: String, count: Int)] = []
+    @State private var tags: [(name: String, count: Int)] = []
     @State private var apps: [(name: String, bundleID: String?, count: Int)] = []
     @State private var total = 0
     /// 应用组超过 8 个时默认只显示前 5 个，点「显示全部」再展开。
     @State private var appsExpanded = false
+    /// 右键「重命名」弹窗的目标标签，非 nil 即弹窗。
+    @State private var renamingTag: String?
+    @State private var renameText = ""
+    /// 右键「删除」确认的目标标签。
+    @State private var deletingTag: String?
 
     /// 应用组是否需要折叠（8 个以内没必要）。
     private var appsCollapsible: Bool { apps.count > 8 }
@@ -255,6 +261,26 @@ private struct GallerySidebar: View {
                 }
             }
 
+            // 用户自己的组织方式排在自动分类后面；一个标签都没有时整区不出现。
+            if !tags.isEmpty {
+                Section("标签") {
+                    ForEach(tags, id: \.name) { tag in
+                        Label(tag.name, systemImage: "tag")
+                            .badge(tag.count)
+                            .tag(ShotStore.GalleryFilter.tag(tag.name))
+                            .contextMenu {
+                                Button("重命名…") {
+                                    renameText = tag.name
+                                    renamingTag = tag.name
+                                }
+                                Button("删除标签…", role: .destructive) {
+                                    deletingTag = tag.name
+                                }
+                            }
+                    }
+                }
+            }
+
             if !apps.isEmpty {
                 Section("应用") {
                     ForEach(visibleApps, id: \.name) { app in
@@ -283,8 +309,38 @@ private struct GallerySidebar: View {
             }
         }
         .listStyle(.sidebar)
-        // 聚合是三条小查询，跟着数据量变化刷新即可，不挂在每次重绘上。
-        .task(id: store.shots.count) { refresh() }
+        // 聚合是几条小查询。标签的增删改不改变 shots 的数量，
+        // 只跟数据量刷新会漏 —— 改订 store 的变更通知，每次都重查。
+        // 通知发在 reload() 写库**之后**，这里直接读库拿到的已是新值。
+        .task { refresh() }
+        .onReceive(store.objectWillChange) { _ in refresh() }
+        .alert(
+            "重命名标签",
+            isPresented: Binding(
+                get: { renamingTag != nil },
+                set: { if !$0 { renamingTag = nil } }
+            ),
+            presenting: renamingTag
+        ) { tag in
+            TextField("标签名", text: $renameText)
+            Button("重命名") { store.renameTag(tag, to: renameText) }
+            Button("取消", role: .cancel) {}
+        } message: { tag in
+            Text("所有打了「\(tag)」的截图都会改用新名字。")
+        }
+        .alert(
+            "删除标签「\(deletingTag ?? "")」？",
+            isPresented: Binding(
+                get: { deletingTag != nil },
+                set: { if !$0 { deletingTag = nil } }
+            ),
+            presenting: deletingTag
+        ) { tag in
+            Button("删除", role: .destructive) { store.deleteTag(tag) }
+            Button("取消", role: .cancel) {}
+        } message: { _ in
+            Text("只移除标签本身，截图不会被删除。")
+        }
     }
 
     /// List 的 selection 是可选的，而筛选永远有值（默认「全部」）—— 在这里桥一下。
@@ -301,6 +357,7 @@ private struct GallerySidebar: View {
     private func refresh() {
         total = store.totalCount
         categories = store.categories()
+        tags = store.allTags()
         apps = store.apps()
     }
 
@@ -1253,6 +1310,7 @@ private struct ShotDetailPane: View {
                 // TagSection 插槽：标签分支（feat/tags）会在来源和识别之间
                 // 插入单选详情的标签行。
                 recognitionCard
+                TagSection(shot: shot)
                 historyCard
             }
             .padding(DS.s4)

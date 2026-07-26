@@ -1,0 +1,245 @@
+import SwiftUI
+
+// MARK: - 详情栏「标签」分组
+
+/// 详情栏（inspector）单选视图里的「标签」分组卡片。样式对齐 ShotDetailPane
+/// 的其它分组：quaternary 底 + DS.radiusCard 圆角 + caption.semibold 组题。
+///
+/// 已有标签显示为胶囊流式排列（hover 出 ✕ 移除），尾部「+ 标签」点击变
+/// TextField，回车提交；输入时按前缀匹配给最多 5 条建议（按使用量降序），
+/// 点击即选。数据挂 task(id: shot.id)，切换截图时查一次，不挂 body ——
+/// 和文件里其它派生数据的惯例一致；增删之后就地刷新本地状态。
+struct TagSection: View {
+    let shot: Shot
+
+    /// 当前截图的标签，按添加顺序。
+    @State private var tags: [String] = []
+    /// 全库标签名（按使用量降序），输入建议用。进入输入态时拉一次。
+    @State private var allTagNames: [String] = []
+    /// 是否处于「+ 标签」输入态。
+    @State private var isAdding = false
+    @State private var input = ""
+    @FocusState private var inputFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.s2) {
+            Text("标签")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            FlowLayout(spacing: DS.s1 + 2) {
+                ForEach(tags, id: \.self) { tag in
+                    TagChip(name: tag) { remove(tag) }
+                }
+                addControl
+            }
+
+            if isAdding, !suggestions.isEmpty {
+                suggestionRow
+            }
+        }
+        .padding(DS.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: DS.radiusCard))
+        .task(id: shot.id) {
+            refresh()
+            cancelInput()
+        }
+    }
+
+    // MARK: 输入
+
+    /// 尾部控件：常态是「+ 标签」胶囊按钮，点击变输入框。
+    @ViewBuilder
+    private var addControl: some View {
+        if isAdding {
+            TextField("标签名", text: $input)
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .frame(width: 96)
+                .padding(.horizontal, DS.s2)
+                .padding(.vertical, 3)
+                .background(.thinMaterial, in: Capsule())
+                .overlay(
+                    Capsule().strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 1)
+                )
+                .focused($inputFocused)
+                .onSubmit { commit() }
+                .onExitCommand { cancelInput() }
+        } else {
+            Button {
+                // 建议候选在进入输入态时拉一次，不跟着每个键击查库。
+                allTagNames = ShotStore.shared.allTags().map(\.name)
+                input = ""
+                isAdding = true
+                inputFocused = true
+            } label: {
+                Label("标签", systemImage: "plus")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, DS.s2)
+                    .padding(.vertical, 3)
+                    .background(.thinMaterial, in: Capsule())
+                    .overlay(
+                        Capsule().strokeBorder(
+                            Color.primary.opacity(0.15),
+                            style: StrokeStyle(lineWidth: 1, dash: [3, 2])
+                        )
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("添加标签")
+        }
+    }
+
+    /// 前缀匹配的建议（大小写不敏感），排除已打上的，最多 5 条。
+    /// 输入为空时给出最常用的几个 —— 方便直接点选。
+    private var suggestions: [String] {
+        let prefix = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return Array(
+            allTagNames
+                .filter { !tags.contains($0) }
+                .filter { prefix.isEmpty || $0.lowercased().hasPrefix(prefix) }
+                .prefix(5)
+        )
+    }
+
+    private var suggestionRow: some View {
+        FlowLayout(spacing: DS.s1 + 2) {
+            ForEach(suggestions, id: \.self) { name in
+                Button {
+                    add(name)
+                } label: {
+                    Text(name)
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, DS.s2)
+                        .padding(.vertical, 3)
+                        .background(Color.accentColor.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("添加「\(name)」")
+            }
+        }
+    }
+
+    // MARK: 动作
+
+    private func commit() {
+        let name = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            cancelInput()
+            return
+        }
+        add(name)
+    }
+
+    private func add(_ name: String) {
+        guard let id = shot.id else { return }
+        ShotStore.shared.addTag(shotID: id, name)
+        refresh()
+        // 新名字立刻可被后续建议匹配；清空输入、保持焦点，方便连续打标签。
+        allTagNames = ShotStore.shared.allTags().map(\.name)
+        input = ""
+        inputFocused = true
+    }
+
+    private func remove(_ name: String) {
+        guard let id = shot.id else { return }
+        ShotStore.shared.removeTag(shotID: id, name)
+        refresh()
+    }
+
+    private func refresh() {
+        tags = shot.id.map { ShotStore.shared.tags(shotID: $0) } ?? []
+    }
+
+    private func cancelInput() {
+        isAdding = false
+        input = ""
+    }
+}
+
+// MARK: - 胶囊
+
+/// 单个标签胶囊。✕ 常驻布局、hover 才显形 —— 避免悬停时胶囊宽度跳动。
+private struct TagChip: View {
+    let name: String
+    let onRemove: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(name)
+                .font(.caption)
+                .lineLimit(1)
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .opacity(isHovering ? 1 : 0)
+            .allowsHitTesting(isHovering)
+            .help("移除标签")
+        }
+        .padding(.horizontal, DS.s2)
+        .padding(.vertical, 3)
+        .background(.thinMaterial, in: Capsule())
+        .overlay(
+            Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+        )
+        .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - 流式布局
+
+/// 简单的流式布局：从左到右排，放不下就换行。选 Layout 协议而不是
+/// 固定列 LazyVGrid —— 标签宽度差异大，等宽网格会浪费大量横向空间。
+/// 子视图是个位数到十几个胶囊，逐个 sizeThatFits 足够快，不做缓存。
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            usedWidth = max(usedWidth, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? usedWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > bounds.width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(
+                at: CGPoint(x: bounds.minX + x, y: bounds.minY + y),
+                proposal: ProposedViewSize(size)
+            )
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}

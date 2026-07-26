@@ -48,6 +48,11 @@ enum AttributeKey {
     static let sourceURL = "source.url"
     /// 规则分类结果（中文分类名，见 `ShotClassifier`）。
     static let category = "category"
+    /// 用户自定义标签。**多值 key**：一张图多个标签 = 多行，
+    /// 读写走 `ShotStore` 的 addTag / removeTag 一族，
+    /// 不要用 writeAttribute（它是「同 key 先删后插」的单值语义）。
+    /// text = 标签名，自动进 attributeFts，搜标签名直接命中。
+    static let tag = "tag"
     /// Vision 场景标签，逗号分隔的 identifier 列表。
     static let visionLabels = "vision.labels"
     /// 收藏标记。存在即为已收藏，text 必须为 nil（不进全文索引）。

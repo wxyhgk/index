@@ -630,7 +630,7 @@ private struct StorageSettings: View {
                 .pickerStyle(.segmented)
                 .disabled(!settings.autoCleanupEnabled)
 
-                Text("启动时删除超过保留时长的旧截图，每次最多 \(StorageJanitor.batchLimit) 张，删不完的下次接着删。收藏的和标注过的永远不删 —— 修订链的价值反过来定义了什么值得留。")
+                Text("启动时删除超过保留时长的旧截图，每次最多 \(StorageJanitor.batchLimit) 张，删不完的下次接着删。收藏的、打过标签的和标注过的永远不删 —— 你亲手留下的痕迹反过来定义了什么值得留。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

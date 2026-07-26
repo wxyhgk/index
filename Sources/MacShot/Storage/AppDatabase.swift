@@ -100,6 +100,45 @@ enum AppDatabase {
             }
         }
 
+        // 用户标签落地：同一张图要能有多行 key='tag'，v3 的表级
+        // UNIQUE(shotID, key) 挡在前面，只能重建表去掉它。
+        // 单值 key 的「同图同 key 只留一份」语义由 `ShotStore.writeAttribute`
+        // 的先删后插保证（它本来就这么写的，约束只是兜底）；
+        // 标签的幂等由 `addTag` 的 EXISTS 预查保证。
+        //
+        // 重建步骤有讲究：attributeFts 的同步触发器挂在 shotAttribute 上，
+        // 直接改名会连触发器一起改写。这里走「建新表 → 拷数据（保留 id，
+        // FTS 的 rowid 就是它）→ 删旧表（触发器随表自动删）→ 新表改名 →
+        // 重建 attributeFts」——synchronize 建表时会执行 FTS5 的 'rebuild'，
+        // 存量属性全部重新索引，搜索无缝衔接。
+        migrator.registerMigration("v4_multivalue_attributes") { db in
+            try db.create(table: "shotAttributeNew") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("shotID", .integer)
+                    .notNull()
+                    .references("shot", onDelete: .cascade)
+                t.column("key", .text).notNull()
+                t.column("text", .text)
+                t.column("payload", .blob)
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.execute(sql: """
+                INSERT INTO shotAttributeNew (id, shotID, key, text, payload, createdAt)
+                SELECT id, shotID, key, text, payload, createdAt FROM shotAttribute
+                """)
+            try db.drop(table: "shotAttribute")
+            try db.drop(table: "attributeFts")
+            try db.rename(table: "shotAttributeNew", to: "shotAttribute")
+            // 复合索引同时服务「按图查属性」和「按图 + key 查值」两类查询。
+            try db.create(indexOn: "shotAttribute", columns: ["shotID", "key"])
+
+            try db.create(virtualTable: "attributeFts", using: FTS5()) { t in
+                t.tokenizer = FTS5TokenizerDescriptor(components: ["trigram"])
+                t.synchronize(withTable: "shotAttribute")
+                t.column("text")
+            }
+        }
+
         return migrator
     }
 }
