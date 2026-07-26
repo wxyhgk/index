@@ -5,8 +5,73 @@ import UniformTypeIdentifiers
 @MainActor
 final class GallerySelection: ObservableObject {
     static let shared = GallerySelection()
-    @Published var selectedID: Int64?
+
+    /// 选中集合。空 = 未选；1 张 = 单选；多张 = 批量语义。
+    @Published private(set) var selectedIDs: Set<Int64> = []
+    /// ⇧ 范围选择的锚点：普通点击 / ⌘点击把锚点移到落点，⇧点击保持不动。
+    @Published private(set) var anchorID: Int64?
+    /// 主选中：单选时的那张 / 多选时最后操作的那张。
+    /// inspector 展示、键盘走格起点、Quick Look 定位都以它为准。
+    @Published private(set) var primaryID: Int64?
     @Published var editing: Shot?
+    /// 待确认删除的截图 ID（展示顺序）。键盘 ⌘⌫、右键菜单、多选面板都写这里，
+    /// 由 GalleryGrid 上唯一的 confirmationDialog 消费 —— 确认框只有一套。
+    @Published var pendingDeleteIDs: [Int64]?
+
+    var isMultiple: Bool { selectedIDs.count > 1 }
+
+    func isSelected(_ id: Int64?) -> Bool {
+        id.map { selectedIDs.contains($0) } ?? false
+    }
+
+    /// 单选（清空集合）。定位类场景（时间线 / 相似 / 开窗定位 / Quick Look 翻页）
+    /// 语义 = 清空后单选，全走这里。
+    func select(only id: Int64?) {
+        selectedIDs = id.map { [$0] } ?? []
+        anchorID = id
+        primaryID = id
+    }
+
+    /// ⌘点击：toggle 该张的选中态，锚点移到落点。
+    func toggle(_ id: Int64) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+            if primaryID == id { primaryID = selectedIDs.first }
+        } else {
+            selectedIDs.insert(id)
+            primaryID = id
+        }
+        anchorID = id
+    }
+
+    /// ⇧点击 / ⇧方向键：选中锚点到目标的**全局顺序**区间（跨分组连续）。
+    /// `orderedIDs` 是当前列表的展示顺序；锚点失效时退化为单选。
+    func selectRange(to id: Int64, in orderedIDs: [Int64]) {
+        guard let anchorID,
+              let a = orderedIDs.firstIndex(of: anchorID),
+              let b = orderedIDs.firstIndex(of: id)
+        else {
+            select(only: id)
+            return
+        }
+        selectedIDs = Set(orderedIDs[min(a, b)...max(a, b)])
+        primaryID = id
+    }
+
+    /// ⌘A：全选当前列表。主选中还在列表里就不跳。
+    func selectAll(_ orderedIDs: [Int64]) {
+        guard !orderedIDs.isEmpty else { return }
+        selectedIDs = Set(orderedIDs)
+        anchorID = orderedIDs.first
+        if primaryID.map({ selectedIDs.contains($0) }) != true {
+            primaryID = orderedIDs.last
+        }
+    }
+
+    /// Esc：多选收拢回主选中那一张。
+    func collapseToPrimary() {
+        select(only: primaryID ?? selectedIDs.first)
+    }
 }
 
 // MARK: - 三栏布局：侧边栏（筛选） / 网格 / 详情
@@ -32,8 +97,20 @@ struct GalleryView: View {
 
     private var selectedShot: Shot? {
         // 语义结果可能不在常规列表（最近 500 张）里，两边都找。
-        store.displayShots.first { $0.id == selection.selectedID }
-            ?? store.shots.first { $0.id == selection.selectedID }
+        store.displayShots.first { $0.id == selection.primaryID }
+            ?? store.shots.first { $0.id == selection.primaryID }
+    }
+
+    /// 多选时按展示顺序解析出的截图（选中集合里可能残留已删除的 ID，以解析结果为准）。
+    private var multiSelectedShots: [Shot] {
+        guard selection.isMultiple else { return [] }
+        var picked = store.displayShots.filter { selection.isSelected($0.id) }
+        let seen = Set(picked.compactMap(\.id))
+        picked += store.shots.filter { shot in
+            guard let id = shot.id else { return false }
+            return selection.selectedIDs.contains(id) && !seen.contains(id)
+        }
+        return picked
     }
 
     var body: some View {
@@ -103,7 +180,10 @@ struct GalleryView: View {
 
     @ViewBuilder
     private var inspectorPane: some View {
-        if let shot = selectedShot {
+        let multi = multiSelectedShots
+        if multi.count > 1 {
+            MultiSelectionPane(shots: multi)
+        } else if let shot = selectedShot ?? multi.first {
             ShotDetailPane(shot: shot)
         } else {
             ContentUnavailableView(
@@ -332,8 +412,6 @@ private struct GalleryGrid: View {
     @State private var categoriesByShot: [Int64: String] = [:]
     /// 修订数 > 1（真的标注过）的截图 ID，卡片右下角角标用。同样批量查好下发。
     @State private var annotatedIDs: Set<Int64> = []
-    /// 等待删除确认的截图。删除不可撤销，必须过一道确认。
-    @State private var pendingDelete: Shot?
     /// 右键菜单打开的时间线 / 相似 sheet。
     @State private var timelineShot: Shot?
     @State private var similarShot: Shot?
@@ -376,21 +454,50 @@ private struct GalleryGrid: View {
         }
         .sheet(item: $timelineShot) { TimelineSheet(shot: $0) }
         .sheet(item: $similarShot) { SimilarShotsSheet(shot: $0) }
+        // 删除确认只有这一套：键盘 ⌘⌫、右键（单张 / 批量）、多选面板
+        // 都通过 selection.pendingDeleteIDs 驱动到这里。删除不可撤销，必须过确认。
         .confirmationDialog(
-            "删除这张截图？",
+            Text(deleteDialogTitle),
             isPresented: Binding(
-                get: { pendingDelete != nil },
-                set: { if !$0 { pendingDelete = nil } }
+                get: { selection.pendingDeleteIDs != nil },
+                set: { if !$0 { selection.pendingDeleteIDs = nil } }
             ),
-            presenting: pendingDelete
-        ) { shot in
-            Button("删除", role: .destructive) {
-                if selection.selectedID == shot.id { selection.selectedID = nil }
-                store.delete(shot)
+            presenting: selection.pendingDeleteIDs
+        ) { ids in
+            Button(ids.count == 1 ? "删除" : "删除 \(ids.count) 张", role: .destructive) {
+                deleteShots(ids)
             }
             Button("取消", role: .cancel) {}
-        } message: { _ in
-            Text("原图和全部标注修订会一并删除，无法撤销。")
+        } message: { ids in
+            Text(ids.count == 1
+                ? "原图和全部标注修订会一并删除，无法撤销。"
+                : "这 \(ids.count) 张的原图和全部标注修订会一并删除，无法撤销。")
+        }
+    }
+
+    private var deleteDialogTitle: String {
+        let count = selection.pendingDeleteIDs?.count ?? 0
+        return count > 1 ? "删除 \(count) 张截图？" : "删除这张截图？"
+    }
+
+    /// 真正执行删除。之后把选中顺移到相邻一张，键盘导航不断档。
+    private func deleteShots(_ ids: [Int64]) {
+        let idSet = Set(ids)
+        let display = store.displayShots
+        let anchorIndex = display.firstIndex { $0.id.map(idSet.contains) ?? false }
+        // 语义结果可能不在常规列表里，两边找齐（去重）再删。
+        var seen = Set<Int64>()
+        let targets = (display + store.shots).filter { shot in
+            guard let id = shot.id, idSet.contains(id), !seen.contains(id) else { return false }
+            seen.insert(id)
+            return true
+        }
+        for shot in targets { store.delete(shot) }
+        let remaining = store.displayShots
+        if let anchorIndex, !remaining.isEmpty {
+            selection.select(only: remaining[min(anchorIndex, remaining.count - 1)].id)
+        } else {
+            selection.select(only: nil)
         }
     }
 
@@ -415,7 +522,8 @@ private struct GalleryGrid: View {
                 .padding(.bottom, DS.s3)
             }
             // 时间线 / 相似 sheet 里选中某张后要能真的滚到它，居中露脸。
-            .onChange(of: selection.selectedID) { _, newID in
+            // 多选跟随主选中（最后操作的那张）。
+            .onChange(of: selection.primaryID) { _, newID in
                 guard let newID else { return }
                 withAnimation(.easeInOut(duration: 0.25)) {
                     proxy.scrollTo(newID, anchor: .center)
@@ -443,23 +551,76 @@ private struct GalleryGrid: View {
         ShotCard(
             shot: shot,
             height: zoom * 0.68,
-            isSelected: shot.id == selection.selectedID,
+            isSelected: selection.isSelected(shot.id),
             isFavorite: shot.id.map(store.isFavorite) ?? false,
             category: shot.id.flatMap { categoriesByShot[$0] },
             isAnnotated: shot.id.map(annotatedIDs.contains) ?? false,
             onToggleFavorite: { store.toggleFavorite(shot) }
         )
         .id(shot.id)
-        .onTapGesture { selection.selectedID = shot.id }
+        .onTapGesture { handleTap(shot) }
         .simultaneousGesture(
-            TapGesture(count: 2).onEnded { selection.editing = shot }
+            TapGesture(count: 2).onEnded {
+                // 带修饰键的双击只是两次修饰点击（toggle / 范围），不进编辑器。
+                guard currentModifiers().isEmpty else { return }
+                selection.editing = shot
+            }
         )
         .draggable(dragFile(for: shot))
         .contextMenu {
-            contextMenu(for: shot)
+            // Finder 行为：右键落在选中集合外 = 先把该张设为单选，再出单张菜单；
+            // 落在集合内且是多选 = 批量菜单。
+            let _ = retargetContextMenuIfNeeded(shot)
+            if selection.isMultiple && selection.isSelected(shot.id) {
+                batchContextMenu()
+            } else {
+                contextMenu(for: shot)
+            }
         } preview: {
             CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
                 .frame(maxWidth: 480, maxHeight: 360)
+        }
+    }
+
+    /// 点击 = 单选；⌘点击 = toggle；⇧点击 = 锚点到落点的全局顺序区间。
+    private func handleTap(_ shot: Shot) {
+        guard let id = shot.id else { return }
+        let flags = currentModifiers()
+        if flags.contains(.command) {
+            selection.toggle(id)
+        } else if flags.contains(.shift) {
+            selection.selectRange(to: id, in: store.displayShots.compactMap(\.id))
+        } else {
+            selection.select(only: id)
+        }
+    }
+
+    /// SwiftUI 的 TapGesture 不带修饰键信息，从触发点击的 NSEvent 上取。
+    private func currentModifiers() -> NSEvent.ModifierFlags {
+        NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
+    }
+
+    /// 右键落在选中集合外：把该张设为单选（Finder 行为）。
+    /// 菜单构建期间不能改状态，推到下一轮 runloop。
+    private func retargetContextMenuIfNeeded(_ shot: Shot) {
+        guard let id = shot.id, !selection.selectedIDs.contains(id) else { return }
+        DispatchQueue.main.async { selection.select(only: id) }
+    }
+
+    /// 多选右键的批量菜单：标题带张数，动作与多选详情栏共用一套实现。
+    @ViewBuilder
+    private func batchContextMenu() -> some View {
+        let shots = GalleryBatch.selectedShots()
+        let count = shots.count
+        Button(GalleryBatch.allFavorited(shots) ? "取消收藏 \(count) 张" : "收藏 \(count) 张") {
+            GalleryBatch.toggleFavorites(shots)
+        }
+        Button("导出 \(count) 张…") {
+            Task { _ = await GalleryBatch.exportAll(shots) }
+        }
+        Divider()
+        Button("删除 \(count) 张截图…", role: .destructive) {
+            selection.pendingDeleteIDs = shots.compactMap(\.id)
         }
     }
 
@@ -572,7 +733,9 @@ private struct GalleryGrid: View {
             ))
         }
         Divider()
-        Button("删除…", role: .destructive) { pendingDelete = shot }
+        Button("删除…", role: .destructive) {
+            selection.pendingDeleteIDs = shot.id.map { [$0] }
+        }
     }
 
     /// 含最新标注的成品图。导出 / 上传 / 拖出共用一个口径 —— 和暂存栏、详情页一致。
@@ -658,6 +821,85 @@ private struct GalleryGrid: View {
         } else if let bundleID = shot.appBundleID {
             SystemNavigator.activateApp(bundleID: bundleID)
         }
+    }
+}
+
+// MARK: - 批量动作
+
+/// 批量动作的共用实现：右键批量菜单和多选详情栏都走这里，行为只有一份。
+@MainActor
+private enum GalleryBatch {
+
+    /// 按展示顺序解析当前选中集合。语义结果可能不在常规列表里，两边找齐（去重）。
+    static func selectedShots() -> [Shot] {
+        let selection = GallerySelection.shared
+        let store = ShotStore.shared
+        var picked = store.displayShots.filter { selection.isSelected($0.id) }
+        let seen = Set(picked.compactMap(\.id))
+        picked += store.shots.filter { shot in
+            guard let id = shot.id else { return false }
+            return selection.selectedIDs.contains(id) && !seen.contains(id)
+        }
+        return picked
+    }
+
+    static func allFavorited(_ shots: [Shot]) -> Bool {
+        !shots.isEmpty && shots.allSatisfy { $0.id.map(ShotStore.shared.isFavorite) ?? false }
+    }
+
+    /// 全部收藏 / 全部取消收藏：已经是目标状态的跳过，动作幂等。
+    static func toggleFavorites(_ shots: [Shot]) {
+        let store = ShotStore.shared
+        let targetFavorited = !allFavorited(shots)
+        for shot in shots {
+            guard let id = shot.id, store.isFavorite(shotID: id) != targetFavorited else { continue }
+            store.toggleFavorite(shot)
+        }
+    }
+
+    /// 后台渲染一张成品要的全部材料，主线程收集好再整体下后台。
+    private struct ExportJob {
+        let url: URL
+        let layers: Layers<ImageSpace>
+        let name: String
+    }
+
+    /// 批量导出：NSOpenPanel 选目录，逐张渲染成品（含最新标注）按文件名模板写入，
+    /// 重名由 ImageExporter.writePNG 自动加 -2 / -3 … 序号。返回成功张数（取消 = 0）。
+    static func exportAll(_ shots: [Shot]) async -> Int {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "导出到此处"
+        panel.message = "选择 \(shots.count) 张截图的导出目录"
+        panel.directoryURL = FileManager.default
+            .urls(for: .desktopDirectory, in: .userDomainMask).first
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let directory = panel.url else { return 0 }
+
+        let store = ShotStore.shared
+        let jobs = shots.map { shot in
+            ExportJob(
+                url: store.originalURL(for: shot),
+                layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
+                name: ImageExporter.suggestedName(for: shot)
+            )
+        }
+        // 解码 / 渲染 / 编码 / 写盘都是重活，整体放后台，主线程不卡。
+        return await Task.detached(priority: .userInitiated) {
+            var exported = 0
+            for job in jobs {
+                guard let base = ImageCodec.load(from: job.url) else { continue }
+                let rendered = LayerRenderer.render(base: base, layers: job.layers)
+                guard let png = ImageCodec.pngData(from: rendered) else { continue }
+                if (try? ImageExporter.writePNG(png, into: directory, preferredName: job.name)) != nil {
+                    exported += 1
+                }
+            }
+            return exported
+        }.value
     }
 }
 
@@ -851,6 +1093,120 @@ private struct ShotCard: View {
     }
 }
 
+// MARK: - 多选详情栏
+
+/// 选中 N>1 张时替换 ShotDetailPane 的批量面板：
+/// 「已选 N 张」+ 2×2 缩略图拼贴 + 批量动作（收藏 / 导出 / 删除）。
+private struct MultiSelectionPane: View {
+    /// 展示顺序的选中截图，由 GalleryView 解析好传入。
+    let shots: [Shot]
+
+    // 订阅 store 是为了收藏态实时刷新（批量收藏后按钮文案要翻转）。
+    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var selection = GallerySelection.shared
+
+    /// 最近一次批量导出的结果提示，几秒后自动消失。
+    @State private var exportSummary: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.s3) {
+                collage
+                Text("已选 \(shots.count) 张")
+                    .font(.title3.weight(.semibold))
+                Text("批量动作作用于全部选中项。按 Esc 回到单选。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                actions
+                if let exportSummary {
+                    Label(exportSummary, systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.green)
+                        .transition(.opacity)
+                }
+            }
+            .padding(DS.s4)
+        }
+    }
+
+    /// 2×2 拼贴：展示顺序前 4 张，超出的在最后一格盖 +N。
+    private var collage: some View {
+        let previews = Array(shots.prefix(4))
+        return LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: DS.s2),
+                GridItem(.flexible(), spacing: DS.s2)
+            ],
+            spacing: DS.s2
+        ) {
+            ForEach(previews) { shot in
+                ZStack {
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .fill(.quaternary.opacity(0.5))
+                    CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
+                }
+                .frame(height: 76)
+                .overlay {
+                    if shot.id == previews.last?.id, shots.count > 4 {
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .fill(.black.opacity(0.45))
+                        Text("+\(shots.count - 4)")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+            }
+        }
+    }
+
+    private var actions: some View {
+        VStack(spacing: DS.s2) {
+            let allFavorited = GalleryBatch.allFavorited(shots)
+            Button {
+                GalleryBatch.toggleFavorites(shots)
+            } label: {
+                Label(
+                    allFavorited ? "取消收藏 \(shots.count) 张" : "全部收藏",
+                    systemImage: allFavorited ? "star.slash" : "star"
+                )
+                .frame(maxWidth: .infinity)
+            }
+
+            Button {
+                runExport()
+            } label: {
+                Label("导出 \(shots.count) 张…", systemImage: "square.and.arrow.up")
+                    .frame(maxWidth: .infinity)
+            }
+            .help("选一个目录，逐张按文件名模板导出成品（含标注），重名自动加序号")
+
+            Button(role: .destructive) {
+                selection.pendingDeleteIDs = shots.compactMap(\.id)
+            } label: {
+                Label("删除 \(shots.count) 张…", systemImage: "trash")
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private func runExport() {
+        let targets = shots
+        Task {
+            let exported = await GalleryBatch.exportAll(targets)
+            guard exported > 0 else { return }
+            withAnimation {
+                exportSummary = exported < targets.count
+                    ? "已导出 \(exported)/\(targets.count) 张"
+                    : "已导出 \(exported) 张"
+            }
+            try? await Task.sleep(for: .seconds(4))
+            withAnimation { exportSummary = nil }
+        }
+    }
+}
+
 // MARK: - 右侧详情
 
 /// 修订的展示用快照。避免在 body 里反复解 layersJSON。
@@ -886,20 +1242,20 @@ private struct ShotDetailPane: View {
     @State private var sensitiveMasked = false
 
     var body: some View {
-        // 间距/圆角按 4px 基数（4/8/12/16/24，圆角 6/10）——
-        // 待 UI/DesignTokens.swift（DS）合并后统一替换为常量。
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.s3) {
                 preview
                 actions
                 if !sensitiveRegions.isEmpty {
                     sensitiveBanner
                 }
                 sourceCard
+                // TagSection 插槽：标签分支（feat/tags）会在来源和识别之间
+                // 插入单选详情的标签行。
                 recognitionCard
                 historyCard
             }
-            .padding(16)
+            .padding(DS.s4)
         }
         .task(id: shot.id) {
             loadRevisions()
@@ -963,8 +1319,8 @@ private struct ShotDetailPane: View {
     }
 
     private var sensitiveBanner: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.s2) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.s2) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                 Text("检测到敏感内容：\(sensitiveSummary)")
@@ -988,14 +1344,14 @@ private struct ShotDetailPane: View {
                 .controlSize(.small)
             }
         }
-        .padding(12)
+        .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DS.radiusCard)
                 .fill(Color.yellow.opacity(0.18))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DS.radiusCard)
                 .strokeBorder(Color.yellow.opacity(0.5), lineWidth: 1)
         )
     }
@@ -1033,7 +1389,7 @@ private struct ShotDetailPane: View {
 
     private var preview: some View {
         CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard))
             .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
             .contentShape(Rectangle())
             .onTapGesture { QuickLookController.shared.present() }
@@ -1043,7 +1399,7 @@ private struct ShotDetailPane: View {
     /// 动作区一行放完：「编辑」主按钮 + 收藏/钉图/导出 icon-only，
     /// 低频动作（出处/相似/时间线/Bug 报告/上传）收进「更多」菜单。
     private var actions: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.s2) {
             Button {
                 selection.editing = shot
             } label: {
@@ -1185,17 +1541,17 @@ private struct ShotDetailPane: View {
 
     // MARK: - 信息分组卡片
 
-    /// 分组卡片：quaternary 底 + 10pt 圆角 + caption.semibold 组题。
+    /// 分组卡片：quaternary 底 + 卡片圆角 + caption.semibold 组题。
     private func card(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.s2) {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             content()
         }
-        .padding(12)
+        .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: DS.radiusCard))
     }
 
     private var sourceCard: some View {
@@ -1233,7 +1589,7 @@ private struct ShotDetailPane: View {
                             .font(.caption)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 4)
+                            .padding(.top, DS.s1)
                     }
                     .font(.caption)
                 }
@@ -1263,7 +1619,7 @@ private struct ShotDetailPane: View {
     @ViewBuilder
     private func row(_ label: String, _ value: String?) -> some View {
         if let value, !value.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.s2) {
                 Text(label)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1312,7 +1668,7 @@ private struct RevisionRow: View {
                 .fill(isLatest ? Color.accentColor : Color.secondary.opacity(0.55))
                 .frame(width: 8, height: 8)
 
-            HStack(spacing: 8) {
+            HStack(spacing: DS.s2) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("v\(revision.version) · \(revision.note)")
                         .font(.caption)
@@ -1322,11 +1678,11 @@ private struct RevisionRow: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.leading, 16)
-            .padding(.vertical, 4)
+            .padding(.leading, DS.s4)
+            .padding(.vertical, DS.s1)
         }
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(Color.primary.opacity(isHovering ? 0.06 : 0))
         )
         .contentShape(Rectangle())
@@ -1381,7 +1737,8 @@ private struct SimilarShotsSheet: View {
                             ForEach(results) { result in
                                 SimilarShotCard(shot: result)
                                     .onTapGesture {
-                                        GallerySelection.shared.selectedID = result.id
+                                        // 定位类场景：清空多选后单选目标。
+                                        GallerySelection.shared.select(only: result.id)
                                         dismiss()
                                     }
                             }

@@ -51,7 +51,8 @@ final class GalleryWindowController: NSWindowController {
     func show(selecting shot: Shot? = nil) {
         ShotStore.shared.reload()
         if let shot {
-            GallerySelection.shared.selectedID = shot.id
+            // 定位类场景：清空多选后单选目标。
+            GallerySelection.shared.select(only: shot.id)
         }
         WindowRegistry.shared.present(self, dockIcon: true)
     }

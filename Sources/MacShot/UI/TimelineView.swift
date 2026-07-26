@@ -103,10 +103,10 @@ struct TimelineSheet: View {
         return "未知来源"
     }
 
-    /// 把当前选中张带回图库并关闭 sheet。
+    /// 把当前选中张带回图库并关闭 sheet。定位类场景：清空多选后单选目标。
     private func locateInGallery() {
         guard let selectedID else { return }
-        GallerySelection.shared.selectedID = selectedID
+        GallerySelection.shared.select(only: selectedID)
         dismiss()
     }
 
