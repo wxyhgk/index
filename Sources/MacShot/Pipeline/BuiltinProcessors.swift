@@ -76,6 +76,31 @@ struct FeaturePrintProcessor: CapturePostProcessor {
     }
 }
 
+/// 敏感内容检测（邮箱 / 密钥 / 卡号 / 手机号 / 人脸）。
+/// 命中区域以 JSON 落库，详情页据此显示警示条并支持一键打码。
+/// searchableText 只放种类汇总 —— 搜「密钥」能找到含密钥的截图，
+/// 但密钥本身绝不进索引。没检测到就什么都不写。
+struct SensitiveContentProcessor: CapturePostProcessor {
+    let id = "sensitive-content"
+
+    @MainActor var isEnabled: Bool { AppSettings.shared.detectSensitive }
+
+    func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
+        let regions = await SensitiveContentDetector().detect(in: input.image)
+        guard !regions.isEmpty, let json = try? JSONEncoder().encode(regions) else { return }
+
+        var kinds: [String] = []
+        for region in regions where !kinds.contains(region.kind) {
+            kinds.append(region.kind)
+        }
+        await writer.write(
+            shotID: input.shotID,
+            key: AttributeKey.sensitiveRegions,
+            value: .data(json, searchableText: kinds.joined(separator: ","))
+        )
+    }
+}
+
 extension CapturePipeline {
     /// 在这里登记。
     static func registerBuiltins(into pipeline: CapturePipeline) {
@@ -84,5 +109,6 @@ extension CapturePipeline {
         pipeline.register(CategoryProcessor())
         pipeline.register(VisionLabelsProcessor())
         pipeline.register(FeaturePrintProcessor())
+        pipeline.register(SensitiveContentProcessor())
     }
 }

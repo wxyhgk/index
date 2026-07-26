@@ -24,6 +24,9 @@ enum AttributeBackfill {
             jobs.append(Job(key: AttributeKey.category, processor: CategoryProcessor()))
             jobs.append(Job(key: AttributeKey.visionLabels, processor: VisionLabelsProcessor()))
         }
+        if AppSettings.shared.detectSensitive {
+            jobs.append(Job(key: AttributeKey.sensitiveRegions, processor: SensitiveContentProcessor()))
+        }
         return jobs
     }
 

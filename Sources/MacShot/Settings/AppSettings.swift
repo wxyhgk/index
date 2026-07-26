@@ -34,6 +34,7 @@ final class AppSettings: ObservableObject {
         static let copyToClipboard = "copyToClipboard"
         static let runOCR = "runOCR"
         static let autoClassify = "autoClassify"
+        static let detectSensitive = "detectSensitive"
         static let showMagnifier = "showMagnifier"
         static let enterBehavior = "enterBehavior"
         static let defaultColorIndex = "defaultColorIndex"
@@ -80,6 +81,11 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(autoClassify, forKey: Keys.autoClassify) }
     }
 
+    /// 检测敏感内容（邮箱、密钥、卡号、手机号、人脸），供一键打码。
+    @Published var detectSensitive: Bool {
+        didSet { defaults.set(detectSensitive, forKey: Keys.detectSensitive) }
+    }
+
     // MARK: - 快捷键
 
     @Published var captureShortcut: KeyboardShortcut {
@@ -107,6 +113,7 @@ final class AppSettings: ObservableObject {
             Keys.copyToClipboard: true,
             Keys.runOCR: true,
             Keys.autoClassify: true,
+            Keys.detectSensitive: true,
             Keys.showMagnifier: true,
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
             Keys.defaultColorIndex: 0,
@@ -116,6 +123,7 @@ final class AppSettings: ObservableObject {
         copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
         runOCR = defaults.bool(forKey: Keys.runOCR)
         autoClassify = defaults.bool(forKey: Keys.autoClassify)
+        detectSensitive = defaults.bool(forKey: Keys.detectSensitive)
         showMagnifier = defaults.bool(forKey: Keys.showMagnifier)
         enterBehavior = defaults.string(forKey: Keys.enterBehavior)
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish
