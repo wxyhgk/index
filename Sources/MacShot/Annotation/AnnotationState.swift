@@ -30,12 +30,18 @@ final class AnnotationState {
     private(set) var layers = Layers<CanvasSpace>()
     private(set) var editingTextID: UUID?
 
+    /// 指针模式下选中的图层。选中后可以拖动、删除、改样式。
+    private(set) var selectedID: UUID?
+
     /// 每个马赛克图层对应一张预先算好的小图。
     /// 绝不在每帧重跑 CoreImage —— 那是上一轮把主线程压垮的同一类错误。
     private(set) var pixelatePreviews: [UUID: CGImage] = [:]
 
     private var dragStart: CGPoint?
     private var dragCurrent: CGPoint?
+
+    private var moveID: UUID?
+    private var moveLastPoint: CGPoint?
 
     init() {
         let settings = AppSettings.shared
@@ -52,6 +58,7 @@ final class AnnotationState {
     var isEmpty: Bool { layers.isEmpty }
     var isDrawing: Bool { dragStart != nil }
     var isEditingText: Bool { editingTextID != nil }
+    var isMoving: Bool { moveID != nil }
 
     // MARK: - 绘制中的图层
 
@@ -92,6 +99,7 @@ final class AnnotationState {
     func beginDraw(at point: CGPoint) -> Bool {
         guard let tool else { return false }
         endTextEditing()
+        select(nil)
 
         if tool == .text {
             var layer = makeLayer(tool: .text, from: point, to: point)
@@ -137,8 +145,112 @@ final class AnnotationState {
     /// 丢弃全部标注，回到干净状态。
     func clear() {
         endTextEditing()
+        selectedID = nil
         layers.removeAll()
         pixelatePreviews.removeAll()
+    }
+
+    // MARK: - 选中与拖动
+
+    /// 命中测试（画布空间），从最上层往下找。
+    /// 线段类按点到线段的距离判定，其余按外接矩形（都带一圈容差，方便点中细线）。
+    func layer(at point: CGPoint) -> UUID? {
+        let tolerance = 8 * strokeScale
+        for layer in layers.elements.reversed() {
+            let hit: Bool
+            switch layer.kind {
+            case .line, .arrow:
+                let d = Self.distance(from: point, toSegment: layer.rect.start, layer.rect.end)
+                hit = d <= tolerance + layer.lineWidth / 2
+            default:
+                hit = layer.rect.cg.standardized
+                    .insetBy(dx: -tolerance, dy: -tolerance)
+                    .contains(point)
+            }
+            if hit { return layer.id }
+        }
+        return nil
+    }
+
+    /// 返回选中状态是否发生了变化（决定要不要重绘）。
+    @discardableResult
+    func select(_ id: UUID?) -> Bool {
+        guard selectedID != id else { return false }
+        selectedID = id
+        return true
+    }
+
+    func beginMove(id: UUID, at point: CGPoint) {
+        selectedID = id
+        moveID = id
+        moveLastPoint = point
+    }
+
+    @discardableResult
+    func updateMove(to point: CGPoint) -> Bool {
+        guard let moveID, let last = moveLastPoint,
+              let index = layers.firstIndex(id: moveID) else { return false }
+        layers[index].rect.x += point.x - last.x
+        layers[index].rect.y += point.y - last.y
+        moveLastPoint = point
+        return true
+    }
+
+    /// 结束拖动。马赛克的位置变了，预算好的贴片必须按新位置重裁。
+    /// - Parameter pixelSource: 和 `endDraw` 的同名参数一致：给画布空间矩形，返回原始像素。
+    @discardableResult
+    func endMove(pixelSource: (CGRect) -> CGImage?) -> Bool {
+        defer {
+            moveID = nil
+            moveLastPoint = nil
+        }
+        guard let moveID, let index = layers.firstIndex(id: moveID) else { return false }
+        let layer = layers[index]
+        if layer.kind == .pixelate {
+            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap(LayerRenderer.pixelated)
+        }
+        return true
+    }
+
+    /// 删除选中的图层，连带清理它的马赛克贴片。
+    @discardableResult
+    func deleteSelected() -> Bool {
+        guard let id = selectedID else { return false }
+        selectedID = nil
+        guard layers.firstIndex(id: id) != nil else { return false }
+        layers.remove(id: id)
+        pixelatePreviews[id] = nil
+        return true
+    }
+
+    /// 把当前颜色应用到选中的图层（高亮保持半透明）。
+    @discardableResult
+    func applyColorToSelection() -> Bool {
+        guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return false }
+        var c = color
+        if layers[index].kind == .highlight { c.a = 0.4 }
+        layers[index].color = c
+        return true
+    }
+
+    /// 把当前粗细（和随之派生的字号）应用到选中的图层。
+    @discardableResult
+    func applyWidthToSelection() -> Bool {
+        guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return false }
+        layers[index].lineWidth = lineWidth
+        layers[index].fontSize = fontSize
+        return true
+    }
+
+    private nonisolated static func distance(
+        from p: CGPoint, toSegment a: CGPoint, _ b: CGPoint
+    ) -> Double {
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        let lengthSquared = dx * dx + dy * dy
+        guard lengthSquared > 0 else { return hypot(p.x - a.x, p.y - a.y) }
+        let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared))
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
     }
 
     // MARK: - 文字输入
@@ -171,6 +283,7 @@ final class AnnotationState {
         endTextEditing()
         guard let last = layers.removeLast() else { return false }
         pixelatePreviews[last.id] = nil
+        if selectedID == last.id { selectedID = nil }
         return true
     }
 

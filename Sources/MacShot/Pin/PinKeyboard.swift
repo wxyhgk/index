@@ -46,13 +46,21 @@ extension PinImageView {
                 onAction?(ActionID.copy)
             }
         case KeyCode.escape:
-            // 先放下画笔，再关窗口 —— 不要一下子把画到一半的东西全丢了。
-            if annotation.tool != nil {
+            // 逐级退出：先取消图层选中，再放下画笔，最后才关窗口。
+            if annotation.select(nil) {
+                needsDisplay = true
+                onToolbarHeightChanged?()
+            } else if annotation.tool != nil {
                 annotation.tool = nil
                 needsDisplay = true
                 onToolbarHeightChanged?()
             } else {
                 onAction?(ActionID.close)
+            }
+        case KeyCode.delete:
+            // 文字输入中的退格在上面的 isEditingText 分支处理过了，这里只删选中图层。
+            if annotation.deleteSelected() {
+                commitAnnotationChange()
             }
         case KeyCode.c where cmd:
             onAction?(ActionID.copy)

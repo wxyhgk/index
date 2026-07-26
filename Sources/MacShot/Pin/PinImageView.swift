@@ -120,7 +120,18 @@ final class PinImageView: NSView {
     /// 所以统一在这里刷新画布并通知控制器落库。
     private func activate(_ control: any ToolbarControl) {
         let heightBefore = requiredStripHeight
+        syncStrokeScale()
         control.activate(toolbarContext)
+        refreshCanvas()
+        needsDisplay = true
+        onAnnotationsChanged?()
+        if requiredStripHeight != heightBefore { onToolbarHeightChanged?() }
+    }
+
+    /// 图层内容变化（画完、移完、删完）后的统一收尾：重算马赛克底图、重绘、通知落库。
+    /// 键盘扩展也要用，所以不是 private。
+    func commitAnnotationChange() {
+        let heightBefore = requiredStripHeight
         refreshCanvas()
         needsDisplay = true
         onAnnotationsChanged?()
@@ -193,6 +204,23 @@ final class PinImageView: NSView {
             return
         }
 
+        // 指针模式下点中钉图后新画的图层 → 选中并准备拖动；点空处 → 取消选中，
+        // 落回下面的拖窗口逻辑。截图时带来的底层标注是只读的，不参与命中。
+        if annotation.tool == nil, imageRect.contains(point) {
+            syncStrokeScale()
+            let canvas = canvasPoint(point)
+            if let id = annotation.layer(at: canvas) {
+                annotation.endTextEditing()
+                annotation.beginMove(id: id, at: canvas)
+                needsDisplay = true
+                return
+            }
+            if annotation.select(nil) {
+                needsDisplay = true
+                onToolbarHeightChanged?()
+            }
+        }
+
         annotation.endTextEditing()
 
         if event.clickCount == 2 {
@@ -204,21 +232,26 @@ final class PinImageView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard annotation.isDrawing else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if annotation.updateDraw(to: canvasPoint(point)) {
-            needsDisplay = true
+        if annotation.isDrawing {
+            if annotation.updateDraw(to: canvasPoint(point)) { needsDisplay = true }
+        } else if annotation.isMoving {
+            if annotation.updateMove(to: canvasPoint(point)) { needsDisplay = true }
         }
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard annotation.isDrawing else { return }
-        annotation.endDraw { [base] rect in
-            base.cropping(to: rect.integral)
+        if annotation.isDrawing {
+            annotation.endDraw { [base] rect in
+                base.cropping(to: rect.integral)
+            }
+            commitAnnotationChange()
+        } else if annotation.isMoving {
+            annotation.endMove { [base] rect in
+                base.cropping(to: rect.integral)
+            }
+            commitAnnotationChange()
         }
-        refreshCanvas()
-        needsDisplay = true
-        onAnnotationsChanged?()
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -278,6 +311,12 @@ final class PinImageView: NSView {
         AnnotationRenderer.draw(
             layers,
             pixelatePreviews: annotation.pixelatePreviews,
+            in: ctx
+        )
+        AnnotationRenderer.drawSelectionHint(
+            selectedID: annotation.selectedID,
+            layers: layers,
+            strokeScale: 1 / max(scale, 0.0001),
             in: ctx
         )
         ctx.restoreGState()
