@@ -40,6 +40,7 @@ enum ActionID {
     static let pin = "pin"
     static let copy = "copy"
     static let save = "save"
+    static let upload = "upload"
     static let close = "close"
     /// 只完成，不做别的。没有按钮，只由回车触发。
     static let finish = "finish"
