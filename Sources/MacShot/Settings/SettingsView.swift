@@ -67,6 +67,11 @@ private struct GeneralSettings: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Toggle("检测敏感内容", isOn: $settings.detectSensitive)
+                Text("自动发现截图里的邮箱、密钥、银行卡号、手机号和人脸，详情页可一键打码。检测在本机完成，具体内容不进入搜索索引。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Toggle("自动分类", isOn: $settings.autoClassify)
                 Text("按来源 App 归入代码、浏览器、聊天等分类，并附加系统 Vision 场景标签。图库里可按分类筛选，分类名也可直接搜索。")
                     .font(.caption)

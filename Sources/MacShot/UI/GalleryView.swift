@@ -446,6 +446,11 @@ private struct ShotDetailPane: View {
     /// 目标是否已有特征指纹。没有就先禁用「相似」——刚截的图可能还在后台分析。
     @State private var hasFeaturePrint = false
     @State private var showingSimilar = false
+    /// 敏感内容检测结果（后台异步落库，和指纹一样随 store 刷新重查）。
+    @State private var sensitiveRegions: [SensitiveRegion] = []
+    /// 是否已打码。加载时按「最新修订的马赛克层是否盖住全部命中区域」判定，
+    /// 一键打码完成后直接置真。
+    @State private var sensitiveMasked = false
 
     var body: some View {
         ScrollView {
@@ -454,6 +459,9 @@ private struct ShotDetailPane: View {
                 actions
                 metadataActions
                 Divider()
+                if !sensitiveRegions.isEmpty {
+                    sensitiveBanner
+                }
                 metadataSection
                 Divider()
                 historySection
@@ -464,11 +472,15 @@ private struct ShotDetailPane: View {
             loadRevisions()
             category = shot.id.flatMap { store.attributeText(shotID: $0, key: AttributeKey.category) }
             refreshFeaturePrint()
+            refreshSensitiveRegions()
         }
         // 指纹由后台分析异步补上：store 每次刷新（属性落库会触发 reload）都重查一次。
         // 属性写入不一定改变 shots 数组本身，所以订阅 objectWillChange 而不是 onChange。
         // 单行 LIMIT 1 查询，代价可忽略。
-        .onReceive(store.objectWillChange) { _ in refreshFeaturePrint() }
+        .onReceive(store.objectWillChange) { _ in
+            refreshFeaturePrint()
+            refreshSensitiveRegions()
+        }
         .onChange(of: selection.editing) { _, newValue in
             if newValue == nil { loadRevisions() }
         }
@@ -481,6 +493,93 @@ private struct ShotDetailPane: View {
         hasFeaturePrint = shot.id.map {
             store.attributePayload(shotID: $0, key: AttributeKey.featurePrint) != nil
         } ?? false
+    }
+
+    private func refreshSensitiveRegions() {
+        guard let id = shot.id,
+              let data = store.attributePayload(shotID: id, key: AttributeKey.sensitiveRegions),
+              let regions = try? JSONDecoder().decode([SensitiveRegion].self, from: data),
+              !regions.isEmpty
+        else {
+            sensitiveRegions = []
+            sensitiveMasked = false
+            return
+        }
+        sensitiveRegions = regions
+        // 已打码 = 最新修订里每个命中区域都被某个马赛克层完整覆盖。
+        let pixelates = (store.latestRevision(for: shot)?.layers ?? [])
+            .filter { $0.kind == .pixelate }
+        sensitiveMasked = regions.allSatisfy { region in
+            pixelates.contains { $0.rect.cg.contains(region.rect) }
+        }
+    }
+
+    /// 按种类汇总的提示文案，如「2 处邮箱、1 处 API 密钥」。
+    private var sensitiveSummary: String {
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        for region in sensitiveRegions {
+            if counts[region.kind] == nil { order.append(region.kind) }
+            counts[region.kind, default: 0] += 1
+        }
+        return order.map { "\(counts[$0] ?? 0) 处\($0)" }.joined(separator: "、")
+    }
+
+    private var sensitiveBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("检测到敏感内容：\(sensitiveSummary)")
+                    .font(.caption.weight(.semibold))
+            }
+            Text(sensitiveRegions.map(\.preview).joined(separator: " · "))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+            if sensitiveMasked {
+                Label("已打码", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.green)
+            } else {
+                Button {
+                    maskSensitiveRegions()
+                } label: {
+                    Label("一键打码", systemImage: "squareshape.split.3x3")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.yellow.opacity(0.18))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.yellow.opacity(0.5), lineWidth: 1)
+        )
+    }
+
+    /// 一键打码：每个命中区域外扩 4px 生成一个马赛克层，
+    /// 追加为**新修订**（非破坏，历史可回溯，随时能回到打码前）。
+    private func maskSensitiveRegions() {
+        let existing = store.latestRevision(for: shot)?.imageLayers ?? Layers()
+        var layers = existing
+        let bounds = CGRect(
+            x: 0, y: 0,
+            width: CGFloat(shot.pixelWidth), height: CGFloat(shot.pixelHeight)
+        )
+        for region in sensitiveRegions {
+            let rect = region.rect.insetBy(dx: -4, dy: -4).intersection(bounds)
+            guard !rect.isNull, !rect.isEmpty else { continue }
+            layers.append(Layer(kind: .pixelate, rect: LRect(rect)))
+        }
+        guard store.appendRevision(shot: shot, layers: layers, note: "自动脱敏") != nil else { return }
+        sensitiveMasked = true
+        loadRevisions()
     }
 
     private func loadRevisions() {

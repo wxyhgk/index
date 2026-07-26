@@ -55,4 +55,8 @@ enum AttributeKey {
     /// Vision 图像特征指纹（NSKeyedArchiver 序列化的 VNFeaturePrintObservation）。
     /// 二进制载荷，text 必须为 nil（不进全文索引）。
     static let featurePrint = "vision.featureprint"
+    /// 敏感内容检测结果（[SensitiveRegion] 的 JSON）。
+    /// searchableText 只放命中的**种类**汇总（如 "邮箱,密钥"）——
+    /// 具体内容（邮箱地址、密钥本身）绝不进全文索引。
+    static let sensitiveRegions = "sensitive.regions"
 }
