@@ -146,6 +146,14 @@ struct EditorView: View {
             .keyboardShortcut("z", modifiers: [.command, .shift])
             .help("重做（⇧⌘Z）")
 
+            Divider().frame(height: 18)
+
+            backdropToggle
+
+            if annotation.hasBackdrop {
+                backdropPresetMenu
+            }
+
             Spacer()
 
             Text(shot.sourceSummary)
@@ -224,6 +232,48 @@ struct EditorView: View {
         }
         .buttonStyle(.plain)
         .help("粗细 \(index + 1)")
+    }
+
+    /// 美化开关。backdrop 只影响导出/复制/保存的成品 ——
+    /// 画布预览刻意不变（见 `AnnotationRenderer` 的说明），按钮高亮表达状态。
+    private var backdropToggle: some View {
+        let on = annotation.hasBackdrop
+        return Button {
+            annotation.toggleBackdrop()
+            annotationTick += 1
+        } label: {
+            Image(systemName: "sparkles").frame(width: 26, height: 22)
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(on ? Color.accentColor.opacity(0.22) : .clear)
+        )
+        .foregroundStyle(on ? Color.accentColor : .primary)
+        .help("美化背景（导出时垫渐变背景 + 圆角 + 阴影）")
+    }
+
+    /// 背景预设选择。选中即替换 backdrop 层的预设名，作为一条可撤销的 style 记录。
+    private var backdropPresetMenu: some View {
+        Menu {
+            ForEach(BackdropPreset.allCases, id: \.rawValue) { preset in
+                Button {
+                    annotation.setBackdropPreset(preset.rawValue)
+                    annotationTick += 1
+                } label: {
+                    if annotation.backdropPresetID == preset.rawValue {
+                        Label(preset.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(preset.displayName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "paintpalette").frame(width: 26, height: 22)
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: 40)
+        .help("美化背景预设")
     }
 
     private func selectTool(_ tool: AnnotationTool?) {

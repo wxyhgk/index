@@ -3,6 +3,48 @@ import CoreGraphics
 import CoreImage
 import CoreText
 
+/// 美化层（backdrop）的背景预设。`Layer.text` 存 rawValue。
+enum BackdropPreset: String, CaseIterable {
+    case gradientBlue = "gradient-blue"
+    case gradientSunset = "gradient-sunset"
+    case gradientMono = "gradient-mono"
+    case solid = "solid"
+
+    static let `default`: BackdropPreset = .gradientBlue
+
+    var displayName: String {
+        switch self {
+        case .gradientBlue: return "蓝紫渐变"
+        case .gradientSunset: return "日落渐变"
+        case .gradientMono: return "灰黑渐变"
+        case .solid: return "纯色"
+        }
+    }
+
+    /// 渐变两端的颜色；solid 返回 nil（用图层自身的 `color`）。
+    var gradientColors: (CGColor, CGColor)? {
+        switch self {
+        case .gradientBlue:
+            return (
+                CGColor(srgbRed: 0.31, green: 0.46, blue: 0.98, alpha: 1),
+                CGColor(srgbRed: 0.55, green: 0.29, blue: 0.94, alpha: 1)
+            )
+        case .gradientSunset:
+            return (
+                CGColor(srgbRed: 0.99, green: 0.56, blue: 0.30, alpha: 1),
+                CGColor(srgbRed: 0.94, green: 0.31, blue: 0.60, alpha: 1)
+            )
+        case .gradientMono:
+            return (
+                CGColor(srgbRed: 0.24, green: 0.25, blue: 0.28, alpha: 1),
+                CGColor(srgbRed: 0.08, green: 0.08, blue: 0.10, alpha: 1)
+            )
+        case .solid:
+            return nil
+        }
+    }
+}
+
 /// 把「原图 + 图层数组」渲染成一张图。
 /// 原图始终只读；这里产出的是临时结果，只在预览和导出时使用。
 enum LayerRenderer {
@@ -54,7 +96,109 @@ enum LayerRenderer {
             }
         }
 
+        // 3. 美化在裁剪之后套上：先裁出内容，再把内容垫到背景上。
+        //    它只存在于导出路径 —— 预览（AnnotationRenderer / LayerCanvas）跳过
+        //    backdrop，编辑时画布尺寸不变。
+        if let backdrop = layers.last(where: { $0.kind == .backdrop }) {
+            result = applyBackdrop(to: result, layer: backdrop) ?? result
+        }
+
         return result
+    }
+
+    // MARK: - 美化（背景垫底 / 圆角 / 阴影）
+
+    /// 输出画布扩大为 原尺寸 + 2×padding：先铺渐变/纯色背景，
+    /// 再把内容按圆角裁剪画在中央，底下带一层投影。
+    private static func applyBackdrop(to image: CGImage, layer: Layer) -> CGImage? {
+        let padding = max(0, layer.lineWidth)
+        let width = image.width + Int(padding.rounded()) * 2
+        let height = image.height + Int(padding.rounded()) * 2
+
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+        let preset = BackdropPreset(rawValue: layer.text) ?? .default
+        drawBackdropBackground(preset, solidColor: layer.color.cg, in: ctx, rect: canvas)
+
+        let contentRect = CGRect(
+            x: padding,
+            y: padding,
+            width: CGFloat(image.width),
+            height: CGFloat(image.height)
+        )
+        let radius = min(
+            max(0, layer.fontSize),
+            min(contentRect.width, contentRect.height) / 2
+        )
+        let path = CGPath(
+            roundedRect: contentRect,
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
+        )
+
+        // 投影：先用带阴影的实心圆角矩形打底（阴影由它投出），再在其上画内容。
+        // 上下文是 CG 默认的左下原点，offset y 取负让阴影在视觉上落向下方。
+        ctx.saveGState()
+        ctx.setShadow(
+            offset: CGSize(width: 0, height: -padding / 8),
+            blur: max(4, padding / 3),
+            color: CGColor(gray: 0, alpha: 0.3)
+        )
+        ctx.addPath(path)
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 内容按圆角裁剪画在中央。
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.clip()
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: contentRect)
+        ctx.restoreGState()
+
+        return ctx.makeImage()
+    }
+
+    private static func drawBackdropBackground(
+        _ preset: BackdropPreset,
+        solidColor: CGColor,
+        in ctx: CGContext,
+        rect: CGRect
+    ) {
+        if preset == .solid {
+            ctx.setFillColor(solidColor)
+            ctx.fill(rect)
+            return
+        }
+        guard let (from, to) = preset.gradientColors,
+              let gradient = CGGradient(
+                  colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                  colors: [from, to] as CFArray,
+                  locations: [0, 1]
+              )
+        else {
+            ctx.setFillColor(solidColor)
+            ctx.fill(rect)
+            return
+        }
+        // 对角线方向：左上 → 右下（视觉上；上下文是左下原点，所以取 maxY → minY）。
+        ctx.drawLinearGradient(
+            gradient,
+            start: CGPoint(x: rect.minX, y: rect.maxY),
+            end: CGPoint(x: rect.maxX, y: rect.minY),
+            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+        )
     }
 
     /// 在**已经是左上原点、Y 向下**的上下文里绘制矢量图层。
@@ -68,8 +212,8 @@ enum LayerRenderer {
         if !spotlights.isEmpty {
             drawSpotlightMask(spotlights, in: ctx)
         }
-        for layer in layers
-        where layer.kind != .pixelate && layer.kind != .crop && layer.kind != .spotlight {
+        for layer in layers where layer.kind != .pixelate && layer.kind != .crop
+            && layer.kind != .spotlight && layer.kind != .backdrop {
             draw(layer, in: ctx)
         }
     }
@@ -132,7 +276,7 @@ enum LayerRenderer {
         case .counter:
             drawCounter(layer, in: ctx)
 
-        case .pixelate, .crop, .spotlight:
+        case .pixelate, .crop, .spotlight, .backdrop:
             break   // 已在别处处理
         }
     }

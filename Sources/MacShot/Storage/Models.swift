@@ -55,6 +55,11 @@ struct Layer: Codable, Identifiable, Equatable {
         case crop
         case counter
         case spotlight
+        /// 美化：把成品垫在渐变/纯色背景上，内容圆角 + 投影 + 四周留白。
+        /// 复用现有字段避免动 Codable：`lineWidth` = 留白 padding（像素）、
+        /// `fontSize` = 内容圆角半径、`text` = 背景预设名、`color` = solid 预设的颜色。
+        /// 同时只保留一层（见 `AnnotationState.toggleBackdrop`），只影响导出，不参与画布预览。
+        case backdrop
 
         var displayName: String {
             switch self {
@@ -68,6 +73,7 @@ struct Layer: Codable, Identifiable, Equatable {
             case .crop: return "裁剪"
             case .counter: return "序号"
             case .spotlight: return "聚光灯"
+            case .backdrop: return "美化"
             }
         }
 
@@ -83,6 +89,7 @@ struct Layer: Codable, Identifiable, Equatable {
             case .crop: return "crop"
             case .counter: return "1.circle"
             case .spotlight: return "flashlight.on.fill"
+            case .backdrop: return "sparkles.rectangle.stack"
             }
         }
     }
