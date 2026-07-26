@@ -1,5 +1,13 @@
 import AppKit
 
+/// 选区层的交互形态。
+enum SelectionMode {
+    /// 截图：确认选区后出动作工具条 + 标注工具。
+    case capture
+    /// 只拿一个矩形（录屏选区用）：无工具条、无标注，回车 / 双击选区返回。
+    case plain
+}
+
 /// 覆盖所有显示器的选区层。
 ///
 /// 只负责：建窗口、分发选区结果、协调多屏之间的互斥。
@@ -16,6 +24,7 @@ final class SelectionOverlayController {
     func begin(
         snapshots: [DisplaySnapshot],
         windowList: [WindowInfo],
+        mode: SelectionMode = .capture,
         completion: @escaping (SelectionResult?) -> Void
     ) {
         guard !isActive, !snapshots.isEmpty else { return }
@@ -29,7 +38,11 @@ final class SelectionOverlayController {
             }) else { continue }
 
             let model = SelectionModel(snapshot: snapshot, windows: windowList)
-            let view = OverlayView(model: model, isPrimaryScreen: snapshot.display.id == primaryID)
+            let view = OverlayView(
+                model: model,
+                isPrimaryScreen: snapshot.display.id == primaryID,
+                mode: mode
+            )
             view.onFinish = { [weak self] result in self?.finish(result) }
             view.onBecameActive = { [weak self] owner in
                 // 一次只允许一块屏处于活动状态。

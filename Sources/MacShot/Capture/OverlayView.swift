@@ -15,6 +15,8 @@ final class OverlayView: NSView {
 
     let model: SelectionModel
     let annotation = AnnotationState()
+    /// plain 模式（录屏选区）：无工具条、无标注，回车 / 双击选区返回。
+    let mode: SelectionMode
 
     private let isPrimaryScreen: Bool
     private let imageLayer = CALayer()
@@ -51,8 +53,10 @@ final class OverlayView: NSView {
     }
 
     /// 工具条布局按需计算：绘制和命中测试用的是同一份结果，不可能不一致。
+    /// plain 模式恒为空 —— 工具条既不绘制也不参与命中。
     private var slots: [ToolbarSlot] {
-        guard model.phase == .confirmed, let rect = model.confirmedRect else { return [] }
+        guard mode == .capture, model.phase == .confirmed,
+              let rect = model.confirmedRect else { return [] }
         return ToolbarLayout.slots(in: bounds, config: .init(
             anchor: geometry.viewLocal(fromGlobal: rect),
             alignment: .trailing,
@@ -60,9 +64,10 @@ final class OverlayView: NSView {
         ))
     }
 
-    init(model: SelectionModel, isPrimaryScreen: Bool) {
+    init(model: SelectionModel, isPrimaryScreen: Bool, mode: SelectionMode = .capture) {
         self.model = model
         self.isPrimaryScreen = isPrimaryScreen
+        self.mode = mode
         super.init(frame: .zero)
 
         // 覆盖层画布是显示器的点；测量标注要报图像像素，倍率从冻结快照取。
@@ -84,6 +89,7 @@ final class OverlayView: NSView {
                 slots: self.slots,
                 hoveredControlID: self.hoveredControlID,
                 isPrimaryScreen: self.isPrimaryScreen,
+                confirmHint: self.mode == .plain ? "⏎ 开始录制 · 双击选区 · ⎋ 取消" : nil,
                 magnifier: self.magnifierPayload,
                 in: bounds,
                 ctx: ctx
@@ -201,6 +207,13 @@ final class OverlayView: NSView {
 
         let global = geometry.global(fromViewLocal: local)
         hoveredControlID = nil
+
+        // plain 模式（录屏选区）：双击选区内部 = 确认返回。
+        if mode == .plain, model.phase == .confirmed, event.clickCount == 2,
+           model.confirmedRect?.contains(global) == true {
+            emit(ActionID.finish)
+            return
+        }
 
         // 手上有标注工具时，选区内的拖拽是画标注，不是调整选区
         if model.phase == .confirmed,

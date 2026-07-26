@@ -5,6 +5,21 @@ import AppKit
 extension OverlayView {
 
     override func keyDown(with event: NSEvent) {
+        // plain 模式（录屏选区）没有标注和动作，只认：⎋ 取消、⏎ 确认、方向键微调。
+        if mode == .plain {
+            switch event.keyCode {
+            case KeyCode.escape:
+                cancel()
+            case KeyCode.returnKey, KeyCode.keypadEnter:
+                emit(ActionID.finish)
+            case let code where KeyCode.arrows.contains(code):
+                nudge(keyCode: event.keyCode, modifiers: event.modifierFlags)
+            default:
+                super.keyDown(with: event)
+            }
+            return
+        }
+
         // 正在输入文字时，除了 ESC / Return 之外的按键都送进文字图层。
         if annotation.isEditingText {
             handleTextInput(event)

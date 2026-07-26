@@ -10,6 +10,7 @@ enum OverlayRenderer {
         slots: [ToolbarSlot],
         hoveredControlID: String?,
         isPrimaryScreen: Bool,
+        confirmHint: String? = nil,
         magnifier: (sample: PixelSample, cursor: CGPoint)?,
         in bounds: CGRect,
         ctx: CGContext
@@ -67,6 +68,10 @@ enum OverlayRenderer {
                 hovered: hoveredControlID,
                 context: ToolbarContext(annotation: annotation, scope: .capture, perform: { _ in })
             )
+            // plain 模式没有工具条，用一行提示告诉用户怎么确认。
+            if let confirmHint {
+                drawConfirmHint(confirmHint, near: local, in: bounds)
+            }
         }
 
         // 放大镜画在最上层，否则会被选区边框和工具条盖住。
@@ -131,6 +136,31 @@ enum OverlayRenderer {
         let size = (text as NSString).size(withAttributes: attrs)
         (text as NSString).draw(
             at: NSPoint(x: (bounds.width - size.width) / 2, y: bounds.height * 0.62),
+            withAttributes: attrs
+        )
+    }
+
+    /// 选区下方的确认提示（plain 模式代替工具条）。放不下就挪到选区上方。
+    private static func drawConfirmHint(_ text: String, near local: CGRect, in bounds: CGRect) {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.white
+        ]
+        let textSize = (text as NSString).size(withAttributes: attrs)
+        let padding: CGFloat = 8
+        var box = NSRect(
+            x: local.midX - (textSize.width + padding * 2) / 2,
+            y: local.minY - textSize.height - padding - 8,
+            width: textSize.width + padding * 2,
+            height: textSize.height + padding
+        )
+        if box.minY < bounds.minY { box.origin.y = local.maxY + 34 }
+        box.origin.x = min(max(4, box.origin.x), bounds.maxX - box.width - 4)
+
+        NSColor.black.withAlphaComponent(0.75).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
+        (text as NSString).draw(
+            at: NSPoint(x: box.minX + padding, y: box.minY + padding / 2),
             withAttributes: attrs
         )
     }
