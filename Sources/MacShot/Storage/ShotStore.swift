@@ -183,7 +183,7 @@ final class ShotStore: ObservableObject {
     func removeAttribute(shotID: Int64, key: String) {
         do {
             try dbQueue.write { db in
-                try ShotAttribute
+                _ = try ShotAttribute
                     .filter(Column("shotID") == shotID && Column("key") == key)
                     .deleteAll(db)
             }
