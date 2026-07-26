@@ -59,6 +59,7 @@ final class AppSettings: ObservableObject {
         static let detectSensitive = "detectSensitive"
         static let semanticSearch = "semanticSearch"
         static let showMagnifier = "showMagnifier"
+        static let windowCaptureShadow = "windowCaptureShadow"
         static let enterBehavior = "enterBehavior"
         static let defaultColorIndex = "defaultColorIndex"
         static let defaultWidthIndex = "defaultWidthIndex"
@@ -90,6 +91,11 @@ final class AppSettings: ObservableObject {
     /// 选区时在光标旁显示像素放大镜和取色读数。
     @Published var showMagnifier: Bool {
         didSet { defaults.set(showMagnifier, forKey: Keys.showMagnifier) }
+    }
+
+    /// ⌥+单击的整窗截图是否带系统阴影（连同透明外沿一起输出）。
+    @Published var windowCaptureShadow: Bool {
+        didSet { defaults.set(windowCaptureShadow, forKey: Keys.windowCaptureShadow) }
     }
 
     /// 「延时截图」等待的秒数。
@@ -207,6 +213,7 @@ final class AppSettings: ObservableObject {
             Keys.detectSensitive: true,
             Keys.semanticSearch: false,
             Keys.showMagnifier: true,
+            Keys.windowCaptureShadow: true,
             Keys.captureDelay: 3,
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
             Keys.defaultColorIndex: 0,
@@ -224,6 +231,7 @@ final class AppSettings: ObservableObject {
         detectSensitive = defaults.bool(forKey: Keys.detectSensitive)
         semanticSearch = defaults.bool(forKey: Keys.semanticSearch)
         showMagnifier = defaults.bool(forKey: Keys.showMagnifier)
+        windowCaptureShadow = defaults.bool(forKey: Keys.windowCaptureShadow)
         captureDelay = defaults.integer(forKey: Keys.captureDelay)
         enterBehavior = defaults.string(forKey: Keys.enterBehavior)
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish

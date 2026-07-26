@@ -4,8 +4,9 @@ import Foundation
 ///
 /// 新增捕获方式 = 新增一个实现并注册到 `CaptureSourceRegistry`，不改 `CaptureCoordinator`。
 ///
-/// 当前阶段产物沿用 `[DisplaySnapshot]`（画布仍绑定「一块显示器」）；
-/// 滚动截图需要的「不绑定显示器的 CaptureCanvas」是下一步，见 ARCHITECTURE §2.1 的目标形态。
+/// 产物是 `[DisplaySnapshot]` —— 选区层的画布事实上就是「一块显示器」，这是如实建模。
+/// 曾设想的「不绑定显示器的 CaptureCanvas」已废弃：滚动截图、单窗口截图、延时截图
+/// 最终没有一个需要它，原因见 ARCHITECTURE §2.1 与阶段 4 注。
 @MainActor
 protocol CaptureSource {
     var id: String { get }

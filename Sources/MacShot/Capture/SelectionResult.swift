@@ -16,4 +16,7 @@ struct SelectionResult {
     /// 截图时画的标注，坐标已换算到裁剪图的像素空间。
     /// 原图保持干净，这些作为一条修订入库。
     let layers: Layers<ImageSpace>
+    /// ⌥+单击整窗捕获：非空时协调器应异步用 SCK 重拍不被遮挡的完整窗口替换 `image`。
+    /// 此时 `image` 是冻结画面的裁剪，只在窗口已经消失时兜底。普通路径恒为 nil。
+    let windowCaptureRequest: WindowInfo?
 }

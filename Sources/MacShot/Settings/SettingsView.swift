@@ -61,6 +61,13 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("整窗截图") {
+                Toggle("窗口截图带系统阴影", isOn: $settings.windowCaptureShadow)
+                Text("选区时按住 ⌥ 单击窗口，可捕获不被遮挡的完整窗口，圆角外背景透明（PNG）。开启后连同系统渲染的阴影一起输出。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("延时截图") {
                 Picker("等待时长", selection: $settings.captureDelay) {
                     ForEach(AppSettings.captureDelayChoices, id: \.self) { seconds in

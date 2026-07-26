@@ -102,6 +102,34 @@ final class CaptureCoordinator {
     }
 
     private func handle(_ result: SelectionResult, previousApp: NSRunningApplication?) {
+        // ⌥+单击整窗：异步用 SCK 重拍不被遮挡的完整窗口（透明背景 + 可选系统阴影）。
+        // 冻结画面的裁剪只在窗口已经消失（被关掉）时兜底。
+        if let request = result.windowCaptureRequest {
+            Task {
+                var image = result.image
+                do {
+                    image = try await WindowCapturer.capture(
+                        windowID: request.windowID,
+                        scale: result.display.scale,
+                        includeShadow: AppSettings.shared.windowCaptureShadow
+                    )
+                } catch {
+                    NSLog("[MacShot] 整窗捕获失败，退回冻结画面裁剪: \(error)")
+                }
+                store(result, image: image, previousApp: previousApp)
+            }
+            return
+        }
+        store(result, image: result.image, previousApp: previousApp)
+    }
+
+    /// 入库 + 派生处理 + 执行动作。`image` 单独传 —— 整窗捕获路径会用 SCK
+    /// 重拍的完整窗口替换掉 `result.image` 里的冻结裁剪。
+    private func store(
+        _ result: SelectionResult,
+        image: CGImage,
+        previousApp: NSRunningApplication?
+    ) {
         let sourceWindow = result.window ?? WindowLister.bestMatch(
             for: result.region,
             excludingPID: ProcessInfo.processInfo.processIdentifier
@@ -118,7 +146,7 @@ final class CaptureCoordinator {
             // 不管用户点了哪个按钮，都先入库 —— 自动保存是这个 App 的前提。
             // 注意存进去的是**未标注**的原始像素：截图时画的标注和后期编辑一样，
             // 只是一条 revision，原图永远保持干净、可回溯。
-            let shot = try ShotStore.shared.save(image: result.image, metadata: metadata)
+            let shot = try ShotStore.shared.save(image: image, metadata: metadata)
 
             if !result.layers.isEmpty {
                 ShotStore.shared.appendRevision(
@@ -134,14 +162,14 @@ final class CaptureCoordinator {
                 // 「detached → 算 → MainActor.run → updateXXX」拷贝的原因。
                 CapturePipeline.shared.run(PostProcessInput(
                     shotID: id,
-                    image: result.image,   // 跑原图，标注可能盖住文字
+                    image: image,   // 跑原图，标注可能盖住文字
                     appBundleID: metadata.appBundleID
                 ))
             }
 
             // 传底图 + 图层而非合成结果 —— 钉图窗口要靠它们继续非破坏性地画。
             let context = CaptureContext(
-                base: result.image,
+                base: image,
                 layers: result.layers,
                 shot: shot,
                 region: result.region,

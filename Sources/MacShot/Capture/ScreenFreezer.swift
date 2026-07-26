@@ -5,12 +5,14 @@ import CoreGraphics
 enum CaptureError: Error, LocalizedError {
     case noPermission
     case noDisplays
+    case windowNotFound
     case cropFailed
 
     var errorDescription: String? {
         switch self {
         case .noPermission: return "缺少「屏幕录制」权限"
         case .noDisplays: return "没有找到可捕获的显示器"
+        case .windowNotFound: return "找不到目标窗口"
         case .cropFailed: return "选区裁剪失败"
         }
     }
