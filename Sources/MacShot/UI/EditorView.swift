@@ -69,6 +69,8 @@ struct EditorView: View {
     private func load() {
         guard let base = store.originalImage(for: shot) else { return }
         baseImage = base
+        // 编辑器画布就是图像像素；水印字号按图宽 3% 烤入时直接取原图宽。
+        annotation.imagePixelWidthProvider = { Double(base.width) }
         revisions = store.revisions(for: shot)
         loadRevision(layers: revisions.last?.layers ?? [], index: max(0, revisions.count - 1))
     }
@@ -153,6 +155,12 @@ struct EditorView: View {
 
             if annotation.hasBackdrop {
                 backdropPresetMenu
+            }
+
+            watermarkToggle
+
+            if annotation.hasWatermark {
+                watermarkModeMenu
             }
 
             Spacer()
@@ -275,6 +283,54 @@ struct EditorView: View {
         .menuStyle(.borderlessButton)
         .frame(width: 40)
         .help("美化背景预设")
+    }
+
+    /// 水印开关。按设置里的参数造层（没配文案时用 "MacShot" 兜底）。
+    /// 和美化不同，水印会画进画布预览 —— 它影响构图判断。
+    private var watermarkToggle: some View {
+        let on = annotation.hasWatermark
+        return Button {
+            let settings = AppSettings.shared
+            let text = settings.trimmedWatermarkText
+            annotation.toggleWatermark(
+                text: text.isEmpty ? "MacShot" : text,
+                mode: settings.watermarkMode,
+                alpha: settings.watermarkAlpha
+            )
+            annotationTick += 1
+        } label: {
+            Image(systemName: "signature").frame(width: 26, height: 22)
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(on ? Color.accentColor.opacity(0.22) : .clear)
+        )
+        .foregroundStyle(on ? Color.accentColor : .primary)
+        .help("水印（文字盖在成品上，文案/透明度见设置）")
+    }
+
+    /// 水印位置切换。选中即替换 watermark 层的模式，作为一条可撤销的 style 记录。
+    private var watermarkModeMenu: some View {
+        Menu {
+            ForEach(WatermarkMode.allCases) { mode in
+                Button {
+                    annotation.setWatermarkMode(mode)
+                    annotationTick += 1
+                } label: {
+                    if annotation.watermarkMode == mode {
+                        Label(mode.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(mode.displayName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "square.grid.3x3").frame(width: 26, height: 22)
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: 40)
+        .help("水印位置")
     }
 
     private func selectTool(_ tool: AnnotationTool?) {

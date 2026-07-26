@@ -148,10 +148,26 @@ final class CaptureCoordinator {
             // 只是一条 revision，原图永远保持干净、可回溯。
             let shot = try ShotStore.shared.save(image: image, metadata: metadata)
 
-            if !result.layers.isEmpty {
+            // 「导出自动加水印」只挂在截图路径这一处：设置开着、配了文案、
+            // 截图时没手动开过水印，就按设置参数追加一层 —— 它和手画的标注一样
+            // 进修订链，图库里能看到、能删。编辑器/钉图的手动开关不受这里影响。
+            var layers = result.layers
+            let settings = AppSettings.shared
+            if settings.autoWatermark,
+               !settings.trimmedWatermarkText.isEmpty,
+               !layers.elements.contains(where: { $0.kind == .watermark }) {
+                layers.append(WatermarkSpec.makeLayer(
+                    text: settings.trimmedWatermarkText,
+                    mode: settings.watermarkMode,
+                    alpha: settings.watermarkAlpha,
+                    imagePixelWidth: Double(image.width)
+                ))
+            }
+
+            if !layers.isEmpty {
                 ShotStore.shared.appendRevision(
                     shot: shot,
-                    layers: result.layers,
+                    layers: layers,
                     note: "截图时标注"
                 )
             }
@@ -168,9 +184,10 @@ final class CaptureCoordinator {
             }
 
             // 传底图 + 图层而非合成结果 —— 钉图窗口要靠它们继续非破坏性地画。
+            // 用的是含自动水印的 layers：钉图/复制看到的和入库的是同一版。
             let context = CaptureContext(
                 base: image,
-                layers: result.layers,
+                layers: layers,
                 shot: shot,
                 region: result.region,
                 host: nil

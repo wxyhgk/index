@@ -70,6 +70,10 @@ final class AppSettings: ObservableObject {
         static let delayedCaptureShortcut = "delayedCaptureShortcut"
         static let recordingShortcut = "recordingShortcut"
         static let scrollCaptureShortcut = "scrollCaptureShortcut"
+        static let watermarkText = "watermarkText"
+        static let watermarkMode = "watermarkMode"
+        static let watermarkAlpha = "watermarkAlpha"
+        static let autoWatermark = "autoWatermark"
         static let uploadEndpoint = "uploadEndpoint"
         static let uploadFieldName = "uploadFieldName"
         static let uploadHeaders = "uploadHeaders"
@@ -160,6 +164,35 @@ final class AppSettings: ObservableObject {
 
     @Published var defaultWidthIndex: Int {
         didSet { defaults.set(defaultWidthIndex, forKey: Keys.defaultWidthIndex) }
+    }
+
+    // MARK: - 水印
+
+    /// 默认水印文案。空 = 未配置：「导出自动加水印」不生效，
+    /// 手动开关（工具条/编辑器）用 "MacShot" 兜底。
+    @Published var watermarkText: String {
+        didSet { defaults.set(watermarkText, forKey: Keys.watermarkText) }
+    }
+
+    /// 默认水印位置（右下角 / 居中 / 平铺）。
+    @Published var watermarkMode: WatermarkMode {
+        didSet { defaults.set(watermarkMode.rawValue, forKey: Keys.watermarkMode) }
+    }
+
+    /// 水印透明度（0.1–0.8）。白字 + 细黑描边，深浅底上都可见。
+    @Published var watermarkAlpha: Double {
+        didSet { defaults.set(watermarkAlpha, forKey: Keys.watermarkAlpha) }
+    }
+
+    /// 新截图落库时自动追加一层水印。只作用于截图路径
+    /// （`CaptureCoordinator.handle`），编辑器/钉图的手动开关不受它影响。
+    @Published var autoWatermark: Bool {
+        didSet { defaults.set(autoWatermark, forKey: Keys.autoWatermark) }
+    }
+
+    /// 去掉首尾空白后的水印文案；空串 = 未配置。
+    var trimmedWatermarkText: String {
+        watermarkText.trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: - 智能
@@ -266,6 +299,10 @@ final class AppSettings: ObservableObject {
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
             Keys.defaultColorIndex: 0,
             Keys.defaultWidthIndex: 1,
+            Keys.watermarkText: "",
+            Keys.watermarkMode: WatermarkMode.corner.rawValue,
+            Keys.watermarkAlpha: 0.35,
+            Keys.autoWatermark: false,
             Keys.uploadEndpoint: "",
             Keys.uploadFieldName: "file",
             Keys.uploadHeaders: "",
@@ -291,6 +328,11 @@ final class AppSettings: ObservableObject {
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish
         defaultColorIndex = defaults.integer(forKey: Keys.defaultColorIndex)
         defaultWidthIndex = defaults.integer(forKey: Keys.defaultWidthIndex)
+        watermarkText = defaults.string(forKey: Keys.watermarkText) ?? ""
+        watermarkMode = defaults.string(forKey: Keys.watermarkMode)
+            .flatMap(WatermarkMode.init(rawValue:)) ?? .corner
+        watermarkAlpha = defaults.double(forKey: Keys.watermarkAlpha)
+        autoWatermark = defaults.bool(forKey: Keys.autoWatermark)
         uploadEndpoint = defaults.string(forKey: Keys.uploadEndpoint) ?? ""
         uploadFieldName = defaults.string(forKey: Keys.uploadFieldName) ?? "file"
         uploadHeaders = defaults.string(forKey: Keys.uploadHeaders) ?? ""

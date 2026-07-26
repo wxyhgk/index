@@ -63,6 +63,14 @@ struct Layer: Codable, Identifiable, Equatable {
         /// `fontSize` = 内容圆角半径、`text` = 背景预设名、`color` = solid 预设的颜色。
         /// 同时只保留一层（见 `AnnotationState.toggleBackdrop`），只影响导出，不参与画布预览。
         case backdrop
+        /// 水印：文字盖在成品上（白字 + 细黑描边，深浅底都可见），非破坏、进修订链。
+        /// 复用现有字段避免动 Codable：`text` = `WatermarkSpec` 的 JSON
+        /// （`{"mode":"corner","text":"@user"}`）、`color.a` = 透明度、
+        /// `fontSize` = 字号（创建时按图宽 3% 烤入，min 14px）、
+        /// `lineWidth` = 描边宽（创建时 = 1/pixelScale，投影后恰为 1 像素）。
+        /// 同时只保留一层（见 `AnnotationState.toggleWatermark`）；在裁剪之后、
+        /// 美化之前套用，预览**会**画 —— 它影响构图判断，和 backdrop 不同。
+        case watermark
 
         var displayName: String {
             switch self {
@@ -78,6 +86,7 @@ struct Layer: Codable, Identifiable, Equatable {
             case .spotlight: return "聚光灯"
             case .dimension: return "测量"
             case .backdrop: return "美化"
+            case .watermark: return "水印"
             }
         }
 
@@ -95,6 +104,7 @@ struct Layer: Codable, Identifiable, Equatable {
             case .spotlight: return "flashlight.on.fill"
             case .dimension: return "ruler"
             case .backdrop: return "sparkles.rectangle.stack"
+            case .watermark: return "signature"
             }
         }
     }
