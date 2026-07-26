@@ -44,8 +44,9 @@ struct CachedImage: View {
                     .resizable()
                     .interpolation(.medium)
                     .aspectRatio(contentMode: .fit)
+                    .transition(.opacity)
             } else {
-                Color.clear
+                Rectangle().fill(.quaternary)
             }
         }
         .task(id: key) { await load() }
@@ -62,6 +63,7 @@ struct CachedImage: View {
 
         guard let data, let decoded = NSImage(data: data) else { return }
         ThumbnailCache.shared.insert(decoded, forKey: key, cost: data.count)
-        image = decoded
+        // 首次从磁盘解码的图淡入 0.15s；命中缓存的同步路径不经过这里，不闪不抖。
+        withAnimation(.easeOut(duration: 0.15)) { image = decoded }
     }
 }
