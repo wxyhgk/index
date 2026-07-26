@@ -6,6 +6,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let settings = AppSettings.shared
 
+    // MARK: - URL scheme（macshot://）
+
+    private let urlRouter = URLCommandRouter()
+    /// 冷启动经 URL 打开时，`application(_:open:)` 先于 `applicationDidFinishLaunching`
+    /// 到达（URL 以 Apple Event 随启动派发）—— 此时注册表还没装配，先存起来，
+    /// didFinishLaunching 末尾统一重放。
+    private var launchFinished = false
+    private var pendingURLs: [URL] = []
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard launchFinished else {
+            pendingURLs.append(contentsOf: urls)
+            return
+        }
+        urls.forEach { urlRouter.handle($0) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = ShotStore.shared          // 提前建库，避免第一次截图时卡顿
         CaptureActionRegistry.registerBuiltins(into: .shared)
@@ -20,9 +37,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         settings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
 
+        // 服务菜单：「用 MacShot 截图」（Info.plist 里的 NSServices 指到 captureService）。
+        NSApp.servicesProvider = self
+
         if !ScreenRecordingPermission.isGranted {
             ScreenRecordingPermission.request()
         }
+
+        // 服务已全部就绪，重放冷启动期间攒下的 URL 命令。
+        launchFinished = true
+        let queued = pendingURLs
+        pendingURLs = []
+        queued.forEach { urlRouter.handle($0) }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -30,11 +56,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 捕获方式
 
     /// 延时秒数由闭包注入 —— 采集层不引用 AppSettings，配置只在这里交汇。
+    /// `macshot://capture?delay=N` 的一次性覆盖也在这里消费，优先于设置值。
     private func registerCaptureSources() {
         let immediate = ImmediateScreenSource()
         CaptureSourceRegistry.shared.register(immediate)
-        CaptureSourceRegistry.shared.register(DelayedScreenSource(wrapping: immediate) {
-            AppSettings.shared.captureDelay
+        CaptureSourceRegistry.shared.register(DelayedScreenSource(wrapping: immediate) { [urlRouter] in
+            urlRouter.consumeDelayOverride() ?? AppSettings.shared.captureDelay
         })
     }
 
@@ -136,6 +163,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         SettingsWindowController.shared.show()
+    }
+
+    // MARK: - 服务菜单
+
+    /// 「用 MacShot 截图」—— 无输入/输出类型，所以出现在所有 App 的「服务」菜单里。
+    /// 签名是 NSServices 协定的固定形状，pasteboard/userData 用不上但不能省。
+    @objc func captureService(
+        _ pasteboard: NSPasteboard,
+        userData: String,
+        error: AutoreleasingUnsafeMutablePointer<NSString>
+    ) {
+        CaptureCoordinator.shared.begin()
     }
 }
 
