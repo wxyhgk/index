@@ -133,6 +133,40 @@ struct BackdropControl: ToolbarControl {
     }
 }
 
+// MARK: - 水印
+
+/// 水印开关。和美化一样是**输出选项**：点一下按设置里的参数加/删一层 watermark，
+/// 单例语义、不可选中拖动。设置没配文案时用 "MacShot" 兜底 —— 开关必须永远可用。
+/// 和 backdrop 不同，水印会画进实时预览（见 `AnnotationRenderer`）—— 它影响构图判断。
+struct WatermarkControl: ToolbarControl {
+    let id = "watermark"
+    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var group: ToolbarGroup { .style }
+    /// 排在美化（300）之后。
+    var order: Int { 320 }
+
+    /// 恒可见：指针模式下也能开关 —— 它是输出选项，不依赖任何工具。
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.hasWatermark
+    }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("signature", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        let settings = AppSettings.shared
+        let text = settings.trimmedWatermarkText
+        context.annotation.toggleWatermark(
+            text: text.isEmpty ? "MacShot" : text,
+            mode: settings.watermarkMode,
+            alpha: settings.watermarkAlpha
+        )
+    }
+}
+
 // MARK: - 撤销 / 重做
 
 struct UndoControl: ToolbarControl {
@@ -220,6 +254,7 @@ extension ToolbarRegistry {
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
         AnnotationState.widths.indices.forEach { registry.register(WidthControl(index: $0)) }
         registry.register(BackdropControl())
+        registry.register(WatermarkControl())
         registry.register(UndoControl())
         registry.register(RedoControl())
     }

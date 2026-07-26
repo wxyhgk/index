@@ -76,6 +76,11 @@ final class OverlayView: NSView {
 
         // 覆盖层画布是显示器的点；测量标注要报图像像素，倍率从冻结快照取。
         annotation.pixelScale = Double(model.snapshot.scale)
+        // 水印字号按「成品图宽 3%」烤入；成品宽 = 选区宽（点）× 缩放倍率。
+        // 闭包按需取值 —— 开关水印的那一刻选区是多大就按多大算。
+        annotation.imagePixelWidthProvider = { [model] in
+            Double((model.confirmedRect?.width ?? 0) * model.snapshot.scale)
+        }
 
         wantsLayer = true
 

@@ -32,6 +32,11 @@ final class AnnotationState {
     /// 数值在生成图层时烤进 `text`，投影导出后不再重算 —— 预览和成品显示同一个数。
     var pixelScale: Double = 1
 
+    /// 成品图**像素宽**的提供者，水印字号按「图宽 3%」烤入时用：
+    /// 覆盖层 = 选区宽 × pixelScale，钉图/编辑器 = 图像像素宽。
+    /// nil 时字号只按 14px 下限走。
+    var imagePixelWidthProvider: (() -> Double)?
+
     private(set) var layers = Layers<CanvasSpace>()
     private(set) var editingTextID: UUID?
 
@@ -285,10 +290,11 @@ final class AnnotationState {
 
     /// 命中测试（画布空间），从最上层往下找。
     /// 线段类按点到线段的距离判定，其余按外接矩形（都带一圈容差，方便点中细线）。
-    /// 美化层没有画布上的形体，不参与命中，只能通过开关/预设菜单操作。
+    /// 美化层和水印层没有画布上的形体，不参与命中，只能通过开关/菜单操作。
     func layer(at point: CGPoint) -> UUID? {
         let tolerance = 8 * strokeScale
-        for layer in layers.elements.reversed() where layer.kind != .backdrop {
+        for layer in layers.elements.reversed()
+        where layer.kind != .backdrop && layer.kind != .watermark {
             let hit: Bool
             switch layer.kind {
             case .line, .arrow:
@@ -448,6 +454,64 @@ final class AnnotationState {
               layers[index].text != presetID else { return false }
         let before = layers[index]
         layers[index].text = presetID
+        record(.style(id: before.id, before: before, after: layers[index]))
+        return true
+    }
+
+    // MARK: - 水印（watermark）
+
+    /// 当前是否已有水印。工具条开关的选中态看它。
+    var hasWatermark: Bool {
+        layers.elements.contains { $0.kind == .watermark }
+    }
+
+    /// 当前水印的摆放模式；未开启时为 nil。
+    var watermarkMode: WatermarkMode? {
+        layers.elements.last { $0.kind == .watermark }
+            .flatMap { WatermarkSpec.decode($0.text)?.mode }
+    }
+
+    /// 水印开关。和 backdrop 一样只有加/删两种操作，都走 `record` 保持可撤销；
+    /// 同时只保留一层 —— 加之前先清干净。
+    ///
+    /// 字号按成品图宽 3%（不小于 14px）烤成图像像素，再反除 `pixelScale`
+    /// 换到画布单位；描边同理（1 像素 → 1/pixelScale 画布单位）。
+    /// 投影（×pixelScale）后恰好回到烤定的像素值 —— 预览画的和导出画的
+    /// 因此是同一个大小，思路与测量标注把数值烤进 `text` 一致。
+    @discardableResult
+    func toggleWatermark(text: String, mode: WatermarkMode, alpha: Double) -> Bool {
+        endTextEditing()
+        if hasWatermark {
+            while let index = layers.elements.firstIndex(where: { $0.kind == .watermark }) {
+                let old = layers[index]
+                record(.remove(old, index: index, preview: nil))
+                layers.remove(id: old.id)
+                if selectedID == old.id { selectedID = nil }
+            }
+            return false
+        }
+        var layer = WatermarkSpec.makeLayer(
+            text: text,
+            mode: mode,
+            alpha: alpha,
+            imagePixelWidth: imagePixelWidthProvider?() ?? 0
+        )
+        layer.fontSize /= pixelScale
+        layer.lineWidth /= pixelScale
+        layers.append(layer)
+        record(.add(layer, preview: nil))
+        return true
+    }
+
+    /// 替换水印的摆放模式，记一条 style 撤销记录。未开启时不做事。
+    @discardableResult
+    func setWatermarkMode(_ mode: WatermarkMode) -> Bool {
+        guard let index = layers.elements.firstIndex(where: { $0.kind == .watermark }),
+              var spec = WatermarkSpec.decode(layers[index].text),
+              spec.mode != mode else { return false }
+        let before = layers[index]
+        spec.mode = mode
+        layers[index].text = spec.encoded
         record(.style(id: before.id, before: before, after: layers[index]))
         return true
     }

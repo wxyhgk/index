@@ -45,6 +45,60 @@ enum BackdropPreset: String, CaseIterable {
     }
 }
 
+/// 水印的摆放模式。`WatermarkSpec.mode` 存 rawValue。
+enum WatermarkMode: String, Codable, CaseIterable, Identifiable {
+    /// 右下角一行，边距 = 字号。
+    case corner
+    /// 居中斜排，字号 ×1.6。
+    case center
+    /// 斜向平铺，盖满全图。
+    case tile
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .corner: return "右下角"
+        case .center: return "居中"
+        case .tile: return "平铺"
+        }
+    }
+}
+
+/// 水印层的参数。整体序列化成 JSON 存进 `Layer.text`：
+/// `{"mode":"corner","text":"@user"}` —— 复用现有字段，不动 Codable。
+struct WatermarkSpec: Codable, Equatable {
+    var text: String
+    var mode: WatermarkMode
+
+    /// 存进 `Layer.text` 的 JSON。键排序固定，同参数编码结果一致（Layer 是 Equatable）。
+    var encoded: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(self) else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    static func decode(_ json: String) -> WatermarkSpec? {
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(WatermarkSpec.self, from: data)
+    }
+
+    /// 造一层**图像像素空间**的水印层：字号 = 图宽 3%（不小于 14px）、描边 1 像素、
+    /// 白字（透明度 = `alpha`）。画布空间创建时由 `AnnotationState.toggleWatermark`
+    /// 把 fontSize / lineWidth 反除 pixelScale 换到画布单位。
+    static func makeLayer(
+        text: String, mode: WatermarkMode, alpha: Double, imagePixelWidth: Double
+    ) -> Layer {
+        var layer = Layer(kind: .watermark, rect: LRect(x: 0, y: 0, w: 0, h: 0))
+        layer.text = WatermarkSpec(text: text, mode: mode).encoded
+        layer.color = LColor(r: 1, g: 1, b: 1, a: alpha)
+        layer.fontSize = max(14, imagePixelWidth * 0.03)
+        layer.lineWidth = 1
+        return layer
+    }
+}
+
 /// 把「原图 + 图层数组」渲染成一张图。
 /// 原图始终只读；这里产出的是临时结果，只在预览和导出时使用。
 enum LayerRenderer {
@@ -96,7 +150,13 @@ enum LayerRenderer {
             }
         }
 
-        // 3. 美化在裁剪之后套上：先裁出内容，再把内容垫到背景上。
+        // 3. 水印在裁剪之后、美化之前盖上：位置相对裁剪后的成品，
+        //    且美化的留白/背景不带水印。预览也画（见 `AnnotationRenderer`）。
+        if let watermark = layers.last(where: { $0.kind == .watermark }) {
+            result = applyWatermark(to: result, layer: watermark) ?? result
+        }
+
+        // 4. 美化在最后套上：先裁出内容，再把内容垫到背景上。
         //    它只存在于导出路径 —— 预览（AnnotationRenderer / LayerCanvas）跳过
         //    backdrop，编辑时画布尺寸不变。
         if let backdrop = layers.last(where: { $0.kind == .backdrop }) {
@@ -104,6 +164,105 @@ enum LayerRenderer {
         }
 
         return result
+    }
+
+    // MARK: - 水印
+
+    /// 同尺寸重绘一遍，把水印盖在最上层。
+    private static func applyWatermark(to image: CGImage, layer: Layer) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // 翻成左上原点，与 drawWatermark 的假设一致。
+        ctx.translateBy(x: 0, y: CGFloat(height))
+        ctx.scaleBy(x: 1, y: -1)
+        drawWatermark(layer, in: ctx, canvas: CGRect(x: 0, y: 0, width: width, height: height))
+        return ctx.makeImage()
+    }
+
+    /// 画水印文字。上下文必须**已经**是「左上原点、Y 向下」；`canvas` 是成品在
+    /// 当前空间里的范围 —— 导出时是整张（裁剪后的）图，覆盖层预览时是选区。
+    ///
+    /// 白填充 + 细黑描边（`.fillStroke`），深浅底上都可见；透明度取 `layer.color.a`。
+    /// 导出和实时预览共用这一份代码（`AnnotationRenderer` 直接调它），所见即所得。
+    static func drawWatermark(_ layer: Layer, in ctx: CGContext, canvas: CGRect) {
+        guard canvas.width >= 1, canvas.height >= 1,
+              let spec = WatermarkSpec.decode(layer.text),
+              !spec.text.isEmpty else { return }
+
+        // 居中模式醒目一档：字号 ×1.6。
+        let fontSize = max(1, layer.fontSize * (spec.mode == .center ? 1.6 : 1))
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let attributed = NSAttributedString(string: spec.text, attributes: [
+            .font: font,
+            // 填充/描边色从上下文取，CTLine 才能画出 fillStroke 双色文字。
+            NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true
+        ])
+        let line = CTLineCreateWithAttributedString(attributed)
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let textWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.clip(to: canvas)
+        ctx.setTextDrawingMode(.fillStroke)
+        ctx.setFillColor(layer.color.cg)
+        ctx.setStrokeColor(CGColor(gray: 0, alpha: layer.color.a))
+        ctx.setLineWidth(max(0.5, layer.lineWidth))
+        // 上下文当前是翻转的（左上原点），文字需要再翻一次才不会上下颠倒。
+        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+
+        switch spec.mode {
+        case .corner:
+            // 右下角，边距 = 字号。
+            let margin = layer.fontSize
+            ctx.textPosition = CGPoint(
+                x: canvas.maxX - margin - textWidth,
+                y: canvas.maxY - margin - descent
+            )
+            CTLineDraw(line, ctx)
+
+        case .center:
+            // 居中斜排。Y 向下的空间里 -30° 视觉上是左低右高的经典水印角度。
+            ctx.translateBy(x: canvas.midX, y: canvas.midY)
+            ctx.rotate(by: -.pi / 6)
+            ctx.textPosition = CGPoint(x: -textWidth / 2, y: (ascent - descent) / 2)
+            CTLineDraw(line, ctx)
+
+        case .tile:
+            // 斜向平铺：绕中心旋转 -30°，按网格重复；覆盖半径取对角线，
+            // 保证旋转后四角也铺满。隔行错开半个周期，视觉上更均匀。
+            ctx.translateBy(x: canvas.midX, y: canvas.midY)
+            ctx.rotate(by: -.pi / 6)
+            let step = max(textWidth, fontSize) * 1.6
+            let radius = hypot(canvas.width, canvas.height) / 2 + step
+            var y = -radius
+            var row = 0
+            while y <= radius {
+                var x = -radius + (row % 2 == 0 ? 0 : step / 2)
+                while x <= radius {
+                    ctx.textPosition = CGPoint(
+                        x: x - textWidth / 2,
+                        y: y + (ascent - descent) / 2
+                    )
+                    CTLineDraw(line, ctx)
+                    x += step
+                }
+                y += step
+                row += 1
+            }
+        }
     }
 
     // MARK: - 美化（背景垫底 / 圆角 / 阴影）
@@ -213,7 +372,8 @@ enum LayerRenderer {
             drawSpotlightMask(spotlights, in: ctx)
         }
         for layer in layers where layer.kind != .pixelate && layer.kind != .crop
-            && layer.kind != .spotlight && layer.kind != .backdrop {
+            && layer.kind != .spotlight && layer.kind != .backdrop
+            && layer.kind != .watermark {
             draw(layer, in: ctx)
         }
     }
@@ -279,7 +439,7 @@ enum LayerRenderer {
         case .dimension:
             drawDimension(layer, in: ctx)
 
-        case .pixelate, .crop, .spotlight, .backdrop:
+        case .pixelate, .crop, .spotlight, .backdrop, .watermark:
             break   // 已在别处处理
         }
     }
