@@ -30,7 +30,7 @@ struct EditorView: View {
     @State private var revisions: [Revision] = []
 
     /// 一次画布拖拽在做什么。`idle` 表示这次按下不产生后续（点空处取消选中等）。
-    private enum CanvasDrag { case draw, move, idle }
+    private enum CanvasDrag { case draw, move, resize, idle }
     @State private var canvasDrag: CanvasDrag?
 
     /// 右侧文字框获得焦点时，裸键工具快捷键（R / A / …）必须让位给打字。
@@ -437,6 +437,26 @@ struct EditorView: View {
             .frame(width: fitted.width, height: fitted.height)
             .offset(x: fitted.minX, y: fitted.minY)
             .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                // 指针模式下悬停到选中图层的缩放控制点 → resize 光标。
+                // 坐标映射和下面的 DragGesture 完全一致（同一条修饰链）。
+                switch phase {
+                case .active(let location):
+                    annotation.strokeScale = Double(
+                        CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width)
+                    )
+                    if annotation.tool == nil,
+                       let handle = annotation.resizeHandle(
+                           at: imagePoint(location, fitted: fitted)
+                       ) {
+                        handle.cursor.set()
+                    } else {
+                        NSCursor.arrow.set()
+                    }
+                case .ended:
+                    NSCursor.arrow.set()
+                }
+            }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
@@ -466,6 +486,11 @@ struct EditorView: View {
             } else if annotation.tool != nil {
                 annotation.beginDraw(at: start)
                 canvasDrag = .draw
+            } else if let handle = annotation.resizeHandle(at: start) {
+                // 选中图层的缩放控制点优先于图层本体的命中。
+                annotation.endTextEditing()
+                annotation.beginResize(handle: handle, at: start)
+                canvasDrag = .resize
             } else if let id = annotation.layer(at: start) {
                 annotation.endTextEditing()
                 annotation.beginMove(id: id, at: start)
@@ -479,6 +504,7 @@ struct EditorView: View {
         switch canvasDrag {
         case .draw: annotation.updateDraw(to: point)
         case .move: annotation.updateMove(to: point)
+        case .resize: annotation.updateResize(to: point)
         default: break
         }
         annotationTick += 1
@@ -491,6 +517,9 @@ struct EditorView: View {
             refreshCanvasImage()
         case .move:
             annotation.endMove(pixelSource: cropPixels)
+            refreshCanvasImage()
+        case .resize:
+            annotation.endResize(pixelSource: cropPixels)
             refreshCanvasImage()
         default:
             break

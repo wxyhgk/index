@@ -53,28 +53,14 @@ final class CanvasView: NSView {
         ctx.translateBy(x: 0, y: bounds.height)
         ctx.scaleBy(x: scale, y: -scale)
         AnnotationRenderer.draw(layers, pixelatePreviews: pixelatePreviews, in: ctx)
+        // 选中框 + 缩放控制点走覆盖层/钉图同一份绘制；strokeScale 反除显示倍率，
+        // 虚线和控制点在屏幕上恒定 1pt / 7pt。
+        AnnotationRenderer.drawSelectionHint(
+            selectedID: selectedLayerID,
+            layers: layers,
+            strokeScale: 1 / max(scale, 0.0001),
+            in: ctx
+        )
         ctx.restoreGState()
-
-        drawSelectionHint(scale: scale)
-    }
-
-    private func drawSelectionHint(scale: CGFloat) {
-        guard let selectedLayerID,
-              let layer = layers.elements.first(where: { $0.id == selectedLayerID })
-        else { return }
-
-        let r = layer.rect.cg
-        let box = NSRect(
-            x: r.minX * scale,
-            y: bounds.height - r.maxY * scale,
-            width: r.width * scale,
-            height: r.height * scale
-        ).insetBy(dx: -3, dy: -3)
-
-        NSColor.controlAccentColor.setStroke()
-        let path = NSBezierPath(rect: box)
-        path.lineWidth = 1
-        path.setLineDash([3, 3], count: 2, phase: 0)
-        path.stroke()
     }
 }

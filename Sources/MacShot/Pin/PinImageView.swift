@@ -201,6 +201,14 @@ final class PinImageView: NSView {
             hoveredControlID = hit
             needsDisplay = true
         }
+        if hit == nil, annotation.tool == nil, imageRect.contains(point) {
+            // 指针模式：悬停到选中图层的缩放控制点时换 resize 光标。
+            syncStrokeScale()
+            if let handle = annotation.resizeHandle(at: canvasPoint(point)) {
+                handle.cursor.set()
+                return
+            }
+        }
         (hit == nil && annotation.tool != nil ? NSCursor.crosshair : NSCursor.arrow).set()
     }
 
@@ -225,11 +233,18 @@ final class PinImageView: NSView {
             return
         }
 
-        // 指针模式下点中钉图后新画的图层 → 选中并准备拖动；点空处 → 取消选中，
-        // 落回下面的拖窗口逻辑。截图时带来的底层标注是只读的，不参与命中。
+        // 指针模式下优先命中选中图层的缩放控制点；再是图层本体（选中并准备拖动）；
+        // 点空处 → 取消选中，落回下面的拖窗口逻辑。
+        // 截图时带来的底层标注是只读的，不参与命中。
         if annotation.tool == nil, imageRect.contains(point) {
             syncStrokeScale()
             let canvas = canvasPoint(point)
+            if let handle = annotation.resizeHandle(at: canvas) {
+                annotation.endTextEditing()
+                annotation.beginResize(handle: handle, at: canvas)
+                needsDisplay = true
+                return
+            }
             if let id = annotation.layer(at: canvas) {
                 annotation.endTextEditing()
                 annotation.beginMove(id: id, at: canvas)
@@ -258,6 +273,8 @@ final class PinImageView: NSView {
             if annotation.updateDraw(to: canvasPoint(point)) { needsDisplay = true }
         } else if annotation.isMoving {
             if annotation.updateMove(to: canvasPoint(point)) { needsDisplay = true }
+        } else if annotation.isResizing {
+            if annotation.updateResize(to: canvasPoint(point)) { needsDisplay = true }
         }
     }
 
@@ -269,6 +286,11 @@ final class PinImageView: NSView {
             commitAnnotationChange()
         } else if annotation.isMoving {
             annotation.endMove { [base] rect in
+                base.cropping(to: rect.integral)
+            }
+            commitAnnotationChange()
+        } else if annotation.isResizing {
+            annotation.endResize { [base] rect in
                 base.cropping(to: rect.integral)
             }
             commitAnnotationChange()

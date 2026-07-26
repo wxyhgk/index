@@ -56,6 +56,14 @@ final class AnnotationState {
     private var moveFromRect: LRect?
     private var moveFromPreview: CGImage?
 
+    /// 拖角缩放的进行时状态。`resizeOriginal` 是 beginResize 时的整层快照 ——
+    /// 每帧都从「快照 + 累计位移」重算，不累积浮点误差；endResize 拿它记撤销。
+    private var resizeID: UUID?
+    private var activeResizeHandle: ResizeHandle?
+    private var resizeOriginal: Layer?
+    private var resizeStartPoint: CGPoint?
+    private var resizeFromPreview: CGImage?
+
     /// 文字编辑开始时的快照。nil 表示这一层是本次编辑新建的 ——
     /// 结束时非空算 add，被丢弃算「add 的取消」，都不需要 style 记录。
     private var editingTextOriginal: Layer?
@@ -106,6 +114,7 @@ final class AnnotationState {
     var isDrawing: Bool { dragStart != nil }
     var isEditingText: Bool { editingTextID != nil }
     var isMoving: Bool { moveID != nil }
+    var isResizing: Bool { resizeID != nil }
 
     // MARK: - 绘制中的图层
 
@@ -265,6 +274,11 @@ final class AnnotationState {
         moveLastPoint = nil
         moveFromRect = nil
         moveFromPreview = nil
+        resizeID = nil
+        activeResizeHandle = nil
+        resizeOriginal = nil
+        resizeStartPoint = nil
+        resizeFromPreview = nil
         layers.removeAll()
         pixelatePreviews.removeAll()
         undoStack.removeAll()
@@ -305,7 +319,9 @@ final class AnnotationState {
                 let r = layer.rect.cg
                 hit = hypot(point.x - r.midX, point.y - r.midY) <= r.width / 2 + tolerance
             default:
-                hit = layer.rect.cg.standardized
+                // text 的 rect 只存锚点，按量出的文字范围命中（与选中框/控制点一致）；
+                // 其余 kind `handleBounds` 就是 rect 本身。
+                hit = layer.handleBounds
                     .insetBy(dx: -tolerance, dy: -tolerance)
                     .contains(point)
             }
@@ -370,6 +386,171 @@ final class AnnotationState {
             ))
         }
         return true
+    }
+
+    // MARK: - 选中图层的拖角缩放
+
+    /// 命中选中图层的缩放控制点（画布空间）。只对 `selectedID` 生效 ——
+    /// 控制点只画在选中层上，未选中的层点到的是图层本体（走 beginMove）。
+    /// 热区随 `strokeScale` 缩放，屏幕上恒定约 ±8pt。
+    func resizeHandle(at point: CGPoint) -> ResizeHandle? {
+        guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return nil }
+        let layer = layers[index]
+        let radius = 8 * strokeScale
+        for handle in ResizeHandle.handles(for: layer.kind) {
+            let center = handle.location(of: layer)
+            if abs(point.x - center.x) <= radius, abs(point.y - center.y) <= radius {
+                return handle
+            }
+        }
+        return nil
+    }
+
+    func beginResize(handle: ResizeHandle, at point: CGPoint) {
+        guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return }
+        resizeID = selectedID
+        activeResizeHandle = handle
+        resizeOriginal = layers[index]
+        resizeStartPoint = point
+        resizeFromPreview = pixelatePreviews[selectedID]
+    }
+
+    /// 按 kind 的缩放语义，每帧从 beginResize 快照重算：
+    ///   · line / arrow：只动被拖的那一端，负宽高合法（standardize 会把箭头方向弄反）
+    ///   · counter：保持圆形 —— 拖角取 max(w, h)，拖边取被拖的那一维，对侧锚定不动
+    ///   · text：rect 只存锚点，按量出的文字范围缩放，fontSize 随高度比例走
+    ///   · dimension：改完 rect 重烤标签（`prepareDimension`，像素数值按新尺寸重算）
+    ///   · 其余矩形类：直接改 rect
+    @discardableResult
+    func updateResize(to point: CGPoint) -> Bool {
+        guard let resizeID,
+              let handle = activeResizeHandle,
+              let original = resizeOriginal,
+              let start = resizeStartPoint,
+              let index = layers.firstIndex(id: resizeID) else { return false }
+
+        let delta = CGPoint(x: point.x - start.x, y: point.y - start.y)
+        var layer = original
+
+        switch original.kind {
+        case .line, .arrow:
+            if handle == .topLeft {
+                layer.rect.x = original.rect.x + delta.x
+                layer.rect.y = original.rect.y + delta.y
+                layer.rect.w = original.rect.w - delta.x
+                layer.rect.h = original.rect.h - delta.y
+            } else {
+                layer.rect.w = original.rect.w + delta.x
+                layer.rect.h = original.rect.h + delta.y
+            }
+
+        case .counter:
+            layer.rect = LRect(Self.counterSquare(
+                handle: handle, delta: delta, original: original.rect.cg
+            ))
+
+        case .text:
+            let bounds = original.handleBounds
+            let resized = handle.apply(delta: delta, to: bounds)
+            layer.rect.x = resized.minX
+            layer.rect.y = resized.minY
+            if bounds.height > 0 {
+                layer.fontSize = max(4, original.fontSize * resized.height / bounds.height)
+            }
+
+        case .dimension:
+            layer.rect = LRect(handle.apply(delta: delta, to: original.rect.cg))
+            prepareDimension(&layer)
+
+        default:
+            layer.rect = LRect(handle.apply(delta: delta, to: original.rect.cg))
+        }
+
+        layers[index] = layer
+        return true
+    }
+
+    /// 结束缩放。缩没了（小于最小尺寸）整层恢复原样、不入栈；
+    /// 马赛克按新矩形重裁贴片（同 `endMove`）。撤销记录：
+    /// 马赛克走 `.move`（它带贴片快照，style 不带），其余整层快照走 `.style`。
+    /// - Parameter pixelSource: 和 `endDraw` 的同名参数一致。
+    @discardableResult
+    func endResize(pixelSource: (CGRect) -> CGImage?) -> Bool {
+        defer {
+            resizeID = nil
+            activeResizeHandle = nil
+            resizeOriginal = nil
+            resizeStartPoint = nil
+            resizeFromPreview = nil
+        }
+        guard let resizeID,
+              let original = resizeOriginal,
+              let index = layers.firstIndex(id: resizeID) else { return false }
+        let layer = layers[index]
+
+        if !Self.meetsMinimumSize(layer) {
+            layers[index] = original
+            if original.kind == .pixelate { pixelatePreviews[resizeID] = resizeFromPreview }
+            return true
+        }
+        // 原地点了一下没有变化，不算一次操作。
+        guard layer != original else { return true }
+
+        if layer.kind == .pixelate {
+            pixelatePreviews[resizeID] = pixelSource(layer.rect.cg).flatMap(LayerRenderer.pixelated)
+            record(.move(
+                id: resizeID,
+                from: original.rect,
+                to: layer.rect,
+                oldPreview: resizeFromPreview,
+                newPreview: pixelatePreviews[resizeID]
+            ))
+        } else {
+            record(.style(id: resizeID, before: original, after: layer))
+        }
+        return true
+    }
+
+    /// 最小尺寸（画布单位）。线段类只要长度别缩没，dimension 允许单维为 0（吸附形态）。
+    private nonisolated static func meetsMinimumSize(_ layer: Layer) -> Bool {
+        let minSide = 4.0
+        switch layer.kind {
+        case .line, .arrow, .dimension:
+            return max(abs(layer.rect.w), abs(layer.rect.h)) >= minSide
+        case .text:
+            return layer.fontSize >= 4
+        default:
+            let r = layer.rect.cg
+            return r.width >= minSide && r.height >= minSide
+        }
+    }
+
+    /// 序号徽章保持圆形：直径 d 拖角取 max(w, h)、拖边取被拖的那一维；
+    /// 被拖控制点的对侧保持不动（拖边时另一轴居中锚定）。
+    private nonisolated static func counterSquare(
+        handle: ResizeHandle, delta: CGPoint, original: CGRect
+    ) -> CGRect {
+        let applied = handle.apply(delta: delta, to: original)
+        let d: CGFloat
+        switch handle {
+        case .top, .bottom: d = applied.height
+        case .left, .right: d = applied.width
+        default:            d = max(applied.width, applied.height)
+        }
+
+        let minX: CGFloat
+        switch handle {
+        case .topLeft, .left, .bottomLeft:     minX = original.maxX - d
+        case .topRight, .right, .bottomRight:  minX = original.minX
+        default:                               minX = original.midX - d / 2
+        }
+        let minY: CGFloat
+        switch handle {
+        case .topLeft, .top, .topRight:        minY = original.minY
+        case .bottomLeft, .bottom, .bottomRight: minY = original.maxY - d
+        default:                               minY = original.midY - d / 2
+        }
+        return CGRect(x: minX, y: minY, width: d, height: d)
     }
 
     /// 删除选中的图层，连带清理它的马赛克贴片。

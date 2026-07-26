@@ -16,59 +16,9 @@ final class SelectionModel {
     }
 
     /// 选区的 8 个调整控制点，外加「内部」用于整体拖动。
-    enum Handle {
-        case topLeft, top, topRight, right
-        case bottomRight, bottom, bottomLeft, left
-        case inside
-
-        /// 只有这 8 个参与命中测试和绘制，`inside` 是兜底。
-        static let resizeHandles: [Handle] = [
-            .topLeft, .top, .topRight, .right,
-            .bottomRight, .bottom, .bottomLeft, .left
-        ]
-
-        /// AppKit 坐标（Y 向上），`top` 对应 maxY。
-        func point(in rect: CGRect) -> CGPoint {
-            switch self {
-            case .topLeft:     return CGPoint(x: rect.minX, y: rect.maxY)
-            case .top:         return CGPoint(x: rect.midX, y: rect.maxY)
-            case .topRight:    return CGPoint(x: rect.maxX, y: rect.maxY)
-            case .right:       return CGPoint(x: rect.maxX, y: rect.midY)
-            case .bottomRight: return CGPoint(x: rect.maxX, y: rect.minY)
-            case .bottom:      return CGPoint(x: rect.midX, y: rect.minY)
-            case .bottomLeft:  return CGPoint(x: rect.minX, y: rect.minY)
-            case .left:        return CGPoint(x: rect.minX, y: rect.midY)
-            case .inside:      return CGPoint(x: rect.midX, y: rect.midY)
-            }
-        }
-
-        /// 把位移应用到矩形上。拖过对边时自动翻转，不会出现负尺寸。
-        func apply(delta: CGPoint, to rect: CGRect) -> CGRect {
-            var minX = rect.minX, maxX = rect.maxX
-            var minY = rect.minY, maxY = rect.maxY
-
-            switch self {
-            case .topLeft:     minX += delta.x; maxY += delta.y
-            case .top:                          maxY += delta.y
-            case .topRight:    maxX += delta.x; maxY += delta.y
-            case .right:       maxX += delta.x
-            case .bottomRight: maxX += delta.x; minY += delta.y
-            case .bottom:                       minY += delta.y
-            case .bottomLeft:  minX += delta.x; minY += delta.y
-            case .left:        minX += delta.x
-            case .inside:      return rect.offsetBy(dx: delta.x, dy: delta.y)
-            }
-
-            return CGRect(
-                x: min(minX, maxX),
-                y: min(minY, maxY),
-                width: abs(maxX - minX),
-                height: abs(maxY - minY)
-            )
-        }
-
-        var isMove: Bool { self == .inside }
-    }
+    /// 几何实现提到了 `ResizeHandle`（与标注图层的拖角缩放共享同一套
+    /// 翻转/位移逻辑），这里保留原名引用，行为零变化。
+    typealias Handle = ResizeHandle
 
     let snapshot: DisplaySnapshot
 
