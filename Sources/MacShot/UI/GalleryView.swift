@@ -72,6 +72,9 @@ private struct GallerySidebar: View {
                 Label("全部截图", systemImage: "square.grid.2x2")
                     .badge(total)
                     .tag(ShotStore.GalleryFilter.all)
+                Label("收藏", systemImage: "star")
+                    .badge(store.favoriteCount())
+                    .tag(ShotStore.GalleryFilter.favorites)
             }
 
             if !categories.isEmpty {
@@ -180,6 +183,39 @@ private final class AppIconCache {
 
 // MARK: - 网格
 
+/// 一个时间段的截图。分组在 shots 变化时算一次，不在 body 里逐帧分组。
+private struct ShotSection: Identifiable {
+    let id: String
+    let title: String
+    let shots: [Shot]
+
+    /// 按拍摄时间分成 今天 / 昨天 / 本周 / 本月 / 更早，空段不出现。
+    /// shots 已按时间降序，段内顺序自然保持。
+    static func group(_ shots: [Shot], calendar: Calendar = .current) -> [ShotSection] {
+        let now = Date()
+        var buckets: [String: [Shot]] = [:]
+        for shot in shots {
+            let date = shot.capturedAt
+            let key: String
+            if calendar.isDateInToday(date) {
+                key = "今天"
+            } else if calendar.isDateInYesterday(date) {
+                key = "昨天"
+            } else if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
+                key = "本周"
+            } else if calendar.isDate(date, equalTo: now, toGranularity: .month) {
+                key = "本月"
+            } else {
+                key = "更早"
+            }
+            buckets[key, default: []].append(shot)
+        }
+        return ["今天", "昨天", "本周", "本月", "更早"].compactMap { title in
+            buckets[title].map { ShotSection(id: title, title: title, shots: $0) }
+        }
+    }
+}
+
 private struct GalleryGrid: View {
 
     @ObservedObject private var store = ShotStore.shared
@@ -187,6 +223,9 @@ private struct GalleryGrid: View {
 
     /// 缩略图基准宽度，底部滑杆控制，跨启动记住。
     @AppStorage("galleryZoom") private var zoom = 200.0
+
+    /// 按时间段分好组的结果，随 store.shots 变化重算一次。
+    @State private var sections: [ShotSection] = []
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: zoom, maximum: zoom * 1.5), spacing: 16)]
@@ -198,18 +237,29 @@ private struct GalleryGrid: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(store.shots) { shot in
-                            ShotCard(
-                                shot: shot,
-                                height: zoom * 0.68,
-                                isSelected: shot.id == selection.selectedID
-                            )
-                            .onTapGesture { selection.selectedID = shot.id }
-                            .simultaneousGesture(
-                                TapGesture(count: 2).onEnded { selection.editing = shot }
-                            )
-                            .contextMenu { contextMenu(for: shot) }
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(sections) { section in
+                            Text(section.title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            LazyVGrid(columns: columns, spacing: 18) {
+                                ForEach(section.shots) { shot in
+                                    ShotCard(
+                                        shot: shot,
+                                        height: zoom * 0.68,
+                                        isSelected: shot.id == selection.selectedID,
+                                        isFavorite: shot.id.map(store.isFavorite) ?? false,
+                                        onToggleFavorite: { store.toggleFavorite(shot) }
+                                    )
+                                    .onTapGesture { selection.selectedID = shot.id }
+                                    .simultaneousGesture(
+                                        TapGesture(count: 2).onEnded { selection.editing = shot }
+                                    )
+                                    .contextMenu { contextMenu(for: shot) }
+                                }
+                            }
+                            .padding(.bottom, 8)
                         }
                     }
                     .padding(18)
@@ -220,6 +270,7 @@ private struct GalleryGrid: View {
             bottomBar
         }
         .background(.background)
+        .task(id: store.shots) { sections = ShotSection.group(store.shots) }
     }
 
     private var emptyState: some View {
@@ -258,6 +309,9 @@ private struct GalleryGrid: View {
 
     @ViewBuilder
     private func contextMenu(for shot: Shot) -> some View {
+        Button(shot.id.map(store.isFavorite) ?? false ? "取消收藏" : "收藏") {
+            store.toggleFavorite(shot)
+        }
         Button("编辑标注") { selection.editing = shot }
         Button("钉在桌面") { pin(shot) }
         Button("复制图片") { copy(shot) }
@@ -291,6 +345,9 @@ private struct ShotCard: View {
     let shot: Shot
     let height: CGFloat
     let isSelected: Bool
+    /// 收藏态由父级（已订阅 store 的 GalleryGrid）传入，卡片本身保持不订阅。
+    let isFavorite: Bool
+    let onToggleFavorite: () -> Void
 
     @State private var isHovering = false
 
@@ -315,6 +372,20 @@ private struct ShotCard: View {
                             : Color.primary.opacity(isHovering ? 0.25 : 0.08),
                         lineWidth: isSelected ? 2.5 : 1
                     )
+            }
+            // 悬停浮出星形按钮；已收藏则常显实心黄星。
+            .overlay(alignment: .topTrailing) {
+                if isHovering || isFavorite {
+                    Button(action: onToggleFavorite) {
+                        Image(systemName: isFavorite ? "star.fill" : "star")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(isFavorite ? .yellow : .white)
+                            .shadow(color: .black.opacity(0.5), radius: 2)
+                            .padding(7)
+                    }
+                    .buttonStyle(.plain)
+                    .help(isFavorite ? "取消收藏" : "收藏")
+                }
             }
             .shadow(
                 color: .black.opacity(isHovering || isSelected ? 0.18 : 0.08),
@@ -353,7 +424,8 @@ private struct RevisionSummary: Identifiable {
 private struct ShotDetailPane: View {
     let shot: Shot
 
-    private let store = ShotStore.shared
+    // 订阅 store 是为了收藏态实时刷新；重查询都挂在 task(id:) 上，不受影响。
+    @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
 
     /// 修订历史只在切换截图 / 关闭编辑器时查一次数据库，不再挂在 body 上。
@@ -406,6 +478,13 @@ private struct ShotDetailPane: View {
                 selection.editing = shot
             } label: {
                 Label("编辑", systemImage: "pencil.tip.crop.circle")
+            }
+            Button {
+                store.toggleFavorite(shot)
+            } label: {
+                let favorited = shot.id.map(store.isFavorite) ?? false
+                Label(favorited ? "已收藏" : "收藏", systemImage: favorited ? "star.fill" : "star")
+                    .foregroundStyle(favorited ? Color.yellow : Color.primary)
             }
             Button {
                 guard let base = store.originalImage(for: shot) else { return }

@@ -50,4 +50,6 @@ enum AttributeKey {
     static let category = "category"
     /// Vision 场景标签，逗号分隔的 identifier 列表。
     static let visionLabels = "vision.labels"
+    /// 收藏标记。存在即为已收藏，text 必须为 nil（不进全文索引）。
+    static let favorite = "favorite"
 }

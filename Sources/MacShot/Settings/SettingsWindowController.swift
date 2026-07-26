@@ -12,7 +12,11 @@ final class SettingsWindowController: NSWindowController {
         window.title = "MacShot 设置"
         window.styleMask = [.titled, .closable]
         window.setContentSize(NSSize(width: 500, height: 460))
-        window.center()
+        // 记住窗口位置；首次启动没有记录时才居中。
+        if !window.setFrameUsingName("MacShotSettings") {
+            window.center()
+        }
+        _ = window.setFrameAutosaveName("MacShotSettings")
         super.init(window: window)
     }
 
