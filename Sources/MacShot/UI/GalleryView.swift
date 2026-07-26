@@ -446,6 +446,9 @@ private struct ShotDetailPane: View {
     /// 目标是否已有特征指纹。没有就先禁用「相似」——刚截的图可能还在后台分析。
     @State private var hasFeaturePrint = false
     @State private var showingSimilar = false
+    /// 同源截图数量（含自己）。切换截图时查一次，少于 2 张禁用时间线入口。
+    @State private var relatedCount = 0
+    @State private var showingTimeline = false
     /// 敏感内容检测结果（后台异步落库，和指纹一样随 store 刷新重查）。
     @State private var sensitiveRegions: [SensitiveRegion] = []
     /// 是否已打码。加载时按「最新修订的马赛克层是否盖住全部命中区域」判定，
@@ -473,6 +476,7 @@ private struct ShotDetailPane: View {
             category = shot.id.flatMap { store.attributeText(shotID: $0, key: AttributeKey.category) }
             refreshFeaturePrint()
             refreshSensitiveRegions()
+            relatedCount = store.relatedShots(to: shot).count
         }
         // 指纹由后台分析异步补上：store 每次刷新（属性落库会触发 reload）都重查一次。
         // 属性写入不一定改变 shots 数组本身，所以订阅 objectWillChange 而不是 onChange。
@@ -486,6 +490,9 @@ private struct ShotDetailPane: View {
         }
         .sheet(isPresented: $showingSimilar) {
             SimilarShotsSheet(shot: shot)
+        }
+        .sheet(isPresented: $showingTimeline) {
+            TimelineSheet(shot: shot)
         }
     }
 
@@ -652,6 +659,17 @@ private struct ShotDetailPane: View {
             }
             .disabled(shot.sourceURL == nil && shot.appBundleID == nil)
             .help("回到截图来源：有网址开网址，否则激活来源 App")
+            Button {
+                showingTimeline = true
+            } label: {
+                Label("时间线", systemImage: "clock.arrow.circlepath")
+            }
+            .disabled(relatedCount < 2)
+            .help(
+                relatedCount < 2
+                    ? "没有其它同源截图（同一网址或同一 App 窗口）"
+                    : "查看同一来源的 \(relatedCount) 张截图，可两两对比"
+            )
             Button {
                 Clipboard.copy(text: BugReport.markdown(
                     shot: shot,

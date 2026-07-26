@@ -451,6 +451,51 @@ final class ShotStore: ObservableObject {
         return rankedIDs.compactMap { byID[$0] }
     }
 
+    // MARK: - 同源时间线
+
+    /// 归一化网址用于同源判定：去掉 fragment、去掉尾部斜杠。
+    /// 「同一页面」的语义下 `…/docs#intro` 和 `…/docs/` 都算 `…/docs`。
+    static func normalizedSourceURL(_ raw: String) -> String {
+        var s = raw
+        if let hash = s.firstIndex(of: "#") {
+            s = String(s[..<hash])
+        }
+        while s.hasSuffix("/") { s.removeLast() }
+        return s
+    }
+
+    /// 与目标同源的截图序列（**含自己**），按拍摄时间升序。判定优先级：
+    ///
+    /// 1. 有网址 → 归一化后相同（同一页面的演化史）
+    /// 2. 否则有 bundleID + 窗口标题 → 两者都相同（同一 App 窗口）
+    /// 3. 否则只有 bundleID → 同一 App
+    ///
+    /// 少于 2 张视为无同源，调用方据此禁用入口。
+    /// 网址匹配需要归一化，SQL 表达不了，取回候选后在 Swift 里过滤 —— 数据量小，不值得更聪明。
+    func relatedShots(to shot: Shot) -> [Shot] {
+        func fetch(_ predicate: SQLSpecificExpressible) -> [Shot] {
+            (try? dbQueue.read { db in
+                try Shot
+                    .filter(predicate)
+                    .order(Column("capturedAt").asc, Column("id").asc)
+                    .fetchAll(db)
+            }) ?? []
+        }
+
+        if let source = shot.sourceURL {
+            let target = Self.normalizedSourceURL(source)
+            return fetch(Column("sourceURL") != nil)
+                .filter { $0.sourceURL.map(Self.normalizedSourceURL) == target }
+        }
+        if let bundleID = shot.appBundleID {
+            if let title = shot.windowTitle {
+                return fetch(Column("appBundleID") == bundleID && Column("windowTitle") == title)
+            }
+            return fetch(Column("appBundleID") == bundleID)
+        }
+        return []
+    }
+
     /// 按 ID 批量取 Shot。同步方法，避免在 async 上下文里误触 GRDB 的 async read 重载。
     private func shots(ids: [Int64]) -> [Shot] {
         (try? dbQueue.read { db in
