@@ -23,6 +23,9 @@ struct GalleryView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var modelStore = CLIPModelStore.shared
 
+    /// 详情栏（inspector）开关，跨启动记住。
+    @AppStorage("galleryInspectorShown") private var showInspector = true
+
     private var semanticAvailable: Bool {
         settings.semanticSearch && modelStore.isReady
     }
@@ -34,24 +37,19 @@ struct GalleryView: View {
     }
 
     var body: some View {
+        // 两栏（侧边栏 + 网格）+ 可开关的 inspector 详情栏 ——
+        // 详情从 NavigationSplitView 的 detail 列挪出来，换取标准的
+        // 「随时收起给网格让路」行为和系统自带的材质/分隔线。
         NavigationSplitView {
             GallerySidebar()
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
-        } content: {
-            GalleryGrid()
-                .navigationSplitViewColumnWidth(min: 420, ideal: 640)
         } detail: {
-            if let shot = selectedShot {
-                ShotDetailPane(shot: shot)
-                    .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
-            } else {
-                ContentUnavailableView(
-                    "未选择截图",
-                    systemImage: "photo.on.rectangle",
-                    description: Text("在中间选择一张截图查看详情")
-                )
-                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
-            }
+            GalleryGrid()
+                .background(gridWidthReader)
+        }
+        .inspector(isPresented: $showInspector) {
+            inspectorPane
+                .inspectorColumnWidth(min: 260, ideal: 300)
         }
         .searchable(
             text: $store.searchText,
@@ -85,6 +83,14 @@ struct GalleryView: View {
                     .help("精确：全文匹配文字与元数据；语义：用自然语言描述画面，按回车搜索")
                 }
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showInspector.toggle()
+                } label: {
+                    Label("详情", systemImage: "sidebar.trailing")
+                }
+                .help(showInspector ? "隐藏详情栏" : "显示详情栏")
+            }
         }
         .onChange(of: store.semanticMode) { _, semantic in
             if !semantic { store.clearSemanticResults() }
@@ -92,6 +98,29 @@ struct GalleryView: View {
         .frame(minWidth: 1000, minHeight: 600)
         .sheet(item: $selection.editing) { shot in
             EditorView(shot: shot)
+        }
+    }
+
+    @ViewBuilder
+    private var inspectorPane: some View {
+        if let shot = selectedShot {
+            ShotDetailPane(shot: shot)
+        } else {
+            ContentUnavailableView(
+                "未选择截图",
+                systemImage: "photo.on.rectangle",
+                description: Text("在网格中选择一张截图查看详情")
+            )
+        }
+    }
+
+    /// 把网格列的实际宽度报给键盘导航（上下键 = ±列数，列数从宽度反推）。
+    private var gridWidthReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onChange(of: proxy.size.width, initial: true) { _, width in
+                    GalleryKeyboard.shared.gridWidth = width
+                }
         }
     }
 }
@@ -857,18 +886,18 @@ private struct ShotDetailPane: View {
     @State private var sensitiveMasked = false
 
     var body: some View {
+        // 间距/圆角按 4px 基数（4/8/12/16/24，圆角 6/10）——
+        // 待 UI/DesignTokens.swift（DS）合并后统一替换为常量。
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 preview
                 actions
-                metadataActions
-                Divider()
                 if !sensitiveRegions.isEmpty {
                     sensitiveBanner
                 }
-                metadataSection
-                Divider()
-                historySection
+                sourceCard
+                recognitionCard
+                historyCard
             }
             .padding(16)
         }
@@ -959,14 +988,14 @@ private struct ShotDetailPane: View {
                 .controlSize(.small)
             }
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color.yellow.opacity(0.18))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.yellow.opacity(0.5), lineWidth: 1)
         )
     }
@@ -1006,8 +1035,13 @@ private struct ShotDetailPane: View {
         CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+            .contentShape(Rectangle())
+            .onTapGesture { QuickLookController.shared.present() }
+            .help("点击（或按空格）用 Quick Look 预览原图")
     }
 
+    /// 动作区一行放完：「编辑」主按钮 + 收藏/钉图/导出 icon-only，
+    /// 低频动作（出处/相似/时间线/Bug 报告/上传）收进「更多」菜单。
     private var actions: some View {
         HStack(spacing: 8) {
             Button {
@@ -1015,62 +1049,67 @@ private struct ShotDetailPane: View {
             } label: {
                 Label("编辑", systemImage: "pencil.tip.crop.circle")
             }
+            .buttonStyle(.borderedProminent)
+
+            let favorited = shot.id.map(store.isFavorite) ?? false
             Button {
                 store.toggleFavorite(shot)
             } label: {
-                let favorited = shot.id.map(store.isFavorite) ?? false
-                Label(favorited ? "已收藏" : "收藏", systemImage: favorited ? "star.fill" : "star")
+                Label(favorited ? "取消收藏" : "收藏", systemImage: favorited ? "star.fill" : "star")
                     .foregroundStyle(favorited ? Color.yellow : Color.primary)
             }
+            .labelStyle(.iconOnly)
+            .help(favorited ? "取消收藏" : "收藏")
+
             Button {
-                guard let base = store.originalImage(for: shot) else { return }
-                PinWindowController.pin(
-                    base: base,
-                    layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
-                    shot: shot,
-                    at: .zero
-                )
+                pin()
             } label: {
                 Label("钉图", systemImage: "pin")
             }
-            Button {
-                showingSimilar = true
-            } label: {
-                Label("相似", systemImage: "sparkles.rectangle.stack")
-            }
-            .disabled(!hasFeaturePrint)
-            .help(hasFeaturePrint ? "查找视觉相似的截图" : "特征分析中，稍后再试")
+            .labelStyle(.iconOnly)
+            .help("钉在桌面")
+
             Button {
                 export()
             } label: {
                 Label("导出", systemImage: "square.and.arrow.up")
             }
+            .labelStyle(.iconOnly)
+            .help("导出成品（含标注）")
+
+            Spacer(minLength: 0)
+
+            moreMenu
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
     }
 
-    /// 第二行：消费元数据的动作。和第一行分开是因为 HStack 不折行。
-    private var metadataActions: some View {
-        HStack(spacing: 8) {
+    private var moreMenu: some View {
+        Menu {
             Button {
                 openSource()
             } label: {
-                Label("出处", systemImage: "arrow.up.forward.app")
+                Label("回到出处", systemImage: "arrow.up.forward.app")
             }
             .disabled(shot.sourceURL == nil && shot.appBundleID == nil)
-            .help("回到截图来源：有网址开网址，否则激活来源 App")
+
+            Button {
+                showingSimilar = true
+            } label: {
+                Label("查找相似", systemImage: "sparkles.rectangle.stack")
+            }
+            .disabled(!hasFeaturePrint)
+
             Button {
                 showingTimeline = true
             } label: {
-                Label("时间线", systemImage: "clock.arrow.circlepath")
+                Label("同源时间线", systemImage: "clock.arrow.circlepath")
             }
             .disabled(relatedCount < 2)
-            .help(
-                relatedCount < 2
-                    ? "没有其它同源截图（同一网址或同一 App 窗口）"
-                    : "查看同一来源的 \(relatedCount) 张截图，可两两对比"
-            )
+
+            Divider()
+
             Button {
                 Clipboard.copy(text: BugReport.markdown(
                     shot: shot,
@@ -1080,10 +1119,59 @@ private struct ShotDetailPane: View {
             } label: {
                 Label("复制 Bug 报告", systemImage: "ladybug")
             }
-            .help("把来源、环境等元数据整理成 Markdown 放进剪贴板")
+
+            Button {
+                upload()
+            } label: {
+                Label("上传图床", systemImage: "arrow.up.circle")
+            }
+            .disabled(
+                AppSettings.shared.uploadEndpoint
+                    .trimmingCharacters(in: .whitespaces).isEmpty
+            )
+        } label: {
+            Label("更多", systemImage: "ellipsis.circle")
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .labelStyle(.iconOnly)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("更多动作：出处 / 相似 / 时间线 / Bug 报告 / 上传")
+    }
+
+    private func pin() {
+        guard let base = store.originalImage(for: shot) else { return }
+        PinWindowController.pin(
+            base: base,
+            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
+            shot: shot,
+            at: .zero
+        )
+    }
+
+    /// 上传图床：复用截图工具条的 UploadAction，材料从图库记录重建。
+    private func upload() {
+        guard let base = store.originalImage(for: shot) else { return }
+        let context = CaptureContext(
+            base: base,
+            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
+            shot: shot,
+            region: nil,
+            host: nil
+        )
+        Task {
+            do {
+                try await UploadAction().perform(context)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "上传失败"
+                alert.informativeText = error.localizedDescription
+                if let window = GalleryWindowController.shared.window {
+                    alert.beginSheetModal(for: window) { _ in }
+                } else {
+                    alert.runModal()
+                }
+            }
+        }
     }
 
     /// 回到出处：优先开网址（默认浏览器），否则激活来源 App。
@@ -1095,11 +1183,24 @@ private struct ShotDetailPane: View {
         }
     }
 
-    private var metadataSection: some View {
+    // MARK: - 信息分组卡片
+
+    /// 分组卡片：quaternary 底 + 10pt 圆角 + caption.semibold 组题。
+    private func card(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("来源").font(.headline)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var sourceCard: some View {
+        card("来源") {
             row("App", shot.appName)
-            row("分类", category)
             row("Bundle ID", shot.appBundleID)
             row("版本", shot.appVersion.map { v in
                 shot.appBuild.map { "\(v) (\($0))" } ?? v
@@ -1116,55 +1217,57 @@ private struct ShotDetailPane: View {
             row("显示器", shot.displayName)
             row("尺寸", "\(shot.pixelWidth) × \(shot.pixelHeight) px @\(String(format: "%.0f", shot.scale))x")
             row("时间", shot.capturedAt.formatted(date: .abbreviated, time: .standard))
-
-            if let ocr = shot.ocrText, !ocr.isEmpty {
-                DisclosureGroup("识别文字（\(ocr.count) 字）") {
-                    Text(ocr)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .font(.caption)
-            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var historySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("修订历史（\(revisions.count)）").font(.headline)
+    /// 机器补出来的信息（分类、OCR）单独一组，和采集自系统的「来源」分开。
+    @ViewBuilder
+    private var recognitionCard: some View {
+        let ocr = shot.ocrText ?? ""
+        if category != nil || !ocr.isEmpty {
+            card("识别") {
+                row("分类", category)
+                if !ocr.isEmpty {
+                    DisclosureGroup("识别文字（\(ocr.count) 字）") {
+                        Text(ocr)
+                            .font(.caption)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+    }
+
+    private var historyCard: some View {
+        card("修订历史（\(revisions.count)）") {
             Text("每次编辑都追加一条记录，原图从不被修改。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            ForEach(revisions) { rev in
-                let isLatest = rev.id == revisions.last?.id
-                HStack(spacing: 8) {
-                    Image(systemName: isLatest ? "circle.fill" : "circle")
-                        .font(.system(size: 7))
-                        .foregroundStyle(isLatest ? Color.accentColor : .secondary)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("v\(rev.version) · \(rev.note)")
-                            .font(.caption)
-                        Text("\(rev.layerCount) 个图层 · \(rev.createdAt.formatted(date: .omitted, time: .shortened))")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(revisions.enumerated()), id: \.element.id) { index, rev in
+                    RevisionRow(
+                        revision: rev,
+                        isLatest: index == revisions.count - 1,
+                        isFirst: index == 0,
+                        isLast: index == revisions.count - 1
+                    )
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
     private func row(_ label: String, _ value: String?) -> some View {
         if let value, !value.isEmpty {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(label)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(width: 74, alignment: .leading)
+                    .frame(width: 64, alignment: .leading)
                 Text(value)
                     .font(.caption)
                     .textSelection(.enabled)
@@ -1183,6 +1286,58 @@ private struct ShotDetailPane: View {
             rendered,
             suggestedName: ImageExporter.suggestedName(for: shot)
         )
+    }
+}
+
+/// 修订历史的一行：左侧 2pt 竖线把圆点连成真时间线，行内容 hover 提亮。
+private struct RevisionRow: View {
+    let revision: RevisionSummary
+    let isLatest: Bool
+    let isFirst: Bool
+    let isLast: Bool
+
+    @State private var isHovering = false
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // 连线分上下两段等分行高，中间给圆点留 8pt；首行缺上段、末行缺下段。
+            VStack(spacing: 0) {
+                connector.opacity(isFirst ? 0 : 1)
+                Color.clear.frame(height: 8)
+                connector.opacity(isLast ? 0 : 1)
+            }
+            .padding(.leading, 3)
+
+            Circle()
+                .fill(isLatest ? Color.accentColor : Color.secondary.opacity(0.55))
+                .frame(width: 8, height: 8)
+
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("v\(revision.version) · \(revision.note)")
+                        .font(.caption)
+                    Text("\(revision.layerCount) 个图层 · \(revision.createdAt.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 16)
+            .padding(.vertical, 4)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.primary.opacity(isHovering ? 0.06 : 0))
+        )
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+    }
+
+    private var connector: some View {
+        Rectangle()
+            .fill(Color.secondary.opacity(0.3))
+            .frame(width: 2)
+            .frame(maxHeight: .infinity)
     }
 }
 
