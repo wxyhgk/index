@@ -1,6 +1,7 @@
 import AppKit
 
-/// 图库键盘导航：方向键走格、回车编辑、空格 Quick Look、⌘⌫ 删除。
+/// 图库键盘导航：方向键走格、⇧方向键扩选、⌘A 全选、Esc 收拢多选、
+/// 回车编辑、空格 Quick Look、⌘⌫ 删除选中（走网格上统一的确认框）。
 ///
 /// 用 NSEvent local monitor 而不是 SwiftUI 的 .focusable/.onKeyPress ——
 /// NavigationSplitView 里焦点会被侧边栏 List 和搜索框来回抢，网格自身拿不稳焦点。
@@ -56,22 +57,41 @@ final class GalleryKeyboard {
             GallerySelection.shared.editing = shot
             return true
 
-        case KeyCode.delete where flags == .command:
-            guard let shot = selectedShot() else { return false }
-            confirmDelete(shot, in: window)
+        case KeyCode.a where flags == .command:
+            // ⌘A：全选当前列表（分组只是展示，选择按全局顺序）。
+            GallerySelection.shared.selectAll(ShotStore.shared.displayShots.compactMap(\.id))
             return true
 
-        case KeyCode.left where flags.isEmpty,
-             KeyCode.right where flags.isEmpty,
-             KeyCode.up where flags.isEmpty,
-             KeyCode.down where flags.isEmpty:
+        case KeyCode.escape where flags.isEmpty:
+            // Esc：多选收拢回主选中单张；没在多选就不拦，留给系统。
+            let selection = GallerySelection.shared
+            guard selection.isMultiple else { return false }
+            selection.collapseToPrimary()
+            return true
+
+        case KeyCode.delete where flags == .command:
+            // ⌘⌫ 删除所有选中。不直接弹 NSAlert —— 写 pendingDeleteIDs，
+            // 由 GalleryGrid 上唯一的 confirmationDialog 出确认框（和右键同一套）。
+            let selection = GallerySelection.shared
+            guard !selection.selectedIDs.isEmpty else { return false }
+            selection.pendingDeleteIDs = orderedSelectedIDs()
+            return true
+
+        case KeyCode.left, KeyCode.right, KeyCode.up, KeyCode.down:
+            guard flags.isEmpty || flags == .shift else { return false }
             // 侧边栏列表持有焦点时，方向键还给它做原生行导航。
             if responder is NSTableView { return false }
+            let delta: Int
             switch keyCode {
-            case KeyCode.left:  moveSelection(by: -1)
-            case KeyCode.right: moveSelection(by: 1)
-            case KeyCode.up:    moveSelection(by: -columnCount())
-            default:            moveSelection(by: columnCount())
+            case KeyCode.left:  delta = -1
+            case KeyCode.right: delta = 1
+            case KeyCode.up:    delta = -columnCount()
+            default:            delta = columnCount()
+            }
+            if flags == .shift {
+                extendSelection(by: delta)
+            } else {
+                moveSelection(by: delta)
             }
             return true
 
@@ -82,69 +102,62 @@ final class GalleryKeyboard {
 
     // MARK: - 网格导航
 
-    /// 按全局顺序索引移动选中（displayShots 时间降序，与分组网格的视觉顺序一致）。
-    /// 上下键传 ±列数即可跨分组自然衔接。滚动定位由网格监听 selectedID 完成。
+    /// 方向键：按全局顺序索引移动**单选**（displayShots 时间降序，与分组网格的
+    /// 视觉顺序一致；多选状态下按方向键 = 收拢集合到目标一张）。
+    /// 上下键传 ±列数即可跨分组自然衔接。滚动定位由网格监听 primaryID 完成。
     func moveSelection(by delta: Int) {
         let shots = ShotStore.shared.displayShots
         guard !shots.isEmpty else { return }
         let selection = GallerySelection.shared
-        guard let current = shots.firstIndex(where: { $0.id == selection.selectedID }) else {
+        guard let current = shots.firstIndex(where: { $0.id == selection.primaryID }) else {
             // 还没有选中：任何方向键都从第一张开始。
-            selection.selectedID = shots.first?.id
+            selection.select(only: shots.first?.id)
             return
         }
         let target = min(max(current + delta, 0), shots.count - 1)
-        guard target != current else { return }
-        selection.selectedID = shots[target].id
+        // 撞边界也要 select：多选状态下方向键必须收拢回单选。
+        selection.select(only: shots[target].id)
+    }
+
+    /// ⇧方向键：锚点不动，主选中走格，选中扩展为锚点到主选中的区间。
+    func extendSelection(by delta: Int) {
+        let shots = ShotStore.shared.displayShots
+        guard !shots.isEmpty else { return }
+        let selection = GallerySelection.shared
+        guard let current = shots.firstIndex(where: { $0.id == selection.primaryID }) else {
+            selection.select(only: shots.first?.id)
+            return
+        }
+        let target = min(max(current + delta, 0), shots.count - 1)
+        guard let targetID = shots[target].id else { return }
+        selection.selectRange(to: targetID, in: shots.compactMap(\.id))
     }
 
     /// 从网格容器宽度和缩放档反推当前列数。
     ///
-    /// GalleryGrid 用 .adaptive(minimum: zoom, spacing: 16) + 外边距 18：
-    /// 放得下 n 列的条件是 n·zoom + (n-1)·16 ≤ width - 2·18，
-    /// 解出 n = floor((width - 36 + 16) / (zoom + 16))。
+    /// GalleryGrid 用 .adaptive(minimum: zoom, spacing: DS.s4) + 水平外边距 DS.s4：
+    /// 放得下 n 列的条件是 n·zoom + (n-1)·s4 ≤ width - 2·s4，
+    /// 解出 n = floor((width - 2·s4 + s4) / (zoom + s4))。
     /// 超出 minimum 的富余只会拉宽已有列（maximum = 1.5×），不会改变列数。
     func columnCount() -> Int {
         var zoom = UserDefaults.standard.double(forKey: "galleryZoom")
         if zoom <= 0 { zoom = 200 } // @AppStorage("galleryZoom") 的默认值
-        let available = gridWidth - 36 + 16
-        return max(1, Int(available / (zoom + 16)))
+        let available = gridWidth - 2 * DS.s4 + DS.s4
+        return max(1, Int(available / (zoom + DS.s4)))
     }
 
     private func selectedShot() -> Shot? {
         let store = ShotStore.shared
-        return store.displayShots.first { $0.id == GallerySelection.shared.selectedID }
-            ?? store.shots.first { $0.id == GallerySelection.shared.selectedID }
+        return store.displayShots.first { $0.id == GallerySelection.shared.primaryID }
+            ?? store.shots.first { $0.id == GallerySelection.shared.primaryID }
     }
 
-    // MARK: - 删除
-
-    private func confirmDelete(_ shot: Shot, in window: NSWindow) {
-        let alert = NSAlert()
-        alert.messageText = "删除这张截图？"
-        alert.informativeText = "原图、缩略图和全部修订记录会一并删除，无法撤销。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "删除").hasDestructiveAction = true
-        alert.addButton(withTitle: "取消")
-        alert.beginSheetModal(for: window) { response in
-            MainActor.assumeIsolated {
-                guard response == .alertFirstButtonReturn else { return }
-                Self.deleteSelectingNeighbor(shot)
-            }
-        }
-    }
-
-    /// 删除后顺移选中到相邻一张，键盘导航不断档。
-    private static func deleteSelectingNeighbor(_ shot: Shot) {
-        let store = ShotStore.shared
-        let index = store.displayShots.firstIndex { $0.id == shot.id }
-        store.delete(shot)
-        guard GallerySelection.shared.selectedID == shot.id else { return }
-        let remaining = store.displayShots
-        if let index, !remaining.isEmpty {
-            GallerySelection.shared.selectedID = remaining[min(index, remaining.count - 1)].id
-        } else {
-            GallerySelection.shared.selectedID = nil
-        }
+    /// 选中集合按展示顺序排好（删除确认框逐条列数、顺移选中都依赖顺序）。
+    private func orderedSelectedIDs() -> [Int64] {
+        let selected = GallerySelection.shared.selectedIDs
+        let inDisplay = ShotStore.shared.displayShots.compactMap(\.id).filter(selected.contains)
+        // 不在当前列表里的残留选中（筛选变化）兜底带上，保证删得干净。
+        let rest = selected.subtracting(inDisplay)
+        return inDisplay + rest.sorted()
     }
 }

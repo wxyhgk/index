@@ -61,8 +61,8 @@ final class QuickLookController: NSObject {
                 QuickLookController.shared.syncSelection(toPanelIndex: panel.currentPreviewItemIndex)
             }
         }
-        // 网格里点选 / 键盘导航 → 面板跟着换页。
-        selectionCancellable = GallerySelection.shared.$selectedID
+        // 网格里点选 / 键盘导航 → 面板跟着换页。多选时面板预览主选中那张。
+        selectionCancellable = GallerySelection.shared.$primaryID
             .removeDuplicates()
             .sink { [weak self] _ in self?.syncPanelIndex() }
         // objectWillChange 发在变更前，压到下一轮 runloop 再取新列表。
@@ -83,15 +83,16 @@ final class QuickLookController: NSObject {
     // MARK: - 双向同步
 
     private func selectedIndex() -> Int? {
-        shots.firstIndex { $0.id == GallerySelection.shared.selectedID }
+        shots.firstIndex { $0.id == GallerySelection.shared.primaryID }
     }
 
-    /// 面板换页 → 网格选中跟随（滚动定位由网格监听 selectedID 完成）。
+    /// 面板换页 → 网格选中跟随（滚动定位由网格监听 primaryID 完成）。
+    /// 定位类场景语义：多选时翻页会收拢为面板当前张的单选。
     private func syncSelection(toPanelIndex index: Int) {
         guard !isSyncing, shots.indices.contains(index) else { return }
         isSyncing = true
         defer { isSyncing = false }
-        GallerySelection.shared.selectedID = shots[index].id
+        GallerySelection.shared.select(only: shots[index].id)
     }
 
     /// 网格选中变化 → 面板换页。
