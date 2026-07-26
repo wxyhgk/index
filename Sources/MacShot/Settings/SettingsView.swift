@@ -54,6 +54,13 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("暂存卡片") {
+                Toggle("截图后显示暂存卡片", isOn: $settings.showShelfCard)
+                Text("截完图在屏幕右下角浮出小卡片，直接拖出去就是 PNG 文件，可以丢进聊天窗口或邮件。双击打开图库定位到这张，15 秒后自动消失。选「钉图」时不显示。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("选区") {
                 Toggle("显示放大镜与取色器", isOn: $settings.showMagnifier)
                 Text("拖选时在光标旁显示像素级预览、色值和坐标。按 C 复制色值。")
@@ -237,6 +244,13 @@ private struct ShortcutSettings: View {
                 shortcutRow("方向键", "微调选区，⇧ 十倍步进，⌥ 改尺寸")
                 shortcutRow("右键", "逐级退出：文字输入 → 工具 → 选区")
                 shortcutRow("⎋", "取消")
+            }
+
+            Section("钉图窗口") {
+                shortcutRow("⌘T", "切换鼠标穿透。穿透后点击落到下层窗口，从菜单栏「解除钉图穿透」恢复")
+                shortcutRow("滚轮", "缩放钉图")
+                shortcutRow("⌘滚轮", "调整透明度")
+                shortcutRow("双击", "复制到剪贴板")
             }
         }
         .formStyle(.grouped)

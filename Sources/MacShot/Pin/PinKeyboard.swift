@@ -67,6 +67,9 @@ extension PinImageView {
             }
         case KeyCode.c where cmd:
             onAction?(ActionID.copy)
+        case KeyCode.t where cmd:
+            // 鼠标穿透。开了之后窗口收不到任何事件，解除走菜单栏「解除钉图穿透」。
+            onTogglePassthrough?()
         case KeyCode.s where cmd:
             onAction?(ActionID.save)
         default:

@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKeys()
 
         AttributeBackfill.runIfNeeded()   // 给老截图补缺失的派生属性，后台串行，不影响启动
+        ShelfController.cleanupDragFiles()   // 上次会话拖出的临时 PNG，此刻才能安全删
 
         settings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
         RecordingCoordinator.shared.onStateChanged = { [weak self] in
@@ -119,6 +120,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         gallery.tag = Tag.gallery
         menu.addItem(gallery)
 
+        // 穿透中的钉图收不到任何鼠标键盘事件（⌘T 按不进去），这里是唯一的解除入口。
+        // 平时藏起来，menuNeedsUpdate 里按需显示。
+        let liftPassthrough = NSMenuItem(
+            title: "解除钉图穿透",
+            action: #selector(liftPinPassthrough),
+            keyEquivalent: ""
+        )
+        liftPassthrough.target = self
+        liftPassthrough.tag = Tag.liftPassthrough
+        liftPassthrough.isHidden = true
+        menu.addItem(liftPassthrough)
+
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(
@@ -145,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         static let delayedCapture = 3
         static let record = 4
         static let scrollCapture = 5
+        static let liftPassthrough = 6
     }
 
     // MARK: - 快捷键
@@ -197,6 +211,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openGallery() {
         GalleryWindowController.shared.show()
+    }
+
+    @objc private func liftPinPassthrough() {
+        PinWindowController.liftAllPassthrough()
     }
 
     // MARK: - 录制状态
@@ -268,6 +286,8 @@ extension AppDelegate: NSMenuDelegate {
         menu.item(withTag: Tag.scrollCapture)?.title =
             "滚动截图\t\(settings.scrollCaptureShortcut.displayString)"
         menu.item(withTag: Tag.gallery)?.title = "图库…\t\(settings.galleryShortcut.displayString)"
+        // 有穿透中的钉图才显示「解除钉图穿透」。
+        menu.item(withTag: Tag.liftPassthrough)?.isHidden = !PinWindowController.hasPassthroughPins
         updateRecordingMenuItem()
     }
 }
