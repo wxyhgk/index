@@ -33,6 +33,7 @@ final class AppSettings: ObservableObject {
     private enum Keys {
         static let copyToClipboard = "copyToClipboard"
         static let runOCR = "runOCR"
+        static let autoClassify = "autoClassify"
         static let showMagnifier = "showMagnifier"
         static let enterBehavior = "enterBehavior"
         static let defaultColorIndex = "defaultColorIndex"
@@ -74,6 +75,11 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(runOCR, forKey: Keys.runOCR) }
     }
 
+    /// 自动分类（规则分类 + Vision 场景标签）。
+    @Published var autoClassify: Bool {
+        didSet { defaults.set(autoClassify, forKey: Keys.autoClassify) }
+    }
+
     // MARK: - 快捷键
 
     @Published var captureShortcut: KeyboardShortcut {
@@ -100,6 +106,7 @@ final class AppSettings: ObservableObject {
         defaults.register(defaults: [
             Keys.copyToClipboard: true,
             Keys.runOCR: true,
+            Keys.autoClassify: true,
             Keys.showMagnifier: true,
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
             Keys.defaultColorIndex: 0,
@@ -108,6 +115,7 @@ final class AppSettings: ObservableObject {
 
         copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
         runOCR = defaults.bool(forKey: Keys.runOCR)
+        autoClassify = defaults.bool(forKey: Keys.autoClassify)
         showMagnifier = defaults.bool(forKey: Keys.showMagnifier)
         enterBehavior = defaults.string(forKey: Keys.enterBehavior)
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish

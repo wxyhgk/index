@@ -46,4 +46,8 @@ extension AttributeValue {
 enum AttributeKey {
     static let ocrText = "ocr.text"
     static let sourceURL = "source.url"
+    /// 规则分类结果（中文分类名，见 `ShotClassifier`）。
+    static let category = "category"
+    /// Vision 场景标签，逗号分隔的 identifier 列表。
+    static let visionLabels = "vision.labels"
 }

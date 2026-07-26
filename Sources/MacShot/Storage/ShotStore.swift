@@ -18,6 +18,8 @@ final class ShotStore: ObservableObject {
 
     @Published private(set) var shots: [Shot] = []
     @Published var searchText: String = ""
+    /// 分类筛选。nil 表示「全部」。
+    @Published var categoryFilter: String?
 
     let rootDirectory: URL
     let originalsDirectory: URL
@@ -233,12 +235,24 @@ final class ShotStore: ObservableObject {
 
     func reload() {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let category = categoryFilter
         shots = (try? dbQueue.read { db -> [Shot] in
+            // 分类筛选是精确匹配的 AND 条件，和 FTS 搜索（子串匹配的 UNION）互不干扰：
+            // 搜索决定候选集，分类再收窄一次。
+            let categoryClause = category == nil ? "" : """
+                AND shot.id IN (
+                    SELECT shotID FROM shotAttribute
+                    WHERE key = 'category' AND text = :category
+                )
+                """
+
             if query.isEmpty {
-                return try Shot
-                    .order(Column("capturedAt").desc)
-                    .limit(500)
-                    .fetchAll(db)
+                return try Shot.fetchAll(db, sql: """
+                    SELECT shot.* FROM shot
+                    WHERE 1 = 1 \(categoryClause)
+                    ORDER BY shot.capturedAt DESC
+                    LIMIT 500
+                    """, arguments: ["category": category])
             }
             // trigram 分词器下用带引号的原始串做子串匹配。
             let escaped = query.replacingOccurrences(of: "\"", with: "\"\"")
@@ -253,10 +267,44 @@ final class ShotStore: ObservableObject {
                     SELECT shotAttribute.shotID FROM shotAttribute
                     JOIN attributeFts ON attributeFts.rowid = shotAttribute.id
                     WHERE attributeFts MATCH :pattern
-                )
+                ) \(categoryClause)
                 ORDER BY shot.capturedAt DESC
                 LIMIT 500
-                """, arguments: ["pattern": pattern])
+                """, arguments: ["pattern": pattern, "category": category])
+        }) ?? []
+    }
+
+    /// 现有分类及各自的截图数量，按数量降序。图库的筛选菜单用。
+    func categories() -> [(name: String, count: Int)] {
+        (try? dbQueue.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT text AS name, COUNT(*) AS count FROM shotAttribute
+                WHERE key = 'category' AND text IS NOT NULL
+                GROUP BY text
+                ORDER BY count DESC, name ASC
+                """).map { (name: $0["name"] as String, count: $0["count"] as Int) }
+        }) ?? []
+    }
+
+    /// 读一条派生属性的文本值。详情页展示分类 / 标签用。
+    func attributeText(shotID: Int64, key: String) -> String? {
+        try? dbQueue.read { db in
+            try String.fetchOne(db, sql: """
+                SELECT text FROM shotAttribute WHERE shotID = ? AND key = ? LIMIT 1
+                """, arguments: [shotID, key])
+        }
+    }
+
+    /// 还没有指定 key 属性的截图。启动回填用。
+    func shotsMissingAttribute(key: String) -> [Shot] {
+        (try? dbQueue.read { db in
+            try Shot.fetchAll(db, sql: """
+                SELECT shot.* FROM shot
+                WHERE shot.id NOT IN (
+                    SELECT shotID FROM shotAttribute WHERE key = ?
+                )
+                ORDER BY shot.capturedAt DESC
+                """, arguments: [key])
         }) ?? []
     }
 

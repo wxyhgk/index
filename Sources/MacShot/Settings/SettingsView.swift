@@ -64,6 +64,11 @@ private struct GeneralSettings: View {
                 Text("在后台运行，识别结果进入全文索引，可以直接搜截图里的字。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Toggle("自动分类", isOn: $settings.autoClassify)
+                Text("按来源 App 归入代码、浏览器、聊天等分类，并附加系统 Vision 场景标签。图库里可按分类筛选，分类名也可直接搜索。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
