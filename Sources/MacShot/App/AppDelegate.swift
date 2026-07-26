@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupHotKeys()
 
-        AttributeBackfill.runIfNeeded()   // 给老截图补分类，后台串行，不影响启动
+        AttributeBackfill.runIfNeeded()   // 给老截图补缺失的派生属性，后台串行，不影响启动
 
         settings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
 

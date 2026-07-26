@@ -391,6 +391,73 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    /// 读一条派生属性的二进制载荷。相似检索取目标指纹用。
+    func attributePayload(shotID: Int64, key: String) -> Data? {
+        try? dbQueue.read { db in
+            try Data.fetchOne(db, sql: """
+                SELECT payload FROM shotAttribute
+                WHERE shotID = ? AND key = ? AND payload IS NOT NULL LIMIT 1
+                """, arguments: [shotID, key])
+        }
+    }
+
+    /// 某个 key 的全部二进制载荷（shotID + payload）。相似检索的候选集，一条 SQL 拉全量。
+    func attributePayloads(key: String) -> [(shotID: Int64, payload: Data)] {
+        (try? dbQueue.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT shotID, payload FROM shotAttribute
+                WHERE key = ? AND payload IS NOT NULL
+                """, arguments: [key]).map {
+                    (shotID: $0["shotID"] as Int64, payload: $0["payload"] as Data)
+                }
+        }) ?? []
+    }
+
+    /// 与目标视觉最相似的截图，按特征指纹距离升序取前 `limit` 张。
+    ///
+    /// 线程边界：候选载荷在主 actor 上一次性拉出（dbQueue 的调用约定不变），
+    /// 反序列化和距离计算这类 CPU 活挪到后台，算完回主 actor 按 ID 取 Shot。
+    /// 全量线性扫描 —— 两千张以内毫无压力，更大的库需要上向量索引再优化。
+    func similarShots(to shot: Shot, limit: Int = 12) async -> [Shot] {
+        guard let targetID = shot.id,
+              let targetData = attributePayload(shotID: targetID, key: AttributeKey.featurePrint)
+        else { return [] }
+
+        let candidates = attributePayloads(key: AttributeKey.featurePrint)
+            .filter { $0.shotID != targetID }
+        guard !candidates.isEmpty else { return [] }
+
+        let rankedIDs = await Task.detached(priority: .userInitiated) { () -> [Int64] in
+            guard let target = FeaturePrint.observation(from: targetData) else { return [] }
+            var scored: [(shotID: Int64, distance: Float)] = []
+            scored.reserveCapacity(candidates.count)
+            for candidate in candidates {
+                // 解档失败或指纹版本不兼容的直接跳过。
+                guard let observation = FeaturePrint.observation(from: candidate.payload),
+                      let distance = FeaturePrint.distance(target, to: observation)
+                else { continue }
+                scored.append((candidate.shotID, distance))
+            }
+            return scored
+                .sorted { $0.distance < $1.distance }
+                .prefix(limit)
+                .map(\.shotID)
+        }.value
+        guard !rankedIDs.isEmpty else { return [] }
+
+        let fetched = shots(ids: rankedIDs)
+        let byID = Dictionary(uniqueKeysWithValues: fetched.compactMap { s in s.id.map { ($0, s) } })
+        // IN 查询不保序，按距离升序重排。
+        return rankedIDs.compactMap { byID[$0] }
+    }
+
+    /// 按 ID 批量取 Shot。同步方法，避免在 async 上下文里误触 GRDB 的 async read 重载。
+    private func shots(ids: [Int64]) -> [Shot] {
+        (try? dbQueue.read { db in
+            try Shot.filter(ids.contains(Column("id"))).fetchAll(db)
+        }) ?? []
+    }
+
     /// 还没有指定 key 属性的截图。启动回填用。
     func shotsMissingAttribute(key: String) -> [Shot] {
         (try? dbQueue.read { db in
