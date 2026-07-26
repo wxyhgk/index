@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKeys()
 
         AttributeBackfill.runIfNeeded()   // 给老截图补缺失的派生属性，后台串行，不影响启动
+        StorageJanitor.runIfNeeded()      // 清理过期且无价值（未收藏、未标注）的旧截图
 
         settings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
         RecordingCoordinator.shared.onStateChanged = { [weak self] in

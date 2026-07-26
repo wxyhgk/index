@@ -25,6 +25,23 @@ enum SystemNavigator {
         NSWorkspace.shared.openApplication(at: url, configuration: configuration)
     }
 
+    /// 弹目录选择面板，用户取消返回 nil。
+    /// 模态面板收敛在平台层 —— 与 `ImageExporter.exportWithPanel` 同一套纪律，
+    /// SwiftUI 视图里不裸跑 runModal。
+    static func chooseDirectory(message: String = "选择文件夹") -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = message
+        panel.prompt = "选择"
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
+
     static func openScreenRecordingSettings() {
         guard let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"

@@ -74,6 +74,11 @@ final class AppSettings: ObservableObject {
         static let uploadHeaders = "uploadHeaders"
         static let uploadResponsePath = "uploadResponsePath"
         static let uploadLinkFormat = "uploadLinkFormat"
+        static let exportNameTemplate = "exportNameTemplate"
+        static let autoCopyEnabled = "autoCopyEnabled"
+        static let autoCopyDirectory = "autoCopyDirectory"
+        static let autoCleanupEnabled = "autoCleanupEnabled"
+        static let autoCleanupDays = "autoCleanupDays"
     }
 
     private let defaults = UserDefaults.standard
@@ -103,6 +108,42 @@ final class AppSettings: ObservableObject {
 
     @Published var captureDelay: Int {
         didSet { defaults.set(captureDelay, forKey: Keys.captureDelay) }
+    }
+
+    // MARK: - 导出
+
+    /// 导出文件名模板。变量：{date} 日期、{time} 时间、
+    /// {app} 带前导连字符的来源 App 名、{title} 窗口标题（截 40 字符）。
+    /// 渲染规则在 `ImageExporter.renderName`，这里只存模板本身。
+    @Published var exportNameTemplate: String {
+        didSet { defaults.set(exportNameTemplate, forKey: Keys.exportNameTemplate) }
+    }
+
+    static let defaultExportNameTemplate = "截图 {date} {time}{app}"
+
+    /// 自动保存副本：每张截图入库后往指定目录写一份成品 PNG。
+    /// 面向 Obsidian 等监听文件夹的场景。
+    @Published var autoCopyEnabled: Bool {
+        didSet { defaults.set(autoCopyEnabled, forKey: Keys.autoCopyEnabled) }
+    }
+
+    /// 副本写入的目录路径。空 = 未选择，即使开关开着也不写。
+    @Published var autoCopyDirectory: String {
+        didSet { defaults.set(autoCopyDirectory, forKey: Keys.autoCopyDirectory) }
+    }
+
+    // MARK: - 存储清理
+
+    /// 启动时自动清理旧截图。默认关 —— 删除是不可逆操作，必须用户主动开启。
+    @Published var autoCleanupEnabled: Bool {
+        didSet { defaults.set(autoCleanupEnabled, forKey: Keys.autoCleanupEnabled) }
+    }
+
+    static let autoCleanupChoices = [7, 30, 90]
+
+    /// 保留天数。只有早于这个天数、未收藏且从未标注过的截图才会被清理。
+    @Published var autoCleanupDays: Int {
+        didSet { defaults.set(autoCleanupDays, forKey: Keys.autoCleanupDays) }
     }
 
     // MARK: - 标注默认值
@@ -222,7 +263,12 @@ final class AppSettings: ObservableObject {
             Keys.uploadFieldName: "file",
             Keys.uploadHeaders: "",
             Keys.uploadResponsePath: "",
-            Keys.uploadLinkFormat: UploadLinkFormat.raw.rawValue
+            Keys.uploadLinkFormat: UploadLinkFormat.raw.rawValue,
+            Keys.exportNameTemplate: Self.defaultExportNameTemplate,
+            Keys.autoCopyEnabled: false,
+            Keys.autoCopyDirectory: "",
+            Keys.autoCleanupEnabled: false,
+            Keys.autoCleanupDays: 30
         ])
 
         copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
@@ -243,6 +289,12 @@ final class AppSettings: ObservableObject {
         uploadResponsePath = defaults.string(forKey: Keys.uploadResponsePath) ?? ""
         uploadLinkFormat = defaults.string(forKey: Keys.uploadLinkFormat)
             .flatMap(UploadLinkFormat.init(rawValue:)) ?? .raw
+        exportNameTemplate = defaults.string(forKey: Keys.exportNameTemplate)
+            ?? Self.defaultExportNameTemplate
+        autoCopyEnabled = defaults.bool(forKey: Keys.autoCopyEnabled)
+        autoCopyDirectory = defaults.string(forKey: Keys.autoCopyDirectory) ?? ""
+        autoCleanupEnabled = defaults.bool(forKey: Keys.autoCleanupEnabled)
+        autoCleanupDays = defaults.integer(forKey: Keys.autoCleanupDays)
         captureShortcut = Self.load(Keys.captureShortcut, from: defaults) ?? .captureDefault
         galleryShortcut = Self.load(Keys.galleryShortcut, from: defaults) ?? .galleryDefault
         delayedCaptureShortcut = Self.load(Keys.delayedCaptureShortcut, from: defaults)

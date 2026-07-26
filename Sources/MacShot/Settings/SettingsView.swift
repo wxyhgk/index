@@ -54,6 +54,61 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section {
+                TextField(
+                    "模板",
+                    text: $settings.exportNameTemplate,
+                    prompt: Text(AppSettings.defaultExportNameTemplate)
+                )
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+
+                Text("可用变量：{date} 日期、{time} 时间、{app} 来源 App（带前导连字符，无则为空）、{title} 窗口标题（截取 40 字符，自动去掉文件名非法字符）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                LabeledContent("预览") {
+                    Text(templatePreview)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                Text("文件名")
+            } footer: {
+                Text("保存面板、图库导出和自动副本都用这个模板。")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Section("自动副本") {
+                Toggle("截图后自动保存一份到指定文件夹", isOn: $settings.autoCopyEnabled)
+
+                if settings.autoCopyEnabled {
+                    LabeledContent("文件夹") {
+                        HStack(spacing: 8) {
+                            Text(settings.autoCopyDirectory.isEmpty ? "未选择" : settings.autoCopyDirectory)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Button("选择…") {
+                                if let url = SystemNavigator.chooseDirectory(message: "选择副本保存的文件夹") {
+                                    settings.autoCopyDirectory = url.path
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+
+                Text("每张截图入库后自动写一份 PNG 副本，文件名走上面的模板，重名自动加序号。配合 Obsidian / 笔记软件的监听文件夹，截图直接进知识库。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("选区") {
                 Toggle("显示放大镜与取色器", isOn: $settings.showMagnifier)
                 Text("拖选时在光标旁显示像素级预览、色值和坐标。按 C 复制色值。")
@@ -112,6 +167,17 @@ private struct GeneralSettings: View {
                 AttributeBackfill.runIfNeeded()
             }
         }
+    }
+
+    /// 用假数据渲染的示例 —— 和真实导出走同一份 `ImageExporter.renderName`，
+    /// 预览和实际结果不可能漂移。
+    private var templatePreview: String {
+        ImageExporter.renderName(
+            template: settings.exportNameTemplate,
+            date: Date(),
+            appName: "Safari",
+            windowTitle: "MacShot 使用指南"
+        ) + ".png"
     }
 }
 
@@ -436,6 +502,7 @@ private struct UploadSettings: View {
 // MARK: - 存储
 
 private struct StorageSettings: View {
+    @ObservedObject private var settings = AppSettings.shared
     @State private var totalSize: String = "计算中…"
     @State private var shotCount: Int = 0
 
@@ -460,6 +527,22 @@ private struct StorageSettings: View {
             Section("占用") {
                 LabeledContent("截图数量", value: "\(shotCount)")
                 LabeledContent("磁盘占用", value: totalSize)
+            }
+
+            Section("自动清理") {
+                Toggle("自动清理旧截图", isOn: $settings.autoCleanupEnabled)
+
+                Picker("保留时长", selection: $settings.autoCleanupDays) {
+                    ForEach(AppSettings.autoCleanupChoices, id: \.self) { days in
+                        Text("\(days) 天").tag(days)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(!settings.autoCleanupEnabled)
+
+                Text("启动时删除超过保留时长的旧截图，每次最多 \(StorageJanitor.batchLimit) 张，删不完的下次接着删。收藏的和标注过的永远不删 —— 修订链的价值反过来定义了什么值得留。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
