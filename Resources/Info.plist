@@ -26,5 +26,33 @@
     <!-- 取浏览器当前标签页地址需要 Apple Events 授权 -->
     <key>NSAppleEventsUsageDescription</key>
     <string>MacShot 需要询问浏览器当前页面的网址，以便把它记录到截图的元数据里。</string>
+    <!-- URL scheme：快捷指令 / Raycast / 终端 open 都能经 macshot:// 调起，见 App/URLCommandRouter.swift -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.wxyhgk.macshot</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>macshot</string>
+            </array>
+        </dict>
+    </array>
+    <!-- 服务菜单：无输入类型 → 出现在所有 App 的「服务」菜单里。
+         注意：服务注册按签名+路径缓存，改动后可能要 pbs -update 或重新登录才生效。 -->
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>用 MacShot 截图</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>captureService</string>
+            <key>NSPortName</key>
+            <string>MacShot</string>
+        </dict>
+    </array>
 </dict>
 </plist>
