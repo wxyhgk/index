@@ -8,8 +8,9 @@ enum OverlayRenderer {
         model: SelectionModel,
         annotation: AnnotationState,
         slots: [ToolbarSlot],
-        hoveredItem: ToolbarItem?,
+        hoveredControlID: String?,
         isPrimaryScreen: Bool,
+        magnifier: (sample: PixelSample, cursor: CGPoint)?,
         in bounds: CGRect,
         ctx: CGContext
     ) {
@@ -30,6 +31,11 @@ enum OverlayRenderer {
         guard let globalRect, let local else {
             if isPrimaryScreen && !model.isInactive {
                 drawHint(in: bounds)
+            }
+            if let magnifier {
+                MagnifierRenderer.draw(
+                    sample: magnifier.sample, at: magnifier.cursor, in: bounds, ctx: ctx
+                )
             }
             return
         }
@@ -56,7 +62,18 @@ enum OverlayRenderer {
         }
 
         if model.phase == .confirmed {
-            ToolbarRenderer.draw(slots, hovered: hoveredItem, annotation: annotation)
+            ToolbarRenderer.draw(
+                slots,
+                hovered: hoveredControlID,
+                context: ToolbarContext(annotation: annotation, scope: .capture, perform: { _ in })
+            )
+        }
+
+        // 放大镜画在最上层，否则会被选区边框和工具条盖住。
+        if let magnifier {
+            MagnifierRenderer.draw(
+                sample: magnifier.sample, at: magnifier.cursor, in: bounds, ctx: ctx
+            )
         }
     }
 

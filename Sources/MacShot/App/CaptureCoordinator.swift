@@ -29,7 +29,7 @@ final class CaptureCoordinator {
         }
 
         // 关键：覆盖层一旦拿到焦点，frontmostApplication 就变成我们自己了，必须提前记下来。
-        let previousApp = NSWorkspace.shared.frontmostApplication
+        let previousApp = SystemNavigator.frontmostApplication
 
         isPreparing = true
         Task {
@@ -115,7 +115,7 @@ final class CaptureCoordinator {
         // 动作自己管剪贴板时不要再叠加一次。此前这里是个 switch 的 default 分支，
         // 新动作会默认吃到自动复制 —— 「上传图床」会顺手覆盖剪贴板。
         if AppSettings.shared.copyToClipboard && !action.suppressesAutoCopy {
-            ImageCodec.copyToPasteboard(context.rendered())
+            Clipboard.copy(context.rendered())
         }
 
         Task {
@@ -144,8 +144,7 @@ final class CaptureCoordinator {
         alert.addButton(withTitle: "稍后")
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
-            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
-            NSWorkspace.shared.open(url)
+            SystemNavigator.openScreenRecordingSettings()
         }
     }
 

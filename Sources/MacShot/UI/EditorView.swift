@@ -327,7 +327,7 @@ struct EditorView: View {
 
     private func copyRendered() {
         guard let image = rendered() else { return }
-        ImageCodec.copyToPasteboard(image)
+        Clipboard.copy(image)
     }
 
     private func exportRendered() {

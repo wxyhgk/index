@@ -20,10 +20,34 @@ final class OverlayView: NSView {
     private let imageLayer = CALayer()
     private let chrome = ChromeView()
 
-    private var hoveredItem: ToolbarItem?
+    private var hoveredControlID: String?
+
+    /// 光标位置（视图局部）与该处的像素采样。选区阶段才有意义。
+    private var cursor: CGPoint?
+    private(set) var cursorSample: PixelSample?
+
+    /// 只在「正在挑位置」时显示：确认之后画面已经定了，放大镜只会挡住工具条。
+    private var magnifierPayload: (sample: PixelSample, cursor: CGPoint)? {
+        guard AppSettings.shared.showMagnifier, !model.isInactive else { return nil }
+        switch model.phase {
+        case .idle, .dragging, .adjusting:
+            guard let cursor, let cursorSample else { return nil }
+            return (cursorSample, cursor)
+        case .confirmed:
+            return nil
+        }
+    }
 
     var geometry: OverlayGeometry {
         OverlayGeometry(bounds: bounds, displayOrigin: model.bounds.origin)
+    }
+
+    private var toolbarContext: ToolbarContext {
+        ToolbarContext(
+            annotation: annotation,
+            scope: .capture,
+            perform: { [weak self] actionID in self?.emit(actionID) }
+        )
     }
 
     /// 工具条布局按需计算：绘制和命中测试用的是同一份结果，不可能不一致。
@@ -32,9 +56,7 @@ final class OverlayView: NSView {
         return ToolbarLayout.slots(in: bounds, config: .init(
             anchor: geometry.viewLocal(fromGlobal: rect),
             alignment: .trailing,
-            actions: CaptureActionRegistry.shared.descriptors(in: .capture),
-            tool: annotation.tool,
-            hasAnnotations: !annotation.isEmpty
+            context: toolbarContext
         ))
     }
 
@@ -57,8 +79,9 @@ final class OverlayView: NSView {
                 model: self.model,
                 annotation: self.annotation,
                 slots: self.slots,
-                hoveredItem: self.hoveredItem,
+                hoveredControlID: self.hoveredControlID,
                 isPrimaryScreen: self.isPrimaryScreen,
+                magnifier: self.magnifierPayload,
                 in: bounds,
                 ctx: ctx
             )
@@ -112,15 +135,25 @@ final class OverlayView: NSView {
         convert(event.locationInWindow, from: nil)
     }
 
+    /// 光标一动就重新采样。采的是一小块（21×21 像素）+ 单个像素，都是内存操作。
+    private func updateCursor(_ local: CGPoint) {
+        guard AppSettings.shared.showMagnifier else {
+            if cursor != nil { cursor = nil; cursorSample = nil }
+            return
+        }
+        cursor = local
+        cursorSample = model.snapshot.sample(aroundGlobal: geometry.global(fromViewLocal: local))
+    }
+
     // MARK: - 鼠标
 
     override func mouseMoved(with event: NSEvent) {
         switch model.phase {
         case .confirmed:
             let local = localPoint(of: event)
-            let hit = slots.first { $0.item.isInteractive && $0.frame.contains(local) }?.item
-            if hit != hoveredItem {
-                hoveredItem = hit
+            let hit = slots.first { $0.control != nil && $0.frame.contains(local) }?.control?.id
+            if hit != hoveredControlID {
+                hoveredControlID = hit
                 redraw()
             }
             if hit != nil {
@@ -132,7 +165,9 @@ final class OverlayView: NSView {
             }
         case .idle:
             NSCursor.crosshair.set()
-            redrawIfNeeded(model.hover(at: NSEvent.mouseLocation))
+            model.hover(at: NSEvent.mouseLocation)
+            updateCursor(localPoint(of: event))
+            redraw()
         case .dragging, .adjusting:
             break
         }
@@ -155,13 +190,14 @@ final class OverlayView: NSView {
 
         // 工具条命中优先
         if model.phase == .confirmed,
-           let slot = slots.first(where: { $0.item.isInteractive && $0.frame.contains(local) }) {
-            handleToolbar(slot.item)
+           let control = slots.first(where: { $0.control != nil && $0.frame.contains(local) })?.control {
+            control.activate(toolbarContext)
+            redraw()
             return
         }
 
         let global = geometry.global(fromViewLocal: local)
-        hoveredItem = nil
+        hoveredControlID = nil
 
         // 手上有标注工具时，选区内的拖拽是画标注，不是调整选区
         if model.phase == .confirmed,
@@ -193,6 +229,7 @@ final class OverlayView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let local = localPoint(of: event)
+        updateCursor(local)
         if annotation.isDrawing {
             redrawIfNeeded(annotation.updateDraw(to: geometry.annotationPoint(fromViewLocal: local)))
             return
@@ -201,10 +238,11 @@ final class OverlayView: NSView {
         let global = geometry.global(fromViewLocal: local)
         switch model.phase {
         case .adjusting:
-            redrawIfNeeded(model.updateAdjust(to: global))
+            model.updateAdjust(to: global)
         default:
-            redrawIfNeeded(model.updateDrag(to: global))
+            model.updateDrag(to: global)
         }
+        redraw()
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -225,11 +263,11 @@ final class OverlayView: NSView {
         switch model.phase {
         case .adjusting:
             model.endAdjust()
-            hoveredItem = nil
+            hoveredControlID = nil
             NSCursor.arrow.set()
         default:
             if model.endDrag() {
-                hoveredItem = nil
+                hoveredControlID = nil
                 NSCursor.arrow.set()
             }
         }
@@ -250,28 +288,6 @@ final class OverlayView: NSView {
         } else {
             onFinish?(nil)
         }
-    }
-
-    // MARK: - 工具条
-
-    private func handleToolbar(_ item: ToolbarItem) {
-        switch item {
-        case .tool(let tool):
-            annotation.endTextEditing()
-            annotation.tool = tool
-        case .color(let index):
-            annotation.colorIndex = index
-        case .width(let index):
-            annotation.widthIndex = index
-        case .undo:
-            annotation.undo()
-        case .action(let descriptor):
-            emit(descriptor.id)
-            return
-        case .separator:
-            return
-        }
-        redraw()
     }
 
     // MARK: - 收尾

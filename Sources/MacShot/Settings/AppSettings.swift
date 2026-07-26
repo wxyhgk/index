@@ -33,6 +33,7 @@ final class AppSettings: ObservableObject {
     private enum Keys {
         static let copyToClipboard = "copyToClipboard"
         static let runOCR = "runOCR"
+        static let showMagnifier = "showMagnifier"
         static let enterBehavior = "enterBehavior"
         static let defaultColorIndex = "defaultColorIndex"
         static let defaultWidthIndex = "defaultWidthIndex"
@@ -50,6 +51,11 @@ final class AppSettings: ObservableObject {
 
     @Published var enterBehavior: EnterBehavior {
         didSet { defaults.set(enterBehavior.rawValue, forKey: Keys.enterBehavior) }
+    }
+
+    /// 选区时在光标旁显示像素放大镜和取色读数。
+    @Published var showMagnifier: Bool {
+        didSet { defaults.set(showMagnifier, forKey: Keys.showMagnifier) }
     }
 
     // MARK: - 标注默认值
@@ -94,6 +100,7 @@ final class AppSettings: ObservableObject {
         defaults.register(defaults: [
             Keys.copyToClipboard: true,
             Keys.runOCR: true,
+            Keys.showMagnifier: true,
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
             Keys.defaultColorIndex: 0,
             Keys.defaultWidthIndex: 1
@@ -101,6 +108,7 @@ final class AppSettings: ObservableObject {
 
         copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
         runOCR = defaults.bool(forKey: Keys.runOCR)
+        showMagnifier = defaults.bool(forKey: Keys.showMagnifier)
         enterBehavior = defaults.string(forKey: Keys.enterBehavior)
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish
         defaultColorIndex = defaults.integer(forKey: Keys.defaultColorIndex)

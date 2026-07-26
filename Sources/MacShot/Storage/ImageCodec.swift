@@ -60,11 +60,4 @@ enum ImageCodec {
     static func nsImage(_ image: CGImage) -> NSImage {
         NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
-
-    static func copyToPasteboard(_ image: CGImage) {
-        guard let data = pngData(from: image) else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setData(data, forType: .png)
-    }
 }

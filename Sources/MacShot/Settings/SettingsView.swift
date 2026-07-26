@@ -52,6 +52,13 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("选区") {
+                Toggle("显示放大镜与取色器", isOn: $settings.showMagnifier)
+                Text("拖选时在光标旁显示像素级预览、色值和坐标。按 C 复制色值。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("识别") {
                 Toggle("自动识别截图中的文字", isOn: $settings.runOCR)
                 Text("在后台运行，识别结果进入全文索引，可以直接搜截图里的字。")
@@ -191,7 +198,7 @@ private struct StorageSettings: View {
                         .truncationMode(.middle)
                 }
                 Button("在访达中显示") {
-                    NSWorkspace.shared.activateFileViewerSelecting([store.rootDirectory])
+                    SystemNavigator.revealInFinder(store.rootDirectory)
                 }
                 .controlSize(.small)
             }

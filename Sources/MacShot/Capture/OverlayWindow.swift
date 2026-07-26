@@ -1,7 +1,7 @@
 import AppKit
 
 /// 铺在单块显示器上的无边框覆盖窗口。
-final class OverlayWindow: NSWindow, TransientWindow {
+final class OverlayWindow: NSWindow {
 
     init(screen: NSScreen) {
         super.init(

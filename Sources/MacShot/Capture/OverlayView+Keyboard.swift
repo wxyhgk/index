@@ -39,6 +39,8 @@ extension OverlayView {
             emit(AppSettings.shared.enterBehavior == .copyAndFinish ? ActionID.copy : ActionID.finish)
         case KeyCode.c where cmd:
             emit(ActionID.copy)
+        case KeyCode.c:
+            copyPickedColor()
         case KeyCode.s where cmd:
             emit(ActionID.save)
         case let code where KeyCode.arrows.contains(code):
@@ -60,6 +62,12 @@ extension OverlayView {
             annotation.insertText(text)
         }
         redraw()
+    }
+
+    /// 取色器：把光标处的色值放进剪贴板。选区还没确认时也能用。
+    private func copyPickedColor() {
+        guard let sample = cursorSample else { return }
+        Clipboard.copy(text: sample.color.hexString)
     }
 
     private func selectTool(_ tool: AnnotationTool?) {

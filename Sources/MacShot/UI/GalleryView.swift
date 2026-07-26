@@ -134,11 +134,11 @@ struct GalleryView: View {
     private func copy(_ shot: Shot) {
         guard let base = store.originalImage(for: shot) else { return }
         let layers = store.latestRevision(for: shot)?.imageLayers ?? Layers()
-        ImageCodec.copyToPasteboard(LayerRenderer.render(base: base, layers: layers))
+        Clipboard.copy(LayerRenderer.render(base: base, layers: layers))
     }
 
     private func reveal(_ shot: Shot) {
-        NSWorkspace.shared.activateFileViewerSelecting([store.originalURL(for: shot)])
+        SystemNavigator.revealInFinder(store.originalURL(for: shot))
     }
 }
 

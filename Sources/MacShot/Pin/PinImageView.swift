@@ -25,7 +25,7 @@ final class PinImageView: NSView {
     private var canvasImage: CGImage
 
     private var isHovering = false
-    private var hoveredItem: ToolbarItem?
+    private var hoveredControlID: String?
 
     init(base: CGImage, layers: Layers<ImageSpace>) {
         self.base = base
@@ -93,14 +93,20 @@ final class PinImageView: NSView {
 
     // MARK: - 工具条
 
+    private var toolbarContext: ToolbarContext {
+        ToolbarContext(
+            annotation: annotation,
+            scope: .pinned,
+            perform: { [weak self] actionID in self?.onAction?(actionID) }
+        )
+    }
+
     private func toolbarConfig(anchor: CGRect) -> ToolbarLayout.Configuration {
         .init(
             anchor: anchor,
             alignment: .center,
-            actions: CaptureActionRegistry.shared.descriptors(in: .pinned),
-            tool: annotation.tool,
-            hasAnnotations: !annotation.isEmpty,
-            placement: .below
+            placement: .below,
+            context: toolbarContext
         )
     }
 
@@ -110,31 +116,15 @@ final class PinImageView: NSView {
 
     private var toolbarAlpha: CGFloat { isHovering ? 1.0 : 0.45 }
 
-    private func handleToolbar(_ item: ToolbarItem) {
+    /// 工具条不认识具体控件，交给控件自己处理。图层数量可能因此变化，
+    /// 所以统一在这里刷新画布并通知控制器落库。
+    private func activate(_ control: any ToolbarControl) {
         let heightBefore = requiredStripHeight
-        defer {
-            if requiredStripHeight != heightBefore { onToolbarHeightChanged?() }
-        }
-
-        switch item {
-        case .tool(let tool):
-            annotation.endTextEditing()
-            annotation.tool = tool
-        case .color(let index):
-            annotation.colorIndex = index
-        case .width(let index):
-            annotation.widthIndex = index
-        case .undo:
-            annotation.undo()
-            refreshCanvas()
-            onAnnotationsChanged?()
-        case .action(let descriptor):
-            onAction?(descriptor.id)
-            return
-        case .separator:
-            return
-        }
+        control.activate(toolbarContext)
+        refreshCanvas()
         needsDisplay = true
+        onAnnotationsChanged?()
+        if requiredStripHeight != heightBefore { onToolbarHeightChanged?() }
     }
 
     private func refreshCanvas() {
@@ -174,15 +164,15 @@ final class PinImageView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         isHovering = false
-        hoveredItem = nil
+        hoveredControlID = nil
         needsDisplay = true
     }
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let hit = slots.first { $0.item.isInteractive && $0.frame.contains(point) }?.item
-        if hit != hoveredItem {
-            hoveredItem = hit
+        let hit = slots.first { $0.control != nil && $0.frame.contains(point) }?.control?.id
+        if hit != hoveredControlID {
+            hoveredControlID = hit
             needsDisplay = true
         }
         (hit == nil && annotation.tool != nil ? NSCursor.crosshair : NSCursor.arrow).set()
@@ -191,8 +181,8 @@ final class PinImageView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
 
-        if let slot = slots.first(where: { $0.item.isInteractive && $0.frame.contains(point) }) {
-            handleToolbar(slot.item)
+        if let control = slots.first(where: { $0.control != nil && $0.frame.contains(point) })?.control {
+            activate(control)
             return
         }
 
@@ -272,7 +262,7 @@ final class PinImageView: NSView {
 
         ctx.saveGState()
         ctx.setAlpha(toolbarAlpha)
-        ToolbarRenderer.draw(slots, hovered: hoveredItem, annotation: annotation)
+        ToolbarRenderer.draw(slots, hovered: hoveredControlID, context: toolbarContext)
         ctx.restoreGState()
     }
 

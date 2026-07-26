@@ -30,7 +30,7 @@ struct CopyAction: CaptureAction {
     let suppressesAutoCopy = true
 
     func perform(_ context: CaptureContext) async throws {
-        ImageCodec.copyToPasteboard(context.rendered())
+        Clipboard.copy(context.rendered())
     }
 }
 

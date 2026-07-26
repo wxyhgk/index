@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+final class SettingsWindowController: NSWindowController {
 
     static let shared = SettingsWindowController()
 
@@ -14,18 +14,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.setContentSize(NSSize(width: 500, height: 460))
         window.center()
         super.init(window: window)
-        window.delegate = self
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func show() {
-        ActivationPolicy.enterRegular()
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        ActivationPolicy.leaveRegularIfLastWindow(closing: window)
+        WindowRegistry.shared.present(self, dockIcon: true)
     }
 }

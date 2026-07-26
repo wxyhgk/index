@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class GalleryWindowController: NSWindowController, NSWindowDelegate {
+final class GalleryWindowController: NSWindowController {
 
     static let shared = GalleryWindowController()
 
@@ -15,7 +15,6 @@ final class GalleryWindowController: NSWindowController, NSWindowDelegate {
         window.titlebarAppearsTransparent = false
         window.center()
         super.init(window: window)
-        window.delegate = self
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -25,12 +24,6 @@ final class GalleryWindowController: NSWindowController, NSWindowDelegate {
         if let shot {
             GallerySelection.shared.selectedID = shot.id
         }
-        ActivationPolicy.enterRegular()
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        ActivationPolicy.leaveRegularIfLastWindow(closing: window)
+        WindowRegistry.shared.present(self, dockIcon: true)
     }
 }
