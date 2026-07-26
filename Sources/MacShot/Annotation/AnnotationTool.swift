@@ -11,6 +11,10 @@ enum AnnotationTool: CaseIterable {
     /// 只通过快捷键激活；图库编辑器的工具栏则全量展示。
     case line
     case crop
+    /// 序号标记：点击落点，自动递增编号。
+    case counter
+    /// 聚光灯：矩形亮区，区域外整体压暗。
+    case spotlight
 
     var layerKind: Layer.Kind {
         switch self {
@@ -22,6 +26,8 @@ enum AnnotationTool: CaseIterable {
         case .pixelate: return .pixelate
         case .line: return .line
         case .crop: return .crop
+        case .counter: return .counter
+        case .spotlight: return .spotlight
         }
     }
 
@@ -57,7 +63,10 @@ extension AnnotationTool {
         ToolShortcut(keyCode: KeyCode.h, tool: .highlight, label: "H"),
         ToolShortcut(keyCode: KeyCode.l, tool: .line,      label: "L"),
         // C 被取色器占用，裁剪用 X。
-        ToolShortcut(keyCode: KeyCode.x, tool: .crop,      label: "X")
+        ToolShortcut(keyCode: KeyCode.x, tool: .crop,      label: "X"),
+        ToolShortcut(keyCode: KeyCode.n, tool: .counter,   label: "N"),
+        // 裸 S 选聚光灯；⌘S 在两处键盘路由里都先判修饰键，保存不受影响。
+        ToolShortcut(keyCode: KeyCode.s, tool: .spotlight, label: "S")
     ]
 
     /// 返回值是双层可选：外层 nil 表示这个键没绑工具，内层 nil 表示指针模式。

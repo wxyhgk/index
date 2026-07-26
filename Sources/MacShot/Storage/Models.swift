@@ -53,6 +53,8 @@ struct Layer: Codable, Identifiable, Equatable {
         case highlight
         case pixelate
         case crop
+        case counter
+        case spotlight
 
         var displayName: String {
             switch self {
@@ -64,6 +66,8 @@ struct Layer: Codable, Identifiable, Equatable {
             case .highlight: return "高亮"
             case .pixelate: return "马赛克"
             case .crop: return "裁剪"
+            case .counter: return "序号"
+            case .spotlight: return "聚光灯"
             }
         }
 
@@ -77,6 +81,8 @@ struct Layer: Codable, Identifiable, Equatable {
             case .highlight: return "highlighter"
             case .pixelate: return "squareshape.split.3x3"
             case .crop: return "crop"
+            case .counter: return "1.circle"
+            case .spotlight: return "flashlight.on.fill"
             }
         }
     }
