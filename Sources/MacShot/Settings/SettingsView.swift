@@ -28,6 +28,10 @@ private struct GeneralSettings: View {
 
     var body: some View {
         Form {
+            Section("启动") {
+                LaunchAtLoginRow()
+            }
+
             Section {
                 Picker("按回车时", selection: $settings.enterBehavior) {
                     ForEach(AppSettings.EnterBehavior.allCases) { behavior in
@@ -185,6 +189,49 @@ private struct GeneralSettings: View {
             appName: "Safari",
             windowTitle: "MacShot 使用指南"
         ) + ".png"
+    }
+}
+
+/// 「登录时启动」开关：绑定 `SMAppService` 的真实状态 ——
+/// requiresApproval 也算开着（已注册，只是等系统放行），并给出系统设置入口；
+/// 切换失败时开关随状态回读自动恢复原样，错误原文显示在下方。
+private struct LaunchAtLoginRow: View {
+    @State private var status = LaunchAtLogin.status
+    @State private var errorText: String?
+
+    var body: some View {
+        Toggle("登录时启动 MacShot", isOn: Binding(
+            get: { status == .enabled || status == .requiresApproval },
+            set: { enable in
+                errorText = nil
+                do {
+                    try LaunchAtLogin.setEnabled(enable)
+                } catch {
+                    errorText = "设置失败：\(error.localizedDescription)"
+                }
+                status = LaunchAtLogin.status
+            }
+        ))
+        .onAppear { status = LaunchAtLogin.status }
+
+        if status == .requiresApproval {
+            HStack(spacing: 8) {
+                Text("已注册，等待系统放行 —— 在「系统设置 › 通用 › 登录项」里允许 MacShot。")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Button("打开系统设置") { LaunchAtLogin.openSystemSettings() }
+                    .controlSize(.small)
+            }
+        }
+        if let errorText {
+            Text(errorText)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+
+        Text("注册为系统登录项，登录后自动出现在菜单栏。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }
 

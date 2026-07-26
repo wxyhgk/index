@@ -51,8 +51,9 @@ enum AnnotationRenderer {
         ctx.restoreGState()
     }
 
-    /// 选中图层的虚线外框。和图层画在同一个（左上原点、Y 向下的）上下文里；
-    /// `strokeScale` 是画布单位相对屏幕点的倍率，保证虚线在屏幕上总是 1pt 粗。
+    /// 选中图层的虚线外框 + 缩放控制点。和图层画在同一个（左上原点、Y 向下的）
+    /// 上下文里；`strokeScale` 是画布单位相对屏幕点的倍率，保证虚线在屏幕上
+    /// 总是 1pt 粗、控制点总是同样大小。
     static func drawSelectionHint<Space: LayerSpace>(
         selectedID: UUID?,
         layers: Layers<Space>,
@@ -60,13 +61,54 @@ enum AnnotationRenderer {
         in ctx: CGContext
     ) {
         guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return }
-        let box = layers[index].rect.cg.insetBy(dx: -3 * strokeScale, dy: -3 * strokeScale)
+        let layer = layers[index]
+        // text 的 rect 只存锚点，虚线框按量出的文字范围画；其余就是 rect 本身。
+        let box = layer.handleBounds.insetBy(dx: -3 * strokeScale, dy: -3 * strokeScale)
 
         ctx.saveGState()
         ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
         ctx.setLineWidth(strokeScale)
         ctx.setLineDash(phase: 0, lengths: [3 * strokeScale, 3 * strokeScale])
         ctx.stroke(box)
+        ctx.restoreGState()
+
+        drawResizeHandles(for: layer, strokeScale: strokeScale, in: ctx)
+    }
+
+    /// 缩放控制点：矩形类 8 个小方块（样式参照选区的 `OverlayRenderer.drawHandles`：
+    /// 白底、黑描边、微圆角），line / arrow 只画两端圆点。尺寸随 `strokeScale`。
+    private static func drawResizeHandles(for layer: Layer, strokeScale: CGFloat, in ctx: CGContext) {
+        let handles = ResizeHandle.handles(for: layer.kind)
+        guard !handles.isEmpty else { return }
+
+        let size = 7 * strokeScale
+        let isEndpoint = layer.kind == .line || layer.kind == .arrow
+
+        ctx.saveGState()
+        ctx.setLineWidth(strokeScale)
+        for handle in handles {
+            let center = handle.location(of: layer)
+            let box = CGRect(
+                x: center.x - size / 2,
+                y: center.y - size / 2,
+                width: size,
+                height: size
+            )
+            let path: CGPath = isEndpoint
+                ? CGPath(ellipseIn: box, transform: nil)
+                : CGPath(
+                    roundedRect: box,
+                    cornerWidth: 1.5 * strokeScale,
+                    cornerHeight: 1.5 * strokeScale,
+                    transform: nil
+                )
+            ctx.addPath(path)
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            ctx.fillPath()
+            ctx.addPath(path)
+            ctx.setStrokeColor(CGColor(gray: 0, alpha: 0.45))
+            ctx.strokePath()
+        }
         ctx.restoreGState()
     }
 

@@ -187,6 +187,12 @@ final class OverlayView: NSView {
                 NSCursor.arrow.set()
             } else if annotation.tool != nil {
                 NSCursor.crosshair.set()
+            } else if model.confirmedRect?.contains(geometry.global(fromViewLocal: local)) == true,
+                      let handle = annotation.resizeHandle(
+                          at: geometry.annotationPoint(fromViewLocal: local)
+                      ) {
+                // 选中图层的缩放控制点优先于选区自身的控制点 —— 命中顺序和 mouseDown 一致。
+                handle.cursor.set()
             } else {
                 cursor(for: model.handle(at: geometry.global(fromViewLocal: local))).set()
             }
@@ -211,16 +217,9 @@ final class OverlayView: NSView {
         super.flagsChanged(with: event)
     }
 
-    /// AppKit 没有公开的斜向缩放光标，四角退回十字。
+    /// 光标映射在 `ResizeHandle.cursor`（AppKit 没有公开的斜向缩放光标，四角退回十字）。
     private func cursor(for handle: SelectionModel.Handle?) -> NSCursor {
-        switch handle {
-        case .left, .right:             return .resizeLeftRight
-        case .top, .bottom:             return .resizeUpDown
-        case .inside:                   return .openHand
-        case .topLeft, .topRight,
-             .bottomLeft, .bottomRight: return .crosshair
-        case nil:                       return .crosshair
-        }
+        handle?.cursor ?? .crosshair
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -275,11 +274,19 @@ final class OverlayView: NSView {
             return
         }
 
-        // 指针模式下点中已画的图层 → 选中并准备拖动；点空处 → 取消选中，
-        // 落回下面的选区调整逻辑。只在选区内测试：图层出了选区的部分是看不见的。
+        // 指针模式下优先命中选中图层的缩放控制点；再是图层本体（选中并准备拖动）；
+        // 点空处 → 取消选中，落回下面的选区调整逻辑。
+        // 只在选区内测试：图层出了选区的部分是看不见的。
         if model.phase == .confirmed, annotation.tool == nil,
            let selection = model.confirmedRect, selection.contains(global) {
             let canvas = geometry.annotationPoint(fromViewLocal: local)
+            if let handle = annotation.resizeHandle(at: canvas) {
+                annotation.endTextEditing()
+                annotation.beginResize(handle: handle, at: canvas)
+                onBecameActive?(self)
+                redraw()
+                return
+            }
             if let id = annotation.layer(at: canvas) {
                 annotation.endTextEditing()
                 annotation.beginMove(id: id, at: canvas)
@@ -315,6 +322,10 @@ final class OverlayView: NSView {
             redrawIfNeeded(annotation.updateMove(to: geometry.annotationPoint(fromViewLocal: local)))
             return
         }
+        if annotation.isResizing {
+            redrawIfNeeded(annotation.updateResize(to: geometry.annotationPoint(fromViewLocal: local)))
+            return
+        }
 
         let global = geometry.global(fromViewLocal: local)
         switch model.phase {
@@ -334,6 +345,11 @@ final class OverlayView: NSView {
         }
         if annotation.isMoving {
             annotation.endMove(pixelSource: frozenPixels)
+            redraw()
+            return
+        }
+        if annotation.isResizing {
+            annotation.endResize(pixelSource: frozenPixels)
             redraw()
             return
         }
