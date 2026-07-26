@@ -19,7 +19,14 @@ final class ShotStore: ObservableObject {
     @Published private(set) var shots: [Shot] = []
     @Published var searchText: String = ""
     /// 分类筛选。nil 表示「全部」。
-    @Published var categoryFilter: String?
+    /// 图库侧边栏选中的筛选维度。
+    enum GalleryFilter: Hashable {
+        case all
+        case category(String)
+        case app(String)
+    }
+
+    @Published var filter: GalleryFilter = .all
 
     let rootDirectory: URL
     let originalsDirectory: URL
@@ -235,28 +242,39 @@ final class ShotStore: ObservableObject {
 
     func reload() {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let category = categoryFilter
+        let filter = filter
         shots = (try? dbQueue.read { db -> [Shot] in
-            // 分类筛选是精确匹配的 AND 条件，和 FTS 搜索（子串匹配的 UNION）互不干扰：
-            // 搜索决定候选集，分类再收窄一次。
-            let categoryClause = category == nil ? "" : """
-                AND shot.id IN (
-                    SELECT shotID FROM shotAttribute
-                    WHERE key = 'category' AND text = :category
-                )
-                """
+            // 侧边栏筛选是精确匹配的 AND 条件，和 FTS 搜索（子串匹配的 UNION）互不干扰：
+            // 搜索决定候选集，筛选再收窄一次。
+            let filterClause: String
+            var arguments: [String: (any DatabaseValueConvertible)?] = [:]
+            switch filter {
+            case .all:
+                filterClause = ""
+            case .category(let name):
+                filterClause = """
+                    AND shot.id IN (
+                        SELECT shotID FROM shotAttribute
+                        WHERE key = 'category' AND text = :filterValue
+                    )
+                    """
+                arguments["filterValue"] = name
+            case .app(let name):
+                filterClause = "AND shot.appName = :filterValue"
+                arguments["filterValue"] = name
+            }
 
             if query.isEmpty {
                 return try Shot.fetchAll(db, sql: """
                     SELECT shot.* FROM shot
-                    WHERE 1 = 1 \(categoryClause)
+                    WHERE 1 = 1 \(filterClause)
                     ORDER BY shot.capturedAt DESC
                     LIMIT 500
-                    """, arguments: ["category": category])
+                    """, arguments: StatementArguments(arguments))
             }
             // trigram 分词器下用带引号的原始串做子串匹配。
             let escaped = query.replacingOccurrences(of: "\"", with: "\"\"")
-            let pattern = "\"\(escaped)\""
+            arguments["pattern"] = "\"\(escaped)\""
             // 同时搜 shot 本身的字段和派生属性 —— 新的后处理器产出的文本
             // 自动可搜，不需要再改这条查询。
             return try Shot.fetchAll(db, sql: """
@@ -267,14 +285,18 @@ final class ShotStore: ObservableObject {
                     SELECT shotAttribute.shotID FROM shotAttribute
                     JOIN attributeFts ON attributeFts.rowid = shotAttribute.id
                     WHERE attributeFts MATCH :pattern
-                ) \(categoryClause)
+                ) \(filterClause)
                 ORDER BY shot.capturedAt DESC
                 LIMIT 500
-                """, arguments: ["pattern": pattern, "category": category])
+                """, arguments: StatementArguments(arguments))
         }) ?? []
     }
 
-    /// 现有分类及各自的截图数量，按数量降序。图库的筛选菜单用。
+    var totalCount: Int {
+        (try? dbQueue.read { db in try Shot.fetchCount(db) }) ?? 0
+    }
+
+    /// 现有分类及各自的截图数量，按数量降序。图库侧边栏用。
     func categories() -> [(name: String, count: Int)] {
         (try? dbQueue.read { db in
             try Row.fetchAll(db, sql: """
@@ -283,6 +305,23 @@ final class ShotStore: ObservableObject {
                 GROUP BY text
                 ORDER BY count DESC, name ASC
                 """).map { (name: $0["name"] as String, count: $0["count"] as Int) }
+        }) ?? []
+    }
+
+    /// 截图来源 App 及数量，按数量降序。图库侧边栏用；bundleID 用来取真实 App 图标。
+    func apps() -> [(name: String, bundleID: String?, count: Int)] {
+        (try? dbQueue.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT appName AS name, MAX(appBundleID) AS bundleID, COUNT(*) AS count
+                FROM shot
+                WHERE appName IS NOT NULL
+                GROUP BY appName
+                ORDER BY count DESC, name ASC
+                """).map {
+                    (name: $0["name"] as String,
+                     bundleID: $0["bundleID"] as String?,
+                     count: $0["count"] as Int)
+                }
         }) ?? []
     }
 

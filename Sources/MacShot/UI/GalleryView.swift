@@ -8,154 +8,265 @@ final class GallerySelection: ObservableObject {
     @Published var editing: Shot?
 }
 
+// MARK: - 三栏布局：侧边栏（筛选） / 网格 / 详情
+//
+// 布局参考 Snagit Library：左侧按 分类 / 应用 导航（带计数和真实 App 图标），
+// 中间大缩略图网格 + 底部缩放条，右侧详情。NavigationSplitView 自带侧边栏
+// 毛玻璃材质和折叠行为，搜索框走 .searchable 进窗口工具栏。
+
 struct GalleryView: View {
 
     @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
-
-    private let columns = [GridItem(.adaptive(minimum: 190, maximum: 260), spacing: 14)]
 
     private var selectedShot: Shot? {
         store.shots.first { $0.id == selection.selectedID }
     }
 
     var body: some View {
-        HSplitView {
-            libraryPane
-                .frame(minWidth: 420, idealWidth: 660)
-
+        NavigationSplitView {
+            GallerySidebar()
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
+        } content: {
+            GalleryGrid()
+                .navigationSplitViewColumnWidth(min: 420, ideal: 640)
+        } detail: {
             if let shot = selectedShot {
                 ShotDetailPane(shot: shot)
-                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 460)
+                    .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
             } else {
-                emptyDetail
-                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 460)
+                ContentUnavailableView(
+                    "未选择截图",
+                    systemImage: "photo.on.rectangle",
+                    description: Text("在中间选择一张截图查看详情")
+                )
+                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
             }
         }
-        .frame(minWidth: 860, minHeight: 560)
+        .searchable(
+            text: $store.searchText,
+            placement: .toolbar,
+            prompt: "搜 App、标题、网址或截图里的字"
+        )
+        .onChange(of: store.searchText) { _, _ in store.reload() }
+        .frame(minWidth: 1000, minHeight: 600)
         .sheet(item: $selection.editing) { shot in
             EditorView(shot: shot)
         }
     }
+}
 
-    // MARK: 左侧
+// MARK: - 侧边栏
 
-    private var libraryPane: some View {
+private struct GallerySidebar: View {
+
+    @ObservedObject private var store = ShotStore.shared
+
+    @State private var categories: [(name: String, count: Int)] = []
+    @State private var apps: [(name: String, bundleID: String?, count: Int)] = []
+    @State private var total = 0
+
+    var body: some View {
+        List(selection: filterBinding) {
+            Section("资料库") {
+                Label("全部截图", systemImage: "square.grid.2x2")
+                    .badge(total)
+                    .tag(ShotStore.GalleryFilter.all)
+            }
+
+            if !categories.isEmpty {
+                Section("分类") {
+                    ForEach(categories, id: \.name) { category in
+                        Label(category.name, systemImage: icon(forCategory: category.name))
+                            .badge(category.count)
+                            .tag(ShotStore.GalleryFilter.category(category.name))
+                    }
+                }
+            }
+
+            if !apps.isEmpty {
+                Section("应用") {
+                    ForEach(apps, id: \.name) { app in
+                        HStack(spacing: 6) {
+                            AppIconView(bundleID: app.bundleID)
+                            Text(app.name).lineLimit(1)
+                        }
+                        .badge(app.count)
+                        .tag(ShotStore.GalleryFilter.app(app.name))
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        // 聚合是三条小查询，跟着数据量变化刷新即可，不挂在每次重绘上。
+        .task(id: store.shots.count) { refresh() }
+    }
+
+    /// List 的 selection 是可选的，而筛选永远有值（默认「全部」）—— 在这里桥一下。
+    private var filterBinding: Binding<ShotStore.GalleryFilter?> {
+        Binding(
+            get: { store.filter },
+            set: { newValue in
+                store.filter = newValue ?? .all
+                store.reload()
+            }
+        )
+    }
+
+    private func refresh() {
+        total = store.totalCount
+        categories = store.categories()
+        apps = store.apps()
+    }
+
+    private func icon(forCategory name: String) -> String {
+        switch name {
+        case "代码": return "chevron.left.forwardslash.chevron.right"
+        case "浏览器": return "globe"
+        case "聊天": return "bubble.left.and.bubble.right"
+        case "设计": return "paintpalette"
+        case "终端": return "terminal"
+        case "文档": return "doc.text"
+        case "笔记": return "note.text"
+        case "影音": return "play.rectangle"
+        case "效率": return "checklist"
+        default: return "tag"
+        }
+    }
+}
+
+/// 侧边栏里的真实 App 图标。按 bundleID 解析一次后缓存。
+private struct AppIconView: View {
+    let bundleID: String?
+
+    @State private var icon: NSImage?
+
+    var body: some View {
+        Group {
+            if let icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "app.dashed")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+            }
+        }
+        .task(id: bundleID) {
+            icon = AppIconCache.shared.icon(for: bundleID)
+        }
+    }
+}
+
+@MainActor
+private final class AppIconCache {
+    static let shared = AppIconCache()
+    private var cache: [String: NSImage] = [:]
+
+    func icon(for bundleID: String?) -> NSImage? {
+        guard let bundleID else { return nil }
+        if let cached = cache[bundleID] { return cached }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = NSSize(width: 16, height: 16)
+        cache[bundleID] = icon
+        return icon
+    }
+}
+
+// MARK: - 网格
+
+private struct GalleryGrid: View {
+
+    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var selection = GallerySelection.shared
+
+    /// 缩略图基准宽度，底部滑杆控制，跨启动记住。
+    @AppStorage("galleryZoom") private var zoom = 200.0
+
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: zoom, maximum: zoom * 1.5), spacing: 16)]
+    }
+
+    var body: some View {
         VStack(spacing: 0) {
-            searchBar
-            Divider()
-
             if store.shots.isEmpty {
-                emptyLibrary
+                emptyState
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 14) {
+                    LazyVGrid(columns: columns, spacing: 18) {
                         ForEach(store.shots) { shot in
-                            ShotThumbnail(shot: shot, isSelected: shot.id == selection.selectedID)
-                                // 单击必须独立识别。如果写成串联的 onTapGesture(count:2) + onTapGesture，
-                                // SwiftUI 会等满系统双击间隔（0.5s）确认不是双击才派发单击 —— 表现就是点一下要等半秒。
-                                .onTapGesture { selection.selectedID = shot.id }
-                                .simultaneousGesture(
-                                    TapGesture(count: 2).onEnded { selection.editing = shot }
-                                )
-                                .contextMenu {
-                                    Button("编辑标注") { selection.editing = shot }
-                                    Button("钉在桌面") { pin(shot) }
-                                    Button("复制图片") { copy(shot) }
-                                    Divider()
-                                    Button("在访达中显示") { reveal(shot) }
-                                    Button("删除", role: .destructive) { store.delete(shot) }
-                                }
+                            ShotCard(
+                                shot: shot,
+                                height: zoom * 0.68,
+                                isSelected: shot.id == selection.selectedID
+                            )
+                            .onTapGesture { selection.selectedID = shot.id }
+                            .simultaneousGesture(
+                                TapGesture(count: 2).onEnded { selection.editing = shot }
+                            )
+                            .contextMenu { contextMenu(for: shot) }
                         }
                     }
-                    .padding(14)
+                    .padding(18)
                 }
             }
-        }
-    }
 
-    private var searchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("搜索 App、窗口标题、网址或截图中的文字…", text: $store.searchText)
-                .textFieldStyle(.plain)
-                .onSubmit { store.reload() }
-                .onChange(of: store.searchText) { _, _ in store.reload() }
-            if !store.searchText.isEmpty {
-                Button {
-                    store.searchText = ""
-                    store.reload()
-                } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            categoryMenu
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    /// 分类筛选。选项按现有数据聚合，选中后与搜索条件叠加。
-    private var categoryMenu: some View {
-        Menu {
-            Button {
-                store.categoryFilter = nil
-                store.reload()
-            } label: {
-                if store.categoryFilter == nil {
-                    Label("全部", systemImage: "checkmark")
-                } else {
-                    Text("全部")
-                }
-            }
             Divider()
-            ForEach(store.categories(), id: \.name) { category in
-                Button {
-                    store.categoryFilter = category.name
-                    store.reload()
-                } label: {
-                    if store.categoryFilter == category.name {
-                        Label("\(category.name)（\(category.count)）", systemImage: "checkmark")
-                    } else {
-                        Text("\(category.name)（\(category.count)）")
-                    }
-                }
-            }
-        } label: {
-            Label(store.categoryFilter ?? "分类", systemImage: "tag")
-                .font(.caption)
+            bottomBar
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .foregroundStyle(store.categoryFilter == nil ? Color.secondary : Color.accentColor)
+        .background(.background)
     }
 
-    private var emptyLibrary: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
-            Text(store.searchText.isEmpty ? "还没有截图" : "没有匹配的结果")
-                .foregroundStyle(.secondary)
-            if store.searchText.isEmpty {
-                Text("按 ⌃⌘A 开始截图")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label(
+                store.searchText.isEmpty ? "还没有截图" : "没有匹配的结果",
+                systemImage: store.searchText.isEmpty
+                    ? "photo.on.rectangle.angled" : "magnifyingglass"
+            )
+        } description: {
+            Text(store.searchText.isEmpty ? "按 ⌃⌘A 开始截图" : "换个关键词，或清除侧边栏筛选")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var emptyDetail: some View {
-        Text("选择一张截图")
-            .foregroundStyle(.tertiary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.background.secondary)
+    private var bottomBar: some View {
+        HStack(spacing: 12) {
+            Text("\(store.shots.count) 张截图")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Image(systemName: "photo")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+            Slider(value: $zoom, in: 140...320)
+                .frame(width: 140)
+                .controlSize(.small)
+            Image(systemName: "photo")
+                .font(.system(size: 13))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(.bar)
     }
 
-    // MARK: 动作
+    @ViewBuilder
+    private func contextMenu(for shot: Shot) -> some View {
+        Button("编辑标注") { selection.editing = shot }
+        Button("钉在桌面") { pin(shot) }
+        Button("复制图片") { copy(shot) }
+        Divider()
+        Button("在访达中显示") {
+            SystemNavigator.revealInFinder(store.originalURL(for: shot))
+        }
+        Button("删除", role: .destructive) { store.delete(shot) }
+    }
 
     private func pin(_ shot: Shot) {
         guard let base = store.originalImage(for: shot) else { return }
@@ -172,44 +283,59 @@ struct GalleryView: View {
         let layers = store.latestRevision(for: shot)?.imageLayers ?? Layers()
         Clipboard.copy(LayerRenderer.render(base: base, layers: layers))
     }
-
-    private func reveal(_ shot: Shot) {
-        SystemNavigator.revealInFinder(store.originalURL(for: shot))
-    }
 }
 
-// MARK: - 缩略图
+// MARK: - 卡片
 
-private struct ShotThumbnail: View {
+private struct ShotCard: View {
     let shot: Shot
+    let height: CGFloat
     let isSelected: Bool
+
+    @State private var isHovering = false
 
     // 刻意不用 @ObservedObject 订阅 store —— 只需要一个文件路径，
     // 订阅了会导致任何 store 变化都重建全部缩略图。
     private var thumbnailURL: URL { ShotStore.shared.thumbnailURL(for: shot) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.background.secondary)
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.quaternary.opacity(0.5))
                 CachedImage(url: thumbnailURL, key: shot.sha256)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             }
-            .frame(height: 130)
+            .frame(height: height)
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.1),
-                                  lineWidth: isSelected ? 2.5 : 1)
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        isSelected
+                            ? Color.accentColor
+                            : Color.primary.opacity(isHovering ? 0.25 : 0.08),
+                        lineWidth: isSelected ? 2.5 : 1
+                    )
             }
+            .shadow(
+                color: .black.opacity(isHovering || isSelected ? 0.18 : 0.08),
+                radius: isHovering ? 7 : 3,
+                y: 2
+            )
+            .scaleEffect(isHovering && !isSelected ? 1.015 : 1)
+            .animation(.easeOut(duration: 0.12), value: isHovering)
+            .animation(.easeOut(duration: 0.12), value: isSelected)
 
-            Text(shot.appName ?? "未知 App")
-                .font(.caption).bold()
-                .lineLimit(1)
-            Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(shot.appName ?? "未知 App")
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 2)
         }
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -247,7 +373,6 @@ private struct ShotDetailPane: View {
             }
             .padding(16)
         }
-        .background(.background.secondary)
         .task(id: shot.id) {
             loadRevisions()
             category = shot.id.flatMap { store.attributeText(shotID: $0, key: AttributeKey.category) }
@@ -271,7 +396,8 @@ private struct ShotDetailPane: View {
 
     private var preview: some View {
         CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
     }
 
     private var actions: some View {
