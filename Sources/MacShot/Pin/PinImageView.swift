@@ -200,7 +200,13 @@ final class PinImageView: NSView {
         if annotation.tool != nil, imageRect.contains(point) {
             syncStrokeScale()
             annotation.beginDraw(at: canvasPoint(point))
-            needsDisplay = true
+            // 序号是点击即成层的工具：不进入拖拽也不进入文字编辑态，
+            // mouseUp 不会走 endDraw，所以在这里就落库。
+            if !annotation.isDrawing && !annotation.isEditingText {
+                commitAnnotationChange()
+            } else {
+                needsDisplay = true
+            }
             return
         }
 

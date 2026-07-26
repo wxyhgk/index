@@ -147,9 +147,36 @@ final class AnnotationState {
             return true
         }
 
+        // 序号也是点击落点，但不进入文字编辑态：直接落一个带编号的层，
+        // 一条 add 记录，撤销一次整层消失。
+        if tool == .counter {
+            let diameter = max(28 * strokeScale, fontSize * 1.4)
+            var layer = makeLayer(tool: .counter, from: point, to: point)
+            // 点击处是圆心，rect 存外接矩形。
+            layer.rect = LRect(CGRect(
+                x: point.x - diameter / 2,
+                y: point.y - diameter / 2,
+                width: diameter,
+                height: diameter
+            ))
+            layer.text = String(nextCounterNumber)
+            layers.append(layer)
+            record(.add(layer, preview: nil))
+            return true
+        }
+
         dragStart = point
         dragCurrent = point
         return true
+    }
+
+    /// 下一个序号：扫现有序号层取最大值 +1。
+    /// 刻意不在删除时重排 —— 删掉中间某个序号后，后续编号保持不变。
+    private var nextCounterNumber: Int {
+        (layers.elements
+            .filter { $0.kind == .counter }
+            .compactMap { Int($0.text) }
+            .max() ?? 0) + 1
     }
 
     @discardableResult
@@ -232,6 +259,10 @@ final class AnnotationState {
             case .line, .arrow:
                 let d = Self.distance(from: point, toSegment: layer.rect.start, layer.rect.end)
                 hit = d <= tolerance + layer.lineWidth / 2
+            case .counter:
+                // 徽章是圆的，按圆形区域命中，别让四个角白占位置。
+                let r = layer.rect.cg
+                hit = hypot(point.x - r.midX, point.y - r.midY) <= r.width / 2 + tolerance
             default:
                 hit = layer.rect.cg.standardized
                     .insetBy(dx: -tolerance, dy: -tolerance)

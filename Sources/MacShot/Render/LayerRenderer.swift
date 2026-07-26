@@ -62,7 +62,14 @@ enum LayerRenderer {
     /// 离屏导出和截图覆盖层的实时预览共用这一份代码 —— 所见即所得靠的就是这个，
     /// 而不是两套各自维护的绘制逻辑。
     static func drawVectors(_ layers: [Layer], in ctx: CGContext) {
-        for layer in layers where layer.kind != .pixelate && layer.kind != .crop {
+        // 聚光灯画在其余矢量层**之下**：所有聚光灯层合并成一次遮罩绘制，
+        // 多个聚光灯 = 多个亮区，标注本身不被压暗。
+        let spotlights = layers.filter { $0.kind == .spotlight }
+        if !spotlights.isEmpty {
+            drawSpotlightMask(spotlights, in: ctx)
+        }
+        for layer in layers
+        where layer.kind != .pixelate && layer.kind != .crop && layer.kind != .spotlight {
             draw(layer, in: ctx)
         }
     }
@@ -122,9 +129,68 @@ enum LayerRenderer {
         case .text:
             drawText(layer, in: ctx)
 
-        case .pixelate, .crop:
+        case .counter:
+            drawCounter(layer, in: ctx)
+
+        case .pixelate, .crop, .spotlight:
             break   // 已在别处处理
         }
+    }
+
+    /// 聚光灯遮罩：整个可绘制区域铺一层半透明黑，再把每个聚光灯矩形挖亮。
+    /// 用透明图层 + destinationOut 挖洞，而不是 even-odd —— 两个聚光灯重叠时
+    /// even-odd 会把交集重新填黑，挖洞则不管怎么叠都是亮的。
+    private static func drawSpotlightMask(_ spotlights: [Layer], in ctx: CGContext) {
+        // 上下文此刻已是图层坐标系；裁剪盒就是「当前可见的画布范围」：
+        // 离屏导出时是整张图，覆盖层预览时是选区。
+        let canvas = ctx.boundingBoxOfClipPath
+        guard !canvas.isEmpty else { return }
+
+        ctx.saveGState()
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        ctx.setFillColor(CGColor(gray: 0, alpha: 0.55))
+        ctx.fill(canvas)
+        ctx.setBlendMode(.destinationOut)
+        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+        for layer in spotlights {
+            let r = layer.rect.cg
+            if r.width >= 1, r.height >= 1 {
+                ctx.fill(r)
+            }
+        }
+        ctx.endTransparencyLayer()
+        ctx.restoreGState()
+    }
+
+    /// 序号徽章：实心圆 + 白色粗体数字居中。`rect` 是圆的外接矩形（左上原点），
+    /// 字号从圆径推导，两位数也放得下。
+    private static func drawCounter(_ layer: Layer, in ctx: CGContext) {
+        let rect = layer.rect.cg
+        guard rect.width >= 1, rect.height >= 1 else { return }
+
+        ctx.setFillColor(layer.color.cg)
+        ctx.fillEllipse(in: rect)
+
+        guard !layer.text.isEmpty else { return }
+        let font = NSFont.systemFont(ofSize: rect.height * 0.52, weight: .bold)
+        let attributed = NSAttributedString(string: layer.text, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ])
+        let line = CTLineCreateWithAttributedString(attributed)
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+
+        ctx.saveGState()
+        // 上下文当前是翻转的（左上原点），文字需要再翻一次才不会上下颠倒。
+        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        ctx.textPosition = CGPoint(
+            x: rect.midX - width / 2,
+            y: rect.midY + (ascent - descent) / 2
+        )
+        CTLineDraw(line, ctx)
+        ctx.restoreGState()
     }
 
     private static func drawArrow(from a: CGPoint, to b: CGPoint, layer: Layer, in ctx: CGContext) {
