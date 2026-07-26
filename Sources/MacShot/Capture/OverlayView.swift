@@ -32,6 +32,14 @@ final class OverlayView: NSView {
     private var cursor: CGPoint?
     private(set) var cursorSample: PixelSample?
 
+    /// ⌥ 是否按着。悬停窗口时按住 ⌥ = 整窗捕获模式（紫框 +「完整窗口」标签）。
+    private var optionHeld = false
+
+    /// 整窗捕获只在正式截图模式下开放 —— 录屏选区和滚动截图只要一个矩形。
+    private var allowsFullWindowCapture: Bool {
+        mode == .capture && !finishOnConfirm
+    }
+
     /// 只在「正在挑位置」时显示：确认之后画面已经定了，放大镜只会挡住工具条。
     private var magnifierPayload: (sample: PixelSample, cursor: CGPoint)? {
         guard AppSettings.shared.showMagnifier, !model.isInactive else { return nil }
@@ -94,6 +102,7 @@ final class OverlayView: NSView {
                 hoveredControlID: self.hoveredControlID,
                 isPrimaryScreen: self.isPrimaryScreen,
                 confirmHint: self.mode == .plain ? "⏎ 开始录制 · 双击选区 · ⎋ 取消" : nil,
+                fullWindowHint: self.optionHeld && self.allowsFullWindowCapture,
                 magnifier: self.magnifierPayload,
                 in: bounds,
                 ctx: ctx
@@ -186,6 +195,17 @@ final class OverlayView: NSView {
         }
     }
 
+    /// ⌥ 按下 / 松开要立刻反映到窗口高亮上（紫框 ↔ 蓝框），所以监听 flagsChanged。
+    override func flagsChanged(with event: NSEvent) {
+        let held = event.modifierFlags.contains(.option)
+        if held != optionHeld {
+            optionHeld = held
+            // 只有 idle 悬停窗口阶段有视觉差异；其余阶段重绘无害但没必要。
+            if model.phase == .idle { redraw() }
+        }
+        super.flagsChanged(with: event)
+    }
+
     /// AppKit 没有公开的斜向缩放光标，四角退回十字。
     private func cursor(for handle: SelectionModel.Handle?) -> NSCursor {
         switch handle {
@@ -211,6 +231,19 @@ final class OverlayView: NSView {
 
         let global = geometry.global(fromViewLocal: local)
         hoveredControlID = nil
+
+        // ⌥+单击窗口 = 整窗捕获（不含遮挡），不进标注阶段，直接完成。
+        if allowsFullWindowCapture, model.phase == .idle,
+           event.modifierFlags.contains(.option) {
+            // 这块屏可能因为别的屏正在操作而被标记 inactive（hover 会被吞掉）——
+            // 用户既然点到这里了，就把它激活。
+            model.setInactive(false)
+            model.hover(at: global)
+            if let window = model.hoveredWindow {
+                emitFullWindow(window)
+                return
+            }
+        }
 
         // plain 模式（录屏选区）：双击选区内部 = 确认返回。
         if mode == .plain, model.phase == .confirmed, event.clickCount == 2,
@@ -370,7 +403,25 @@ final class OverlayView: NSView {
             window: model.confirmedWindow,
             actionID: actionID,
             image: image,
-            layers: layers
+            layers: layers,
+            windowCaptureRequest: nil
+        ))
+    }
+
+    /// ⌥+单击的整窗捕获出口。`image` 放冻结画面上窗口可见部分的裁剪 ——
+    /// 协调器异步用 SCK 重拍完整窗口，只有窗口已经消失时才落回这份兜底。
+    private func emitFullWindow(_ window: WindowInfo) {
+        let visible = window.frame.intersection(model.bounds)
+        guard let fallback = model.snapshot.crop(globalRect: visible) else { return }
+
+        onFinish?(SelectionResult(
+            region: window.frame,
+            display: model.snapshot.display,
+            window: window,
+            actionID: ActionID.finish,
+            image: fallback,
+            layers: Layers<ImageSpace>(),
+            windowCaptureRequest: window
         ))
     }
 }

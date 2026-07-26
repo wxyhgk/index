@@ -54,28 +54,19 @@
 ### 2.1 入口：`CaptureSource` —— 像素怎么进来
 
 ```swift
-/// 一次捕获的原始产物。不绑定「一块显示器」这个概念，
-/// 所以延时、单窗口、滚动拼接都能用同一个类型表达。
-struct CaptureCanvas {
-    let id: CanvasID
-    /// 画面在 AppKit 全局坐标里的位置（点）
-    let bounds: CGRect
-    let scale: CGFloat
-    /// 物理像素位图
-    let image: CGImage
-}
-
 protocol CaptureSource {
     var id: String { get }
     var title: String { get }
-    /// 供选区层使用的画布。整屏截图返回每屏一张，单窗口返回一张。
-    func makeCanvases() async throws -> [CaptureCanvas]
+    /// 供选区层使用的冻结画面，每块显示器一张。
+    func makeSnapshots() async throws -> [DisplaySnapshot]
 }
 ```
 
 **规范**：新增捕获方式 = 新增一个 `CaptureSource` 实现并注册。不改 `CaptureCoordinator`。
 
-现状差距：`CaptureSource` 协议 + `CaptureSourceRegistry` 已落地（`Capture/CaptureSource.swift`），协调器按 id 取源、注册表可注入。剩余差距：`makeSnapshots()` 仍返回 `[DisplaySnapshot]`，而 `DisplaySnapshot` 强绑 `DisplayInfo`，把「捕获源必须是整块显示器」写进了类型 —— 换成上面的 `CaptureCanvas` 是这个契约的最后一步。注意：滚动截图最终**没有**走这条路（原因见阶段 4 注），`CaptureCanvas` 现在只剩单窗口截图这一个需求方。
+现状：协议 + `CaptureSourceRegistry` 已落地（`Capture/CaptureSource.swift`），协调器按 id 取源、注册表可注入。这一契约**已完成**。
+
+> **废弃的设想：`CaptureCanvas` 通用画布。** 这份文档曾计划把 `makeSnapshots()` 的产物换成「不绑定显示器的通用画布」，理由是延时、单窗口、滚动拼接都会需要它。三个功能全部落地之后，没有一个用上：延时截图产出的仍是整屏冻结画面；滚动截图完全绕开了快照机制（见阶段 4 注）；单窗口截图（⌥+单击）发生在**选区之后** —— 覆盖层照常用整屏冻结画面做悬停与兜底，确认后由 `WindowCapturer` 用 SCK 重拍不被遮挡的完整窗口。它的本质是「事后重拍」，一块预先冻结的画布根本表达不了它。选区层的画布事实上就是「一块显示器」，`DisplaySnapshot` 绑定 `DisplayInfo` 不是类型缺陷而是如实建模。结论：注册表已经兑现了「加捕获方式 = 加一个文件」，画布重构没有需求方，废弃。
 
 ### 2.2 中间：`CapturePostProcessor` —— 功能怎么挂上去
 
@@ -204,12 +195,16 @@ extension Layers where Space == CanvasSpace {
 | **1** | 出口契约：`CaptureAction` 协议 + 注册表 | 加动作 = 加一个文件 |
 | **2** | 中间契约：`CapturePostProcessor` + `ShotAttributeWriter` + `shotAttribute` 表 | 加派生能力 = 加一个文件，不动 schema |
 | **3** | 平台副作用收敛：`ImageExporter` / `Clipboard` / `WindowRegistry` / `ActivationPolicyManager` | 消除三份存盘面板与激活策略 bug |
-| **4** 🟡 部分完成 | 入口契约：`CaptureSource` + `CaptureCanvas` | 延时、单窗口、滚动截图 |
+| **4** ✅ 完成 | 入口契约：`CaptureSource` + 注册表（`CaptureCanvas` 设想废弃） | 延时、单窗口、滚动截图 |
 | **5** | 坐标系 phantom type；三套绘制合一；单一快捷键表 | 消除静默错位与所见非所得 |
 | **6** | 拆 `ShotStore`；DB 读写移出主线程 | 存储可测、可替换 |
 
 阶段 1 和 2 优先：它们直接消除已经存在的重复，而不是为假想需求做准备。
 
-阶段 4 现状：`CaptureSource` 协议、`CaptureSourceRegistry` 与两个实现（立即 / 延时）已落地，`CaptureCoordinator.begin(sourceID:)` 从注册表取源、注册表可注入。**未完成**的一半是 `CaptureCanvas`：`makeSnapshots` 仍返回 `[DisplaySnapshot]`（画布强绑显示器），单窗口截图所需的「不绑定显示器的通用画布」是下一步。
+阶段 4 结论（完成）：`CaptureSource` 协议、`CaptureSourceRegistry` 与两个实现（立即 / 延时）已落地，`CaptureCoordinator.begin(sourceID:)` 从注册表取源、注册表可注入。当初属于这一阶段的另一半 —— `CaptureCanvas` 通用画布 —— **废弃**，因为它设想的三个需求方最终没有一个用它：
 
-**滚动截图的落地方式与当初设想不同**：原以为滚动截图需要 `CaptureCanvas` 解锁，实际落地（`App/ScrollCaptureController` + `Capture/ScrollStitcher`）完全绕开了覆盖层的快照机制 —— 框选只借用覆盖层的简单模式（`finishOnConfirm`，松手即返回选区），之后定时采集屏幕区域、纯函数拼接、直接产出 CGImage 走 `ShotStore.save` 入库，全程不产生也不消费 `DisplaySnapshot` 之外的画布类型。既有 `[DisplaySnapshot]` 路径零改动，所以**没有**为滚动截图去做 CaptureCanvas 重构；该重构如今仅由单窗口截图驱动，做不做视其需求而定。
+- **滚动截图**（`App/ScrollCaptureController` + `Capture/ScrollStitcher`）完全绕开了覆盖层的快照机制：框选只借用覆盖层的简单模式（`finishOnConfirm`，松手即返回选区），之后定时采集屏幕区域、纯函数拼接、直接产出 CGImage 走 `ShotStore.save` 入库，不产生也不消费任何画布类型。
+- **单窗口截图**（⌥+单击，`Capture/WindowCapturer`）是选区**之后**的事后重拍：覆盖层照常用 `[DisplaySnapshot]` 做悬停高亮和失败兜底，确认后用 `SCContentFilter(desktopIndependentWindow:)` 重新捕获不被遮挡的完整窗口。整窗像素从不进入选区层，「不绑定显示器的画布」对它无从谈起。
+- **延时截图**产出的本来就是整屏冻结画面。
+
+教训被如实记下：为「假想需求」预留的抽象，等真需求落地时往往长得完全不一样。注册表（加捕获方式 = 加一个文件）是这一阶段真正兑现的价值；画布重构是过度设计。

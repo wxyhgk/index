@@ -11,6 +11,7 @@ enum OverlayRenderer {
         hoveredControlID: String?,
         isPrimaryScreen: Bool,
         confirmHint: String? = nil,
+        fullWindowHint: Bool = false,
         magnifier: (sample: PixelSample, cursor: CGPoint)?,
         in bounds: CGRect,
         ctx: CGContext
@@ -45,7 +46,10 @@ enum OverlayRenderer {
         drawAnnotations(annotation, clippedTo: local, in: bounds, ctx: ctx)
 
         let isWindowHint = model.isWindowHint
-        ctx.setStrokeColor((isWindowHint ? NSColor.systemBlue : NSColor.white).cgColor)
+        // 悬停窗口时按住 ⌥ = 整窗捕获（不含遮挡）：紫框区分于普通的蓝框窗口选择。
+        let isFullWindow = isWindowHint && fullWindowHint
+        let frameColor: NSColor = isFullWindow ? .systemPurple : (isWindowHint ? .systemBlue : .white)
+        ctx.setStrokeColor(frameColor.cgColor)
         ctx.setLineWidth(isWindowHint ? 3 : 1.5)
         ctx.stroke(local.insetBy(dx: -0.75, dy: -0.75))
 
@@ -53,6 +57,7 @@ enum OverlayRenderer {
             for: globalRect,
             near: local,
             ownerName: isWindowHint ? model.hoveredWindow?.ownerName : nil,
+            isFullWindow: isFullWindow,
             scale: model.snapshot.scale,
             in: bounds
         )
@@ -128,7 +133,7 @@ enum OverlayRenderer {
     // MARK: - 局部元素
 
     private static func drawHint(in bounds: CGRect) {
-        let text = "拖拽选区 · 单击窗口 · ESC 取消"
+        let text = "拖拽选区 · 单击窗口 · ⌥ 单击完整窗口 · ESC 取消"
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 15, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(0.85)
@@ -169,12 +174,16 @@ enum OverlayRenderer {
         for globalRect: CGRect,
         near local: CGRect,
         ownerName: String?,
+        isFullWindow: Bool,
         scale: CGFloat,
         in bounds: CGRect
     ) {
         var text = "\(Int(globalRect.width * scale)) × \(Int(globalRect.height * scale))"
         if let ownerName {
             text = "\(ownerName)  \(text)"
+        }
+        if isFullWindow {
+            text += " · 完整窗口"
         }
 
         let attrs: [NSAttributedString.Key: Any] = [
