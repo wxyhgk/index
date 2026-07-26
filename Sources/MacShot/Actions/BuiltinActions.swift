@@ -79,6 +79,8 @@ extension CaptureActionRegistry {
         registry.register(PinAction())
         registry.register(CopyAction())
         registry.register(SaveAction())
+        registry.register(CopyTextAction())
+        registry.register(BugReportAction())
         registry.register(CloseAction())
         registry.register(FinishAction())
     }

@@ -316,6 +316,8 @@ private struct GalleryGrid: View {
         Button("钉在桌面") { pin(shot) }
         Button("复制图片") { copy(shot) }
         Divider()
+        Button("出处") { openSource(of: shot) }
+            .disabled(shot.sourceURL == nil && shot.appBundleID == nil)
         Button("在访达中显示") {
             SystemNavigator.revealInFinder(store.originalURL(for: shot))
         }
@@ -336,6 +338,15 @@ private struct GalleryGrid: View {
         guard let base = store.originalImage(for: shot) else { return }
         let layers = store.latestRevision(for: shot)?.imageLayers ?? Layers()
         Clipboard.copy(LayerRenderer.render(base: base, layers: layers))
+    }
+
+    /// 回到出处：优先开网址（默认浏览器），否则激活来源 App。
+    private func openSource(of shot: Shot) {
+        if let source = shot.sourceURL, let url = URL(string: source) {
+            SystemNavigator.open(url: url)
+        } else if let bundleID = shot.appBundleID {
+            SystemNavigator.activateApp(bundleID: bundleID)
+        }
     }
 }
 
@@ -441,6 +452,7 @@ private struct ShotDetailPane: View {
             VStack(alignment: .leading, spacing: 16) {
                 preview
                 actions
+                metadataActions
                 Divider()
                 metadataSection
                 Divider()
@@ -529,6 +541,40 @@ private struct ShotDetailPane: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+    }
+
+    /// 第二行：消费元数据的动作。和第一行分开是因为 HStack 不折行。
+    private var metadataActions: some View {
+        HStack(spacing: 8) {
+            Button {
+                openSource()
+            } label: {
+                Label("出处", systemImage: "arrow.up.forward.app")
+            }
+            .disabled(shot.sourceURL == nil && shot.appBundleID == nil)
+            .help("回到截图来源：有网址开网址，否则激活来源 App")
+            Button {
+                Clipboard.copy(text: BugReport.markdown(
+                    shot: shot,
+                    pixelWidth: shot.pixelWidth,
+                    pixelHeight: shot.pixelHeight
+                ))
+            } label: {
+                Label("复制 Bug 报告", systemImage: "ladybug")
+            }
+            .help("把来源、环境等元数据整理成 Markdown 放进剪贴板")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    /// 回到出处：优先开网址（默认浏览器），否则激活来源 App。
+    private func openSource() {
+        if let source = shot.sourceURL, let url = URL(string: source) {
+            SystemNavigator.open(url: url)
+        } else if let bundleID = shot.appBundleID {
+            SystemNavigator.activateApp(bundleID: bundleID)
+        }
     }
 
     private var metadataSection: some View {

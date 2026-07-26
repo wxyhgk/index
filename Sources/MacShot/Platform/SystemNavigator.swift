@@ -8,6 +8,23 @@ enum SystemNavigator {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    /// 用系统默认程序（网址就是默认浏览器）打开一个 URL。
+    static func open(url: URL) {
+        NSWorkspace.shared.open(url)
+    }
+
+    /// 激活指定 bundleID 的 App，没在运行就启动它。
+    /// App 已被卸载时静默失败 —— 「回到出处」是尽力而为，不值得弹窗。
+    static func activateApp(bundleID: String) {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            NSLog("[MacShot] 找不到 App：\(bundleID)")
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+    }
+
     static func openScreenRecordingSettings() {
         guard let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
