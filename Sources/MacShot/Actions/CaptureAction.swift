@@ -23,7 +23,7 @@ protocol CaptureActionHost: AnyObject {
 struct CaptureContext {
     /// 未标注的原始像素。
     let base: CGImage
-    let layers: [Layer]
+    let layers: Layers<ImageSpace>
     /// 已入库的记录。钉图窗口在极少数情况下可能没有（比如未来的临时预览）。
     let shot: Shot?
     /// 截图在屏幕上的位置，钉图用来钉回原位。钉图窗口内发起的动作没有这个概念。

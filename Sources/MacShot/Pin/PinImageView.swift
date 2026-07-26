@@ -20,14 +20,14 @@ final class PinImageView: NSView {
 
     private let base: CGImage
     /// 截图时画的标注，只读地叠在底图上。
-    private let initialLayers: [Layer]
+    private let initialLayers: Layers<ImageSpace>
     /// 底图 + 已应用的马赛克。只在马赛克图层增减时重算，绝不逐帧跑 CoreImage。
     private var canvasImage: CGImage
 
     private var isHovering = false
     private var hoveredItem: ToolbarItem?
 
-    init(base: CGImage, layers: [Layer]) {
+    init(base: CGImage, layers: Layers<ImageSpace>) {
         self.base = base
         self.initialLayers = layers
         let pixelates = layers.filter { $0.kind == .pixelate }
@@ -41,8 +41,14 @@ final class PinImageView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// 钉图窗口的画布空间**就是**图片像素，所以投影是恒等变换。
+    /// 仍然显式走一遍，是为了让「画布空间」和「图像空间」在类型上始终分明。
+    private var newLayers: Layers<ImageSpace> {
+        annotation.layers.projected(onto: .zero, scale: 1)
+    }
+
     /// 截图时的标注 + 钉图后新加的，合起来就是当前这版的完整图层。
-    var allLayers: [Layer] { initialLayers + annotation.layers }
+    var allLayers: Layers<ImageSpace> { initialLayers + newLayers }
 
     // MARK: - 布局
 
@@ -271,7 +277,7 @@ final class PinImageView: NSView {
     }
 
     private func drawAnnotations(in ctx: CGContext) {
-        let layers = initialLayers + annotation.displayLayers
+        let layers = initialLayers + annotation.displayLayers.projected(onto: .zero, scale: 1)
         guard !layers.isEmpty else { return }
 
         let scale = displayScale

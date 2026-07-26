@@ -4,32 +4,6 @@ import AppKit
 /// 和鼠标事件的路由逻辑混在一起会互相干扰阅读。
 extension OverlayView {
 
-    private enum Key {
-        static let escape: UInt16 = 53
-        static let returnKey: UInt16 = 36
-        static let keypadEnter: UInt16 = 76
-        static let delete: UInt16 = 51
-        static let c: UInt16 = 8
-        static let s: UInt16 = 1
-        static let z: UInt16 = 6
-        static let left: UInt16 = 123
-        static let right: UInt16 = 124
-        static let down: UInt16 = 125
-        static let up: UInt16 = 126
-    }
-
-    /// 工具快捷键，和工具条上的顺序一致。
-    /// 值是双层可选：字典查得到表示「这个键绑了工具」，内层 nil 表示指针模式。
-    private static let toolShortcuts: [UInt16: AnnotationTool?] = [
-        9:  AnnotationTool?.none, // V 指针
-        15: .rect,               // R 矩形
-        31: .ellipse,            // O 椭圆
-        0:  .arrow,              // A 箭头
-        17: .text,               // T 文字
-        4:  .highlight,          // H 高亮
-        35: .pixelate            // P 马赛克
-    ]
-
     override func keyDown(with event: NSEvent) {
         // 正在输入文字时，除了 ESC / Return 之外的按键都送进文字图层。
         if annotation.isEditingText {
@@ -39,18 +13,18 @@ extension OverlayView {
 
         let cmd = event.modifierFlags.contains(.command)
 
-        if cmd, event.keyCode == Key.z {
+        if cmd, event.keyCode == KeyCode.z {
             redrawIfNeeded(annotation.undo())
             return
         }
 
-        if let tool = Self.toolShortcuts[event.keyCode], !cmd {
+        if let tool = AnnotationTool.shortcut(forKeyCode: event.keyCode), !cmd {
             selectTool(tool)
             return
         }
 
         switch event.keyCode {
-        case Key.escape:
+        case KeyCode.escape:
             // 先退出标注工具，再退出整个流程 —— 不要一下子把选区也丢了。
             if annotation.tool != nil {
                 annotation.tool = nil
@@ -58,16 +32,16 @@ extension OverlayView {
             } else {
                 cancel()
             }
-        case Key.returnKey, Key.keypadEnter:
+        case KeyCode.returnKey, KeyCode.keypadEnter:
             // 「确定」键。是否覆盖剪贴板由设置决定，见 AppSettings.EnterBehavior。
             // 刻意不绑到钉图：回车最容易在「文字输入刚结束又顺手按了一下」时误触发，
             // 而误触发复制最多覆盖剪贴板，误触发钉图却会凭空多出一个窗口。
             emit(AppSettings.shared.enterBehavior == .copyAndFinish ? ActionID.copy : ActionID.finish)
-        case Key.c where cmd:
+        case KeyCode.c where cmd:
             emit(ActionID.copy)
-        case Key.s where cmd:
+        case KeyCode.s where cmd:
             emit(ActionID.save)
-        case Key.left, Key.right, Key.down, Key.up:
+        case let code where KeyCode.arrows.contains(code):
             nudge(keyCode: event.keyCode, modifiers: event.modifierFlags)
         default:
             super.keyDown(with: event)
@@ -76,9 +50,9 @@ extension OverlayView {
 
     private func handleTextInput(_ event: NSEvent) {
         switch event.keyCode {
-        case Key.escape, Key.returnKey, Key.keypadEnter:
+        case KeyCode.escape, KeyCode.returnKey, KeyCode.keypadEnter:
             annotation.endTextEditing()
-        case Key.delete:
+        case KeyCode.delete:
             annotation.deleteBackward()
         default:
             guard let text = event.characters, !text.isEmpty,
@@ -101,10 +75,10 @@ extension OverlayView {
         var dx: CGFloat = 0
         var dy: CGFloat = 0
         switch keyCode {
-        case Key.left:  dx = -step
-        case Key.right: dx = step
-        case Key.down:  dy = -step
-        case Key.up:    dy = step
+        case KeyCode.left:  dx = -step
+        case KeyCode.right: dx = step
+        case KeyCode.down:  dy = -step
+        case KeyCode.up:    dy = step
         default: return
         }
         redrawIfNeeded(model.nudge(dx: dx, dy: dy, resizing: modifiers.contains(.option)))

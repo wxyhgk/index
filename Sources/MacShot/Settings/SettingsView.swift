@@ -91,12 +91,18 @@ private struct ShortcutSettings: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("截图时可用的按键") {
-                shortcutRow("V", "指针（调整选区）")
-                shortcutRow("R / A / T / P", "矩形 / 箭头 / 文字 / 马赛克")
-                shortcutRow("O / H", "椭圆 / 高亮")
+            Section("标注工具") {
+                // 从 AnnotationTool.shortcuts 生成 —— 此前这里是手写的第三份清单，
+                // 改了实际映射它不会跟着变。
+                ForEach(AnnotationTool.shortcuts, id: \.keyCode) { shortcut in
+                    shortcutRow(shortcut.label, shortcut.toolName)
+                }
+            }
+
+            Section("其它按键") {
                 shortcutRow("⌘Z", "撤销标注")
                 shortcutRow("⌘C / ⌘S", "复制 / 保存")
+                shortcutRow("⏎", "确定（行为见「通用」）")
                 shortcutRow("方向键", "微调选区，⇧ 十倍步进，⌥ 改尺寸")
                 shortcutRow("右键", "逐级退出：文字输入 → 工具 → 选区")
                 shortcutRow("⎋", "取消")

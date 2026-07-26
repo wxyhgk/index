@@ -6,15 +6,15 @@ enum AnnotationRenderer {
 
     /// - Important: 传入的上下文必须**已经**是「左上原点、Y 向下」，
     ///   并且单位与图层坐标一致。调用方负责设好 CTM。
-    static func draw(
-        _ layers: [Layer],
+    static func draw<Space: LayerSpace>(
+        _ layers: Layers<Space>,
         pixelatePreviews: [UUID: CGImage],
         in ctx: CGContext
     ) {
-        for layer in layers where layer.kind == .pixelate {
+        for layer in layers.elements where layer.kind == .pixelate {
             drawPixelate(layer, preview: pixelatePreviews[layer.id], in: ctx)
         }
-        LayerRenderer.drawVectors(layers, in: ctx)
+        LayerRenderer.drawVectors(layers.elements, in: ctx)
     }
 
     /// 马赛克贴片是图层提交时预先算好的；正在拖的那个还没有，先用灰块占位。

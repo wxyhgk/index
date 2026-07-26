@@ -177,6 +177,9 @@ extension Revision {
         }
     }
 
+    /// 数据库里存的一律是图像像素空间。
+    var imageLayers: Layers<ImageSpace> { Layers(persisted: layers) }
+
     static func make(shotID: Int64, parentID: Int64?, layers: [Layer], note: String?) -> Revision {
         var r = Revision(
             id: nil,

@@ -12,7 +12,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
     private var zoom: CGFloat = 1.0
     private var opacity: CGFloat = 1.0
     /// 上次落库的图层内容。比数量更可靠 —— 撤销一层再画一层，数量不变但内容变了。
-    private var savedLayers: [Layer]
+    private var savedLayers: Layers<ImageSpace>
 
     /// 全局持有，否则窗口会在 ARC 下立刻被回收。
     private static var living: Set<PinWindowController> = []
@@ -20,7 +20,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
     private var imageView: PinImageView? { window?.contentView as? PinImageView }
 
     /// 把一张图钉在它被截取的位置上。
-    static func pin(base: CGImage, layers: [Layer], shot: Shot?, at globalRegion: CGRect) {
+    static func pin(base: CGImage, layers: Layers<ImageSpace>, shot: Shot?, at globalRegion: CGRect) {
         let anchor: CGRect = (globalRegion.width >= 20 && globalRegion.height >= 20)
             ? globalRegion
             : .zero
@@ -29,7 +29,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         controller.window?.orderFrontRegardless()
     }
 
-    private init(base: CGImage, layers: [Layer], shot: Shot?, anchor: CGRect) {
+    private init(base: CGImage, layers: Layers<ImageSpace>, shot: Shot?, anchor: CGRect) {
         self.base = base
         self.shot = shot
         self.savedLayers = layers
@@ -100,7 +100,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         guard let action = CaptureActionRegistry.shared.action(id: actionID) else { return }
         let context = CaptureContext(
             base: base,
-            layers: imageView?.allLayers ?? [],
+            layers: imageView?.allLayers ?? Layers(),
             shot: shot,
             region: nil,
             host: self

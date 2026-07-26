@@ -125,7 +125,7 @@ struct GalleryView: View {
         guard let base = store.originalImage(for: shot) else { return }
         PinWindowController.pin(
             base: base,
-            layers: store.latestRevision(for: shot)?.layers ?? [],
+            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
             shot: shot,
             at: .zero
         )
@@ -133,7 +133,7 @@ struct GalleryView: View {
 
     private func copy(_ shot: Shot) {
         guard let base = store.originalImage(for: shot) else { return }
-        let layers = store.latestRevision(for: shot)?.layers ?? []
+        let layers = store.latestRevision(for: shot)?.imageLayers ?? Layers()
         ImageCodec.copyToPasteboard(LayerRenderer.render(base: base, layers: layers))
     }
 
@@ -244,7 +244,7 @@ private struct ShotDetailPane: View {
                 guard let base = store.originalImage(for: shot) else { return }
                 PinWindowController.pin(
                     base: base,
-                    layers: store.latestRevision(for: shot)?.layers ?? [],
+                    layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
                     shot: shot,
                     at: .zero
                 )
@@ -342,7 +342,7 @@ private struct ShotDetailPane: View {
         guard let base = store.originalImage(for: shot) else { return }
         let rendered = LayerRenderer.render(
             base: base,
-            layers: store.latestRevision(for: shot)?.layers ?? []
+            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers()
         )
         _ = try? ImageExporter.exportWithPanel(
             rendered,

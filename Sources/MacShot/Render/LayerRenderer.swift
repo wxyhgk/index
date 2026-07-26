@@ -9,7 +9,9 @@ enum LayerRenderer {
 
     private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
-    static func render(base: CGImage, layers: [Layer]) -> CGImage {
+    /// 只接受图像像素空间的图层 —— 画布空间的图层必须先经 `Layers.projected` 换算。
+    static func render(base: CGImage, layers: Layers<ImageSpace>) -> CGImage {
+        let layers = layers.elements
         guard !layers.isEmpty else { return base }
 
         // 1. 先把马赛克作用到底图上（它是像素级操作，必须在绘制矢量图层之前）。

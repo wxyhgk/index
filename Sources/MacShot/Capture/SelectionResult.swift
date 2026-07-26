@@ -15,5 +15,5 @@ struct SelectionResult {
     let image: CGImage
     /// 截图时画的标注，坐标已换算到裁剪图的像素空间。
     /// 原图保持干净，这些作为一条修订入库。
-    let layers: [Layer]
+    let layers: Layers<ImageSpace>
 }

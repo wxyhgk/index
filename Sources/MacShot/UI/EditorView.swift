@@ -13,7 +13,7 @@ struct EditorView: View {
 
     @State private var baseImage: CGImage?
     /// 底图 + 已应用的马赛克。拖拽过程中不重算，只在图层提交后刷新。
-    @State private var canvasImage: NSImage?
+    @State private var canvasImage: CGImage?
 
     @State private var layers: [Layer] = []
     @State private var selectedLayerID: UUID?
@@ -61,8 +61,9 @@ struct EditorView: View {
     private func refreshCanvasImage() {
         guard let base = baseImage else { return }
         let pixelates = layers.filter { $0.kind == .pixelate }
-        let image = pixelates.isEmpty ? base : LayerRenderer.render(base: base, layers: pixelates)
-        canvasImage = ImageCodec.nsImage(image)
+        canvasImage = pixelates.isEmpty
+            ? base
+            : LayerRenderer.render(base: base, layers: Layers(persisted: pixelates))
     }
 
     // MARK: - 工具栏
@@ -116,25 +117,16 @@ struct EditorView: View {
         GeometryReader { geo in
             let fitted = fittedRect(in: geo.size)
 
-            ZStack(alignment: .topLeading) {
-                if let canvasImage {
-                    Image(nsImage: canvasImage)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: fitted.width, height: fitted.height)
-                        .offset(x: fitted.minX, y: fitted.minY)
-                }
-
-                Canvas { ctx, _ in
-                    let scale = fitted.width / CGFloat(max(1, shot.pixelWidth))
-                    for layer in layers where layer.kind != .pixelate {
-                        drawPreview(layer, in: &ctx, origin: fitted.origin, scale: scale)
-                    }
-                    if let preview = pendingLayer() {
-                        drawPreview(preview, in: &ctx, origin: fitted.origin, scale: scale)
-                    }
-                }
-            }
+            LayerCanvas(
+                image: canvasImage ?? blankImage,
+                // 已提交的马赛克已经烤进底图了，不要再画一遍；正在拖的那个交给渲染器画灰块。
+                layers: Layers(persisted: layers.filter { $0.kind != .pixelate })
+                    + Layers(persisted: pendingLayer().map { [$0] } ?? []),
+                pixelatePreviews: [:],
+                selectedLayerID: selectedLayerID
+            )
+            .frame(width: fitted.width, height: fitted.height)
+            .offset(x: fitted.minX, y: fitted.minY)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 2)
@@ -146,6 +138,15 @@ struct EditorView: View {
             )
         }
         .padding(16)
+    }
+
+    /// 底图还没加载完时的占位，避免把画布做成可选类型污染整个视图树。
+    private var blankImage: CGImage {
+        CGContext(
+            data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!.makeImage()!
     }
 
     private func fittedRect(in size: CGSize) -> CGRect {
@@ -198,81 +199,6 @@ struct EditorView: View {
         layers.append(layer)
         selectedLayerID = layer.id
         if tool == .pixelate { refreshCanvasImage() }
-    }
-
-    // MARK: - 画布预览绘制（矢量图层的近似渲染，导出走 LayerRenderer）
-
-    private func drawPreview(_ layer: Layer, in ctx: inout GraphicsContext, origin: CGPoint, scale: CGFloat) {
-        func p(_ point: CGPoint) -> CGPoint {
-            CGPoint(x: origin.x + point.x * scale, y: origin.y + point.y * scale)
-        }
-        let r = layer.rect.cg
-        let viewRect = CGRect(
-            x: origin.x + r.minX * scale,
-            y: origin.y + r.minY * scale,
-            width: r.width * scale,
-            height: r.height * scale
-        )
-        let stroke = Color(
-            .sRGB, red: layer.color.r, green: layer.color.g, blue: layer.color.b,
-            opacity: layer.color.a
-        )
-        let width: CGFloat = max(0.5, CGFloat(layer.lineWidth) * scale)
-
-        switch layer.kind {
-        case .rect:
-            ctx.stroke(Path(viewRect), with: .color(stroke), lineWidth: width)
-        case .ellipse:
-            ctx.stroke(Path(ellipseIn: viewRect), with: .color(stroke), lineWidth: width)
-        case .highlight:
-            ctx.fill(Path(viewRect), with: .color(stroke))
-        case .line:
-            var path = Path()
-            path.move(to: p(layer.rect.start))
-            path.addLine(to: p(layer.rect.end))
-            ctx.stroke(path, with: .color(stroke), lineWidth: width)
-        case .arrow:
-            let a = p(layer.rect.start)
-            let b = p(layer.rect.end)
-            let angle: CGFloat = atan2(b.y - a.y, b.x - a.x)
-            let head: CGFloat = max(8, width * 4)
-            var shaft = Path()
-            shaft.move(to: a)
-            shaft.addLine(to: CGPoint(x: b.x - cos(angle) * head * 0.75, y: b.y - sin(angle) * head * 0.75))
-            ctx.stroke(shaft, with: .color(stroke), lineWidth: width)
-            var tip = Path()
-            let spread = CGFloat.pi / 7
-            tip.move(to: b)
-            tip.addLine(to: CGPoint(x: b.x - cos(angle - spread) * head, y: b.y - sin(angle - spread) * head))
-            tip.addLine(to: CGPoint(x: b.x - cos(angle + spread) * head, y: b.y - sin(angle + spread) * head))
-            tip.closeSubpath()
-            ctx.fill(tip, with: .color(stroke))
-        case .text:
-            guard !layer.text.isEmpty else { break }
-            ctx.draw(
-                Text(layer.text)
-                    .font(.system(size: layer.fontSize * scale, weight: .semibold))
-                    .foregroundColor(stroke),
-                at: CGPoint(x: viewRect.minX, y: viewRect.minY),
-                anchor: .topLeading
-            )
-        case .crop:
-            ctx.stroke(
-                Path(viewRect),
-                with: .color(.white),
-                style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
-            )
-        case .pixelate:
-            break
-        }
-
-        if layer.id == selectedLayerID {
-            ctx.stroke(
-                Path(viewRect.insetBy(dx: -3, dy: -3)),
-                with: .color(.accentColor),
-                style: StrokeStyle(lineWidth: 1, dash: [3, 3])
-            )
-        }
     }
 
     // MARK: - 右侧图层面板
@@ -390,11 +316,11 @@ struct EditorView: View {
 
     private func rendered() -> CGImage? {
         guard let base = baseImage else { return nil }
-        return LayerRenderer.render(base: base, layers: layers)
+        return LayerRenderer.render(base: base, layers: Layers(persisted: layers))
     }
 
     private func saveRevision() {
-        store.appendRevision(shot: shot, layers: layers, note: "编辑 \(layers.count) 层")
+        store.appendRevision(shot: shot, layers: Layers(persisted: layers), note: "编辑 \(layers.count) 层")
         revisions = store.revisions(for: shot)
         loadedRevisionIndex = revisions.count - 1
     }

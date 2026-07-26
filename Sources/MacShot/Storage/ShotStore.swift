@@ -203,7 +203,7 @@ final class ShotStore: ObservableObject {
     /// 图库编辑器和钉图窗口同时提交会拿到相同的 parentID，产生非预期的分叉，
     /// 而下游（latestRevision / EditorView）全部假设修订链是线性的。
     @discardableResult
-    func appendRevision(shot: Shot, layers: [Layer], note: String?) -> Revision? {
+    func appendRevision(shot: Shot, layers: Layers<ImageSpace>, note: String?) -> Revision? {
         guard let shotID = shot.id else { return nil }
 
         do {
@@ -216,7 +216,7 @@ final class ShotStore: ObservableObject {
                 var rev = Revision.make(
                     shotID: shotID,
                     parentID: parent?.id,
-                    layers: layers,
+                    layers: layers.persisted,
                     note: note
                 )
                 try rev.insert(db)

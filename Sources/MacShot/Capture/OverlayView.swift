@@ -288,6 +288,7 @@ final class OverlayView: NSView {
         else { return }
 
         annotation.endTextEditing()
+        // 画布空间（显示器局部、点）→ 图像像素。类型上强制走这一步。
         let layers = annotation.exportLayers(
             selection: geometry.annotationRect(fromGlobal: region),
             scale: model.snapshot.scale

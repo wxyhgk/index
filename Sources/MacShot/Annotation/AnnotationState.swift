@@ -27,7 +27,7 @@ final class AnnotationState {
     /// 这样不管画布怎么缩放，画出来的线在屏幕上都是同样粗细。
     var strokeScale: Double = 1
 
-    private(set) var layers: [Layer] = []
+    private(set) var layers = Layers<CanvasSpace>()
     private(set) var editingTextID: UUID?
 
     /// 每个马赛克图层对应一张预先算好的小图。
@@ -61,9 +61,9 @@ final class AnnotationState {
     }
 
     /// 交给渲染层的完整列表：已提交的 + 正在拖的；正在输入的文字带一个光标。
-    var displayLayers: [Layer] {
+    var displayLayers: Layers<CanvasSpace> {
         var result = layers
-        if let editingTextID, let index = result.firstIndex(where: { $0.id == editingTextID }) {
+        if let editingTextID, let index = result.firstIndex(id: editingTextID) {
             result[index].text += "|"
         }
         if let pendingLayer {
@@ -144,14 +144,13 @@ final class AnnotationState {
     // MARK: - 文字输入
 
     func insertText(_ text: String) {
-        guard let editingTextID,
-              let index = layers.firstIndex(where: { $0.id == editingTextID }) else { return }
+        guard let editingTextID, let index = layers.firstIndex(id: editingTextID) else { return }
         layers[index].text += text
     }
 
     func deleteBackward() {
         guard let editingTextID,
-              let index = layers.firstIndex(where: { $0.id == editingTextID }),
+              let index = layers.firstIndex(id: editingTextID),
               !layers[index].text.isEmpty else { return }
         layers[index].text.removeLast()
     }
@@ -160,8 +159,8 @@ final class AnnotationState {
     func endTextEditing() {
         guard let id = editingTextID else { return }
         editingTextID = nil
-        if let index = layers.firstIndex(where: { $0.id == id }), layers[index].text.isEmpty {
-            layers.remove(at: index)
+        if let index = layers.firstIndex(id: id), layers[index].text.isEmpty {
+            layers.remove(id: id)
         }
     }
 
@@ -170,28 +169,15 @@ final class AnnotationState {
     @discardableResult
     func undo() -> Bool {
         endTextEditing()
-        guard let last = layers.popLast() else { return false }
+        guard let last = layers.removeLast() else { return false }
         pixelatePreviews[last.id] = nil
         return true
     }
 
     // MARK: - 导出
 
-    /// 从「显示器局部、点」换算到「裁剪图的像素」。只有截图覆盖层需要 ——
-    /// 钉图窗口的画布空间本来就是图片像素。
-    /// - Parameter selection: 选区，显示器局部左上原点、点。
-    func exportLayers(selection: CGRect, scale: CGFloat) -> [Layer] {
-        layers.map { layer in
-            var copy = layer
-            copy.rect = LRect(
-                x: (layer.rect.x - selection.minX) * scale,
-                y: (layer.rect.y - selection.minY) * scale,
-                w: layer.rect.w * scale,
-                h: layer.rect.h * scale
-            )
-            copy.lineWidth = layer.lineWidth * scale
-            copy.fontSize = layer.fontSize * scale
-            return copy
-        }
+    /// 换算到图像像素空间。桥的实现在 `Layers.projected`，这里只是转发。
+    func exportLayers(selection: CGRect, scale: CGFloat) -> Layers<ImageSpace> {
+        layers.projected(onto: selection, scale: scale)
     }
 }
