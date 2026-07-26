@@ -99,6 +99,52 @@ struct WatermarkSpec: Codable, Equatable {
     }
 }
 
+/// 外壳层（frame）的参数。`Layer.text` 存 JSON：
+/// `{"style":"macos"|"browser","title":"…","url":"…"}`。
+/// backdrop 只有一个预设名所以存 rawValue 字符串就够；壳有三个字段，用 JSON。
+/// 字段全部可缺省，逐字段容错：解析失败退回 macos 空壳，老数据/坏数据都不至于炸。
+struct FrameSpec: Codable, Equatable {
+    enum Style: String, Codable, CaseIterable {
+        case macos
+        case browser
+
+        var displayName: String {
+            switch self {
+            case .macos: return "macOS 窗口"
+            case .browser: return "浏览器"
+            }
+        }
+    }
+
+    var style: Style = .macos
+    var title: String = ""
+    var url: String = ""
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        style = (try? container.decode(Style.self, forKey: .style)) ?? .macos
+        title = (try? container.decode(String.self, forKey: .title)) ?? ""
+        url = (try? container.decode(String.self, forKey: .url)) ?? ""
+    }
+
+    /// 解析 `Layer.text`。任何失败（空串、坏 JSON、未知 style）都退回 macos 空壳。
+    static func parse(_ json: String) -> FrameSpec {
+        guard let data = json.data(using: .utf8),
+              let spec = try? JSONDecoder().decode(FrameSpec.self, from: data)
+        else { return FrameSpec() }
+        return spec
+    }
+
+    var json: String {
+        guard let data = try? JSONEncoder().encode(self),
+              let string = String(data: data, encoding: .utf8)
+        else { return "{}" }
+        return string
+    }
+}
+
 /// 把「原图 + 图层数组」渲染成一张图。
 /// 原图始终只读；这里产出的是临时结果，只在预览和导出时使用。
 enum LayerRenderer {
@@ -156,7 +202,14 @@ enum LayerRenderer {
             result = applyWatermark(to: result, layer: watermark) ?? result
         }
 
-        // 4. 美化在最后套上：先裁出内容，再把内容垫到背景上。
+        // 4. 带壳在水印之后套上：内容上方接标题栏（浏览器壳再加地址栏）。
+        //    壳属于内容的一部分，所以排在美化之前 —— 叠加时壳在内、背景在外，
+        //    backdrop 连壳一起垫底。它同样只存在于导出路径。
+        if let frame = layers.last(where: { $0.kind == .frame }) {
+            result = applyFrame(to: result, layer: frame) ?? result
+        }
+
+        // 5. 美化最后套上：先裁出内容（可能已带壳），再把内容垫到背景上。
         //    它只存在于导出路径 —— 预览（AnnotationRenderer / LayerCanvas）跳过
         //    backdrop，编辑时画布尺寸不变。
         if let backdrop = layers.last(where: { $0.kind == .backdrop }) {
@@ -360,6 +413,249 @@ enum LayerRenderer {
         )
     }
 
+    // MARK: - 带壳（macOS 窗口壳 / 浏览器壳）
+
+    /// 把内容套进窗口壳：上方接一条标题栏（红绿灯 + 居中标题），浏览器壳在
+    /// 标题栏下再加一条地址栏（胶囊 + 锁 + URL），整体圆角裁剪。
+    /// 输出画布宽度不变，高度 = 内容 + 壳。
+    ///
+    /// 壳的所有结构尺寸乘 `layer.lineWidth` —— 创建时烤进去的像素倍率
+    /// （见 `AnnotationState.toggleFrame`），2x 图上的壳和 1x 图视觉大小一致，
+    /// 线条落在整像素上，Retina 下不发虚。纯矢量绘制，零素材文件；只做浅色外观。
+    private static func applyFrame(to image: CGImage, layer: Layer) -> CGImage? {
+        let scale = layer.lineWidth > 0 ? layer.lineWidth : 1
+        let spec = FrameSpec.parse(layer.text)
+
+        let titleBarHeight = 28 * scale
+        let urlBarHeight = spec.style == .browser ? 32 * scale : 0
+        let chromeHeight = (titleBarHeight + urlBarHeight).rounded()
+
+        let width = image.width
+        let height = image.height + Int(chromeHeight)
+
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        // 整体圆角裁剪。上下文是 CG 默认的左下原点：内容在下、壳在上。
+        let canvas = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        let radius = min(10 * scale, canvas.width / 2, canvas.height / 2)
+        ctx.addPath(CGPath(
+            roundedRect: canvas, cornerWidth: radius, cornerHeight: radius, transform: nil
+        ))
+        ctx.clip()
+
+        // 内容铺在底部。
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(
+            x: 0, y: 0, width: CGFloat(width), height: CGFloat(image.height)
+        ))
+
+        // 标题栏：浅灰垂直渐变（上亮下暗）+ 底边发丝分隔线。
+        let titleBar = CGRect(
+            x: 0, y: canvas.maxY - titleBarHeight,
+            width: canvas.width, height: titleBarHeight
+        )
+        drawFrameBar(in: ctx, rect: titleBar, topGray: 0.96, bottomGray: 0.90, hairline: scale)
+
+        // 左侧红黄绿三个圆点（macOS 原生配色）。
+        let diameter = 12 * scale
+        let gap = 8 * scale
+        var lightX = 12 * scale + diameter / 2
+        for color in [
+            CGColor(srgbRed: 1.00, green: 0.37, blue: 0.34, alpha: 1),
+            CGColor(srgbRed: 1.00, green: 0.74, blue: 0.18, alpha: 1),
+            CGColor(srgbRed: 0.16, green: 0.78, blue: 0.25, alpha: 1)
+        ] {
+            ctx.setFillColor(color)
+            ctx.fillEllipse(in: CGRect(
+                x: lightX - diameter / 2,
+                y: titleBar.midY - diameter / 2,
+                width: diameter,
+                height: diameter
+            ))
+            lightX += diameter + gap
+        }
+
+        // 标题居中（有 title 才画）。左右都躲开红绿灯的宽度，超长尾部省略。
+        if !spec.title.isEmpty {
+            let inset = 12 * scale + (diameter + gap) * 3 + 8 * scale
+            drawFrameText(
+                spec.title,
+                font: NSFont.systemFont(ofSize: 13 * scale, weight: .semibold),
+                gray: 0.30,
+                truncation: .end,
+                maxWidth: titleBar.width - inset * 2,
+                centerX: titleBar.midX,
+                leftX: 0,
+                midY: titleBar.midY,
+                in: ctx
+            )
+        }
+
+        // 浏览器壳：标题栏下一条地址栏 —— 圆角胶囊底 + 小锁 + URL。
+        // 无 URL 时画空胶囊（覆盖层开壳时 URL 还没异步回填回来是常态）。
+        if spec.style == .browser {
+            let urlBar = CGRect(
+                x: 0, y: titleBar.minY - urlBarHeight,
+                width: canvas.width, height: urlBarHeight
+            )
+            drawFrameBar(in: ctx, rect: urlBar, topGray: 0.93, bottomGray: 0.93, hairline: scale)
+
+            let capsule = urlBar.insetBy(dx: 12 * scale, dy: 5 * scale)
+            let capsulePath = CGPath(
+                roundedRect: capsule,
+                cornerWidth: capsule.height / 2,
+                cornerHeight: capsule.height / 2,
+                transform: nil
+            )
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            ctx.addPath(capsulePath)
+            ctx.fillPath()
+            ctx.setStrokeColor(CGColor(gray: 0.82, alpha: 1))
+            ctx.setLineWidth(scale)
+            ctx.addPath(capsulePath)
+            ctx.strokePath()
+
+            if !spec.url.isEmpty {
+                let lockSize = 10 * scale
+                let lockX = capsule.minX + 10 * scale
+                drawLock(in: ctx, leftX: lockX, midY: capsule.midY, size: lockSize, scale: scale)
+                let textLeft = lockX + lockSize + 6 * scale
+                drawFrameText(
+                    spec.url,
+                    font: NSFont.systemFont(ofSize: 12 * scale, weight: .regular),
+                    gray: 0.35,
+                    truncation: .middle,
+                    maxWidth: capsule.maxX - 10 * scale - textLeft,
+                    centerX: nil,
+                    leftX: textLeft,
+                    midY: capsule.midY,
+                    in: ctx
+                )
+            }
+        }
+
+        return ctx.makeImage()
+    }
+
+    /// 壳的一条横栏：浅灰垂直渐变（同灰则纯色）+ 压在底边的发丝分隔线。
+    private static func drawFrameBar(
+        in ctx: CGContext,
+        rect: CGRect,
+        topGray: CGFloat,
+        bottomGray: CGFloat,
+        hairline: CGFloat
+    ) {
+        ctx.saveGState()
+        if topGray == bottomGray {
+            ctx.setFillColor(CGColor(gray: topGray, alpha: 1))
+            ctx.fill(rect)
+        } else if let gradient = CGGradient(
+            colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+            colors: [
+                CGColor(gray: topGray, alpha: 1),
+                CGColor(gray: bottomGray, alpha: 1)
+            ] as CFArray,
+            locations: [0, 1]
+        ) {
+            ctx.clip(to: rect)
+            ctx.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: rect.midX, y: rect.maxY),
+                end: CGPoint(x: rect.midX, y: rect.minY),
+                options: []
+            )
+        }
+        ctx.restoreGState()
+
+        ctx.setFillColor(CGColor(gray: 0.78, alpha: 1))
+        ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: hairline))
+    }
+
+    /// 壳里的一行灰字：先按 maxWidth 截断（标题尾部省略、URL 中间省略），
+    /// `centerX` 非 nil 时居中排，否则从 `leftX` 起排。
+    /// 上下文是左下原点（壳的画布**没有**翻转），CT 按 identity 直接画。
+    private static func drawFrameText(
+        _ text: String,
+        font: NSFont,
+        gray: CGFloat,
+        truncation: CTLineTruncationType,
+        maxWidth: CGFloat,
+        centerX: CGFloat?,
+        leftX: CGFloat,
+        midY: CGFloat,
+        in ctx: CGContext
+    ) {
+        guard maxWidth > font.pointSize, !text.isEmpty else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor(white: gray, alpha: 1)
+        ]
+        var line = CTLineCreateWithAttributedString(
+            NSAttributedString(string: text, attributes: attributes)
+        )
+        if CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)) > maxWidth {
+            let token = CTLineCreateWithAttributedString(
+                NSAttributedString(string: "…", attributes: attributes)
+            )
+            line = CTLineCreateTruncatedLine(line, Double(maxWidth), truncation, token) ?? line
+        }
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+
+        ctx.saveGState()
+        ctx.textMatrix = .identity
+        ctx.textPosition = CGPoint(
+            x: centerX.map { $0 - width / 2 } ?? leftX,
+            y: midY - (ascent - descent) / 2
+        )
+        CTLineDraw(line, ctx)
+        ctx.restoreGState()
+    }
+
+    /// 简笔小锁：下半是圆角方块锁体，上半是半圆锁梁。纯矢量，不描 SF Symbol。
+    /// `leftX` 是锁体左缘、`midY` 是整个字形的垂直中心、`size` 是总高。
+    private static func drawLock(
+        in ctx: CGContext,
+        leftX: CGFloat,
+        midY: CGFloat,
+        size: CGFloat,
+        scale: CGFloat
+    ) {
+        let gray = CGColor(gray: 0.45, alpha: 1)
+        let bodyWidth = size * 0.95
+        let bodyHeight = size * 0.58
+        let body = CGRect(x: leftX, y: midY - size / 2, width: bodyWidth, height: bodyHeight)
+
+        ctx.saveGState()
+        ctx.setFillColor(gray)
+        ctx.addPath(CGPath(
+            roundedRect: body, cornerWidth: 1.5 * scale, cornerHeight: 1.5 * scale, transform: nil
+        ))
+        ctx.fillPath()
+
+        // 锁梁：从锁体顶边伸出的半圆（左下原点，逆时针 0→π 经过顶部）。
+        ctx.setStrokeColor(gray)
+        ctx.setLineWidth(1.2 * scale)
+        ctx.addArc(
+            center: CGPoint(x: body.midX, y: body.maxY),
+            radius: bodyWidth * 0.32,
+            startAngle: 0,
+            endAngle: .pi,
+            clockwise: false
+        )
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
     /// 在**已经是左上原点、Y 向下**的上下文里绘制矢量图层。
     ///
     /// 离屏导出和截图覆盖层的实时预览共用这一份代码 —— 所见即所得靠的就是这个，
@@ -373,7 +669,7 @@ enum LayerRenderer {
         }
         for layer in layers where layer.kind != .pixelate && layer.kind != .crop
             && layer.kind != .spotlight && layer.kind != .backdrop
-            && layer.kind != .watermark {
+            && layer.kind != .watermark && layer.kind != .frame {
             draw(layer, in: ctx)
         }
     }
@@ -439,7 +735,7 @@ enum LayerRenderer {
         case .dimension:
             drawDimension(layer, in: ctx)
 
-        case .pixelate, .crop, .spotlight, .backdrop, .watermark:
+        case .pixelate, .crop, .spotlight, .backdrop, .watermark, .frame:
             break   // 已在别处处理
         }
     }

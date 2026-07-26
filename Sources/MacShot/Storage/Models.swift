@@ -71,6 +71,13 @@ struct Layer: Codable, Identifiable, Equatable {
         /// 同时只保留一层（见 `AnnotationState.toggleWatermark`）；在裁剪之后、
         /// 美化之前套用，预览**会**画 —— 它影响构图判断，和 backdrop 不同。
         case watermark
+        /// 外壳（带壳截图）：把内容套进 macOS 窗口壳 / 浏览器壳 ——
+        /// 上方接标题栏（红绿灯 + 标题），浏览器壳再加一条地址栏，整体圆角裁剪。
+        /// 复用现有字段避免动 Codable：`text` = 参数 JSON（见 `FrameSpec`：
+        /// style / title / url）、`lineWidth` = 创建时烤入的像素倍率（壳的所有
+        /// 结构尺寸按它缩放，Retina 下不发虚）。
+        /// 同时只保留一层（见 `AnnotationState.toggleFrame`），只影响导出，不参与画布预览。
+        case frame
 
         var displayName: String {
             switch self {
@@ -87,6 +94,7 @@ struct Layer: Codable, Identifiable, Equatable {
             case .dimension: return "测量"
             case .backdrop: return "美化"
             case .watermark: return "水印"
+            case .frame: return "外壳"
             }
         }
 
@@ -105,6 +113,7 @@ struct Layer: Codable, Identifiable, Equatable {
             case .dimension: return "ruler"
             case .backdrop: return "sparkles.rectangle.stack"
             case .watermark: return "signature"
+            case .frame: return "macwindow"
             }
         }
     }

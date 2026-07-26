@@ -290,11 +290,11 @@ final class AnnotationState {
 
     /// 命中测试（画布空间），从最上层往下找。
     /// 线段类按点到线段的距离判定，其余按外接矩形（都带一圈容差，方便点中细线）。
-    /// 美化层和水印层没有画布上的形体，不参与命中，只能通过开关/菜单操作。
+    /// 美化 / 水印 / 外壳层没有画布上的形体，不参与命中，只能通过开关/菜单操作。
     func layer(at point: CGPoint) -> UUID? {
         let tolerance = 8 * strokeScale
         for layer in layers.elements.reversed()
-        where layer.kind != .backdrop && layer.kind != .watermark {
+        where layer.kind != .backdrop && layer.kind != .watermark && layer.kind != .frame {
             let hit: Bool
             switch layer.kind {
             case .line, .arrow:
@@ -512,6 +512,72 @@ final class AnnotationState {
         let before = layers[index]
         spec.mode = mode
         layers[index].text = spec.encoded
+        record(.style(id: before.id, before: before, after: layers[index]))
+        return true
+    }
+
+    // MARK: - 外壳层（frame，带壳截图）
+
+    /// 壳结构尺寸（标题栏高、红绿灯直径、圆角）的倍率，开壳时烤进 `lineWidth`。
+    /// 语义是「每**视觉点**对应多少画布单位」，投影到图像像素时随 scale 一起放大：
+    ///   · 覆盖层画布是显示器的点 —— 保持 1，投影乘 snapshot.scale 后正好是 Retina 倍率
+    ///   · 编辑器/钉图画布已是图像像素（投影恒等）—— 注入 shot.scale，
+    ///     2x 图上的壳和 1x 图视觉大小一致，线条落在整像素上不发虚
+    var frameScale: Double = 1
+
+    /// 开壳时自动烤进参数 JSON 的真实元数据。竞品的带壳都是空壳 ——
+    /// 「标题栏是真实窗口标题、地址栏是真实网址」是元数据库独有的卖点。
+    ///   · 覆盖层：确认选区时的窗口归因（URL 是落库后异步回填的，此刻还没有 → 留空）
+    ///   · 编辑器/钉图：shot.windowTitle / shot.sourceURL
+    var frameDefaultTitle: String?
+    var frameDefaultURL: String?
+
+    /// 当前是否已套壳。工具条开关的选中态看它。
+    var hasFrame: Bool {
+        layers.elements.contains { $0.kind == .frame }
+    }
+
+    /// 当前壳的样式；未开启时为 nil。
+    var frameStyle: FrameSpec.Style? {
+        layers.elements.last { $0.kind == .frame }.map { FrameSpec.parse($0.text).style }
+    }
+
+    /// 套壳开关。和 backdrop 同一套语义：只有加/删两种操作，同时只保留一层，
+    /// 都走 `record` 保持可撤销。默认 macos 壳，标题/网址从元数据自动填。
+    @discardableResult
+    func toggleFrame() -> Bool {
+        endTextEditing()
+        if hasFrame {
+            while let index = layers.elements.firstIndex(where: { $0.kind == .frame }) {
+                let old = layers[index]
+                record(.remove(old, index: index, preview: nil))
+                layers.remove(id: old.id)
+                if selectedID == old.id { selectedID = nil }
+            }
+            return false
+        }
+        var layer = Layer(kind: .frame, rect: LRect(x: 0, y: 0, w: 0, h: 0))
+        layer.lineWidth = frameScale    // 复用字段：壳的结构尺寸倍率（见 frameScale）
+        var spec = FrameSpec()
+        spec.title = frameDefaultTitle ?? ""
+        spec.url = frameDefaultURL ?? ""
+        layer.text = spec.json
+        layers.append(layer)
+        record(.add(layer, preview: nil))
+        return true
+    }
+
+    /// 切换壳样式（macOS 窗口 / 浏览器），记一条 style 撤销记录。未开壳时不做事。
+    @discardableResult
+    func setFrameStyle(_ style: FrameSpec.Style) -> Bool {
+        guard let index = layers.elements.firstIndex(where: { $0.kind == .frame }) else {
+            return false
+        }
+        var spec = FrameSpec.parse(layers[index].text)
+        guard spec.style != style else { return false }
+        spec.style = style
+        let before = layers[index]
+        layers[index].text = spec.json
         record(.style(id: before.id, before: before, after: layers[index]))
         return true
     }

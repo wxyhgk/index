@@ -71,6 +71,11 @@ struct EditorView: View {
         baseImage = base
         // 编辑器画布就是图像像素；水印字号按图宽 3% 烤入时直接取原图宽。
         annotation.imagePixelWidthProvider = { Double(base.width) }
+        // 套壳（frame）的倍率与元数据：编辑器画布就是图像像素，壳的尺寸按 shot.scale
+        // 缩放；标题/网址来自采集时的真实归因 —— 竞品的壳是空的，这里是真的。
+        annotation.frameScale = max(1, shot.scale)
+        annotation.frameDefaultTitle = shot.windowTitle
+        annotation.frameDefaultURL = shot.sourceURL
         revisions = store.revisions(for: shot)
         loadRevision(layers: revisions.last?.layers ?? [], index: max(0, revisions.count - 1))
     }
@@ -151,16 +156,21 @@ struct EditorView: View {
 
             Divider().frame(height: 18)
 
-            backdropToggle
-
-            if annotation.hasBackdrop {
-                backdropPresetMenu
-            }
-
-            watermarkToggle
-
-            if annotation.hasWatermark {
-                watermarkModeMenu
+            // 三组输出选项包进 Group：HStack 的 ViewBuilder 最多 10 个子视图，
+            // 开关 + 条件菜单已经把名额吃满了。
+            Group {
+                backdropToggle
+                if annotation.hasBackdrop {
+                    backdropPresetMenu
+                }
+                watermarkToggle
+                if annotation.hasWatermark {
+                    watermarkModeMenu
+                }
+                frameToggle
+                if annotation.hasFrame {
+                    frameStyleMenu
+                }
             }
 
             Spacer()
@@ -331,6 +341,49 @@ struct EditorView: View {
         .menuStyle(.borderlessButton)
         .frame(width: 40)
         .help("水印位置")
+    }
+
+    /// 套壳开关。frame 只影响导出/复制/保存的成品，画布预览刻意不变（同美化的取舍）。
+    /// 开壳时把 shot 的真实窗口标题 / 网址烤进壳的参数 JSON（见 `load`）。
+    private var frameToggle: some View {
+        let on = annotation.hasFrame
+        return Button {
+            annotation.toggleFrame()
+            annotationTick += 1
+        } label: {
+            Image(systemName: "macwindow").frame(width: 26, height: 22)
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(on ? Color.accentColor.opacity(0.22) : .clear)
+        )
+        .foregroundStyle(on ? Color.accentColor : .primary)
+        .help("带壳截图（导出时套 macOS 窗口 / 浏览器壳，标题和网址是真实元数据）")
+    }
+
+    /// 壳样式切换（macOS 窗口 / 浏览器）。选中即改写壳的参数 JSON，
+    /// 作为一条可撤销的 style 记录。
+    private var frameStyleMenu: some View {
+        Menu {
+            ForEach(FrameSpec.Style.allCases, id: \.rawValue) { style in
+                Button {
+                    annotation.setFrameStyle(style)
+                    annotationTick += 1
+                } label: {
+                    if annotation.frameStyle == style {
+                        Label(style.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(style.displayName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "menubar.dock.rectangle").frame(width: 26, height: 22)
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: 40)
+        .help("壳样式")
     }
 
     private func selectTool(_ tool: AnnotationTool?) {

@@ -229,6 +229,10 @@ final class OverlayView: NSView {
         // 工具条命中优先
         if model.phase == .confirmed,
            let control = slots.first(where: { $0.control != nil && $0.frame.contains(local) })?.control {
+            // 套壳（frame）要用的真实元数据：窗口归因在确认选区时已定，激活前取一次
+            // 最新值；浏览器 URL 是落库后异步回填的，截图这一刻还没有 → 留空，
+            // 浏览器壳的地址栏画成空胶囊。
+            annotation.frameDefaultTitle = model.confirmedWindow?.title
             control.activate(toolbarContext)
             redraw()
             return
