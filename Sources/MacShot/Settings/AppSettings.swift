@@ -54,6 +54,7 @@ final class AppSettings: ObservableObject {
 
     private enum Keys {
         static let copyToClipboard = "copyToClipboard"
+        static let showShelfCard = "showShelfCard"
         static let runOCR = "runOCR"
         static let autoClassify = "autoClassify"
         static let detectSensitive = "detectSensitive"
@@ -87,6 +88,11 @@ final class AppSettings: ObservableObject {
 
     @Published var copyToClipboard: Bool {
         didSet { defaults.set(copyToClipboard, forKey: Keys.copyToClipboard) }
+    }
+
+    /// 截图后在屏幕右下角显示暂存卡片（可直接拖出成文件）。钉图动作不弹。
+    @Published var showShelfCard: Bool {
+        didSet { defaults.set(showShelfCard, forKey: Keys.showShelfCard) }
     }
 
     @Published var enterBehavior: EnterBehavior {
@@ -249,6 +255,7 @@ final class AppSettings: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [
             Keys.copyToClipboard: true,
+            Keys.showShelfCard: true,
             Keys.runOCR: true,
             Keys.autoClassify: true,
             Keys.detectSensitive: true,
@@ -272,6 +279,7 @@ final class AppSettings: ObservableObject {
         ])
 
         copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
+        showShelfCard = defaults.bool(forKey: Keys.showShelfCard)
         runOCR = defaults.bool(forKey: Keys.runOCR)
         autoClassify = defaults.bool(forKey: Keys.autoClassify)
         detectSensitive = defaults.bool(forKey: Keys.detectSensitive)

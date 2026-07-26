@@ -15,6 +15,18 @@ final class PinImageView: NSView {
     var onAnnotationsChanged: (() -> Void)?
     /// 工具条行数变化时通知控制器调整窗口高度。
     var onToolbarHeightChanged: (() -> Void)?
+    /// ⌘T 切换鼠标穿透。
+    var onTogglePassthrough: (() -> Void)?
+
+    /// 穿透模式：窗口收不到鼠标，边框改虚线提示「现在点不到我」，工具条也不画。
+    var isPassthrough = false {
+        didSet {
+            // 穿透后 mouseExited 不会再来，手动清掉悬停态。
+            isHovering = false
+            hoveredControlID = nil
+            needsDisplay = true
+        }
+    }
 
     let annotation = AnnotationState()
 
@@ -298,6 +310,20 @@ final class PinImageView: NSView {
         NSColor.white.withAlphaComponent(0.25).setStroke()
         clip.lineWidth = 1
         clip.stroke()
+
+        // 穿透中：虚线边框代替工具条 —— 反正也点不到，画出来只会误导。
+        if isPassthrough {
+            let dashed = NSBezierPath(
+                roundedRect: frame.insetBy(dx: 1.5, dy: 1.5),
+                xRadius: 6,
+                yRadius: 6
+            )
+            dashed.setLineDash([6, 4], count: 2, phase: 0)
+            dashed.lineWidth = 2
+            NSColor.systemOrange.setStroke()
+            dashed.stroke()
+            return
+        }
 
         ctx.saveGState()
         ctx.setAlpha(toolbarAlpha)

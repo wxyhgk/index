@@ -7,10 +7,27 @@ import AppKit
 @MainActor
 final class PinWindowController: NSWindowController, CaptureActionHost {
 
+    /// 穿透中的钉图索引。弱引用 —— 生命周期由 WindowRegistry 持有，
+    /// 这里只是给菜单栏「解除钉图穿透」查询和遍历用，窗口析构后自动出表。
+    private static let passthroughPins = NSHashTable<PinWindowController>.weakObjects()
+
+    /// 菜单栏据此决定要不要显示「解除钉图穿透」。
+    static var hasPassthroughPins: Bool { !passthroughPins.allObjects.isEmpty }
+
+    /// 恢复所有穿透中的钉图。穿透后窗口收不到任何鼠标键盘事件，
+    /// ⌘T 按不进去 —— 菜单栏这一项是唯一的解除入口。
+    static func liftAllPassthrough() {
+        for controller in passthroughPins.allObjects {
+            controller.setPassthrough(false)
+        }
+    }
+
     private let base: CGImage
     private let shot: Shot?
     private var zoom: CGFloat = 1.0
     private var opacity: CGFloat = 1.0
+    /// 鼠标穿透中：点击落到下层窗口，钉图只当参考图看。
+    private var isPassthrough = false
     /// 上次落库的图层内容。比数量更可靠 —— 撤销一层再画一层，数量不变但内容变了。
     private var savedLayers: Layers<ImageSpace>
 
@@ -60,6 +77,10 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         view.onAction = { [weak self] actionID in self?.perform(actionID) }
         view.onAnnotationsChanged = { [weak self] in self?.saveRevisionIfNeeded() }
         view.onToolbarHeightChanged = { [weak self] in self?.fitWindowToContent() }
+        view.onTogglePassthrough = { [weak self] in
+            guard let self else { return }
+            self.setPassthrough(!self.isPassthrough)
+        }
         panel.contentView = view
 
         fitWindowToContent()
@@ -157,8 +178,30 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         window?.alphaValue = opacity
     }
 
+    // MARK: - 鼠标穿透
+
+    /// ⌘T 切换。开：窗口不收鼠标、压暗到 0.55、边框变虚线（视觉提示「现在点不到我」）；
+    /// 关：恢复用户自己调过的透明度。
+    private func setPassthrough(_ on: Bool) {
+        guard isPassthrough != on, let panel = window else { return }
+        isPassthrough = on
+
+        if on {
+            // 文字输入态收不到后续按键了，先落库结束。
+            imageView?.annotation.endTextEditing()
+            Self.passthroughPins.add(self)
+        } else {
+            Self.passthroughPins.remove(self)
+        }
+
+        panel.ignoresMouseEvents = on
+        panel.alphaValue = on ? min(opacity, 0.55) : opacity
+        imageView?.isPassthrough = on
+    }
+
     override func close() {
         saveRevisionIfNeeded()
+        Self.passthroughPins.remove(self)
         super.close()
     }
 }

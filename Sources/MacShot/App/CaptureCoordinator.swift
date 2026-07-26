@@ -179,6 +179,11 @@ final class CaptureCoordinator {
             // 动作成功与否都不该影响副本落地。
             saveAutoCopy(of: context)
             run(actionID: result.actionID, context: context)
+
+            // 暂存卡片：拖出去就是文件。钉图除外 —— 用户已经得到一个窗口了。
+            if result.actionID != ActionID.pin, AppSettings.shared.showShelfCard {
+                ShelfController.shared.present(image: context.rendered(), shot: shot)
+            }
         } catch {
             NSLog("[MacShot] 保存失败: \(error)")
             presentError(error)
