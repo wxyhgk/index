@@ -42,6 +42,39 @@ final class AnnotationState {
 
     private var moveID: UUID?
     private var moveLastPoint: CGPoint?
+    /// beginMove 时的矩形与马赛克贴片。endMove 拿它们记一条可撤销的 move。
+    private var moveFromRect: LRect?
+    private var moveFromPreview: CGImage?
+
+    /// 文字编辑开始时的快照。nil 表示这一层是本次编辑新建的 ——
+    /// 结束时非空算 add，被丢弃算「add 的取消」，都不需要 style 记录。
+    private var editingTextOriginal: Layer?
+
+    // MARK: - 操作栈
+
+    /// 一次可逆的改动。撤销/重做只回放这些记录，绝不重新计算 ——
+    /// 马赛克贴片直接存进记录里，撤销时原样恢复，不依赖任何外部像素源的生命周期。
+    private enum Mutation {
+        /// 撤销 = 删掉它（连带贴片）；重做 = 连贴片一起加回来。
+        case add(Layer, preview: CGImage?)
+        /// 撤销 = 按原位插回、恢复贴片。
+        case remove(Layer, index: Int, preview: CGImage?)
+        case move(id: UUID, from: LRect, to: LRect, oldPreview: CGImage?, newPreview: CGImage?)
+        /// 颜色 / 粗细 / 文字内容都算 style：整层快照替换，简单且不会漏字段。
+        case style(id: UUID, before: Layer, after: Layer)
+    }
+
+    private var undoStack: [Mutation] = []
+    private var redoStack: [Mutation] = []
+
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    /// 所有写路径的唯一入口：新动作发生后，之前撤销掉的分支就不可再重做。
+    private func record(_ mutation: Mutation) {
+        undoStack.append(mutation)
+        redoStack.removeAll()
+    }
 
     init() {
         let settings = AppSettings.shared
@@ -106,6 +139,7 @@ final class AnnotationState {
             layer.text = ""
             layers.append(layer)
             editingTextID = layer.id
+            editingTextOriginal = nil   // 新建的层，入栈时机在 endTextEditing
             return true
         }
 
@@ -139,15 +173,18 @@ final class AnnotationState {
             pixelatePreviews[layer.id] = pixelSource(r).flatMap(LayerRenderer.pixelated)
         }
         layers.append(layer)
+        record(.add(layer, preview: pixelatePreviews[layer.id]))
         return true
     }
 
-    /// 丢弃全部标注，回到干净状态。
+    /// 丢弃全部标注，回到干净状态。撤销历史一并清空 —— 不做跨清空的持久撤销。
     func clear() {
         endTextEditing()
         selectedID = nil
         layers.removeAll()
         pixelatePreviews.removeAll()
+        undoStack.removeAll()
+        redoStack.removeAll()
     }
 
     // MARK: - 选中与拖动
@@ -184,6 +221,10 @@ final class AnnotationState {
         selectedID = id
         moveID = id
         moveLastPoint = point
+        if let index = layers.firstIndex(id: id) {
+            moveFromRect = layers[index].rect
+            moveFromPreview = pixelatePreviews[id]
+        }
     }
 
     @discardableResult
@@ -203,11 +244,23 @@ final class AnnotationState {
         defer {
             moveID = nil
             moveLastPoint = nil
+            moveFromRect = nil
+            moveFromPreview = nil
         }
         guard let moveID, let index = layers.firstIndex(id: moveID) else { return false }
         let layer = layers[index]
         if layer.kind == .pixelate {
             pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap(LayerRenderer.pixelated)
+        }
+        // 原地点了一下没有位移，不算一次操作。
+        if let from = moveFromRect, from != layer.rect {
+            record(.move(
+                id: moveID,
+                from: from,
+                to: layer.rect,
+                oldPreview: moveFromPreview,
+                newPreview: pixelatePreviews[layer.id]
+            ))
         }
         return true
     }
@@ -217,7 +270,8 @@ final class AnnotationState {
     func deleteSelected() -> Bool {
         guard let id = selectedID else { return false }
         selectedID = nil
-        guard layers.firstIndex(id: id) != nil else { return false }
+        guard let index = layers.firstIndex(id: id) else { return false }
+        record(.remove(layers[index], index: index, preview: pixelatePreviews[id]))
         layers.remove(id: id)
         pixelatePreviews[id] = nil
         return true
@@ -229,7 +283,11 @@ final class AnnotationState {
         guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return false }
         var c = color
         if layers[index].kind == .highlight { c.a = 0.4 }
+        let before = layers[index]
         layers[index].color = c
+        if before != layers[index] {
+            record(.style(id: selectedID, before: before, after: layers[index]))
+        }
         return true
     }
 
@@ -237,8 +295,12 @@ final class AnnotationState {
     @discardableResult
     func applyWidthToSelection() -> Bool {
         guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return false }
+        let before = layers[index]
         layers[index].lineWidth = lineWidth
         layers[index].fontSize = fontSize
+        if before != layers[index] {
+            record(.style(id: selectedID, before: before, after: layers[index]))
+        }
         return true
     }
 
@@ -268,23 +330,102 @@ final class AnnotationState {
     }
 
     /// 结束输入。空文字图层直接丢弃，避免留下看不见的空壳。
+    /// 入栈时机在这里而不是落点时：新建层写出了内容算 add，
+    /// 空着丢弃算「add 的取消」不入栈；已有层内容变了算 style。
     func endTextEditing() {
         guard let id = editingTextID else { return }
         editingTextID = nil
-        if let index = layers.firstIndex(id: id), layers[index].text.isEmpty {
+        let original = editingTextOriginal
+        editingTextOriginal = nil
+
+        guard let index = layers.firstIndex(id: id) else { return }
+        let layer = layers[index]
+
+        if layer.text.isEmpty {
             layers.remove(id: id)
+            if let original {
+                record(.remove(original, index: index, preview: nil))
+            }
+            return
+        }
+        if let original {
+            if original != layer {
+                record(.style(id: id, before: original, after: layer))
+            }
+        } else {
+            record(.add(layer, preview: nil))
         }
     }
 
-    // MARK: - 撤销
+    // MARK: - 撤销 / 重做
 
+    /// 返回是否真的发生了变化，调用方据此决定要不要重绘和落库。
     @discardableResult
     func undo() -> Bool {
         endTextEditing()
-        guard let last = layers.removeLast() else { return false }
-        pixelatePreviews[last.id] = nil
-        if selectedID == last.id { selectedID = nil }
+        guard let mutation = undoStack.popLast() else { return false }
+        revert(mutation)
+        redoStack.append(mutation)
         return true
+    }
+
+    @discardableResult
+    func redo() -> Bool {
+        // 不结束文字编辑：endTextEditing 可能入栈新操作并清空 redoStack，
+        // 那样这里就会「先毁掉再来重做」。正在输入时直接视为无事可做。
+        guard editingTextID == nil, let mutation = redoStack.popLast() else { return false }
+        apply(mutation)
+        undoStack.append(mutation)
+        return true
+    }
+
+    /// 撤销一条记录：把它对图层与马赛克贴片的影响原样倒回去。
+    private func revert(_ mutation: Mutation) {
+        switch mutation {
+        case .add(let layer, _):
+            layers.remove(id: layer.id)
+            pixelatePreviews[layer.id] = nil
+            if selectedID == layer.id { selectedID = nil }
+
+        case .remove(let layer, let index, let preview):
+            layers.insert(layer, at: index)
+            pixelatePreviews[layer.id] = preview
+            selectedID = layer.id
+
+        case .move(let id, let from, _, let oldPreview, _):
+            guard let index = layers.firstIndex(id: id) else { return }
+            layers[index].rect = from
+            if layers[index].kind == .pixelate { pixelatePreviews[id] = oldPreview }
+            selectedID = id
+
+        case .style(let id, let before, _):
+            guard let index = layers.firstIndex(id: id) else { return }
+            layers[index] = before
+        }
+    }
+
+    /// 重做一条记录：和首次执行时的效果完全一致。
+    private func apply(_ mutation: Mutation) {
+        switch mutation {
+        case .add(let layer, let preview):
+            layers.append(layer)
+            pixelatePreviews[layer.id] = preview
+
+        case .remove(let layer, _, _):
+            layers.remove(id: layer.id)
+            pixelatePreviews[layer.id] = nil
+            if selectedID == layer.id { selectedID = nil }
+
+        case .move(let id, _, let to, _, let newPreview):
+            guard let index = layers.firstIndex(id: id) else { return }
+            layers[index].rect = to
+            if layers[index].kind == .pixelate { pixelatePreviews[id] = newPreview }
+            selectedID = id
+
+        case .style(let id, _, let after):
+            guard let index = layers.firstIndex(id: id) else { return }
+            layers[index] = after
+        }
     }
 
     // MARK: - 导出

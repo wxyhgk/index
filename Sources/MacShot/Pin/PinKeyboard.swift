@@ -24,9 +24,12 @@ extension PinImageView {
         let cmd = event.modifierFlags.contains(.command)
 
         if cmd, event.keyCode == KeyCode.z {
-            annotation.undo()
-            needsDisplay = true
-            onAnnotationsChanged?()
+            // ⇧⌘Z 是重做，必须先于单独的 ⌘Z 判断。
+            // 撤销/重做可能增删马赛克层，走 commitAnnotationChange 重算底图并落库。
+            let changed = event.modifierFlags.contains(.shift)
+                ? annotation.redo()
+                : annotation.undo()
+            if changed { commitAnnotationChange() }
             return
         }
 
