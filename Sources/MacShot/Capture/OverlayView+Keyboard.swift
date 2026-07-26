@@ -25,13 +25,18 @@ extension OverlayView {
 
         switch event.keyCode {
         case KeyCode.escape:
-            // 先退出标注工具，再退出整个流程 —— 不要一下子把选区也丢了。
-            if annotation.tool != nil {
+            // 逐级退出：先取消图层选中，再退出标注工具，最后才是整个流程。
+            if annotation.select(nil) {
+                redraw()
+            } else if annotation.tool != nil {
                 annotation.tool = nil
                 redraw()
             } else {
                 cancel()
             }
+        case KeyCode.delete:
+            // 文字输入中的退格在上面的 isEditingText 分支处理过了，这里只删选中图层。
+            redrawIfNeeded(annotation.deleteSelected())
         case KeyCode.returnKey, KeyCode.keypadEnter:
             // 「确定」键。是否覆盖剪贴板由设置决定，见 AppSettings.EnterBehavior。
             // 刻意不绑到钉图：回车最容易在「文字输入刚结束又顺手按了一下」时误触发，

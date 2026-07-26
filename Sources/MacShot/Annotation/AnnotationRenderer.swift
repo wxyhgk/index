@@ -17,6 +17,25 @@ enum AnnotationRenderer {
         LayerRenderer.drawVectors(layers.elements, in: ctx)
     }
 
+    /// 选中图层的虚线外框。和图层画在同一个（左上原点、Y 向下的）上下文里；
+    /// `strokeScale` 是画布单位相对屏幕点的倍率，保证虚线在屏幕上总是 1pt 粗。
+    static func drawSelectionHint<Space: LayerSpace>(
+        selectedID: UUID?,
+        layers: Layers<Space>,
+        strokeScale: CGFloat,
+        in ctx: CGContext
+    ) {
+        guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return }
+        let box = layers[index].rect.cg.insetBy(dx: -3 * strokeScale, dy: -3 * strokeScale)
+
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        ctx.setLineWidth(strokeScale)
+        ctx.setLineDash(phase: 0, lengths: [3 * strokeScale, 3 * strokeScale])
+        ctx.stroke(box)
+        ctx.restoreGState()
+    }
+
     /// 马赛克贴片是图层提交时预先算好的；正在拖的那个还没有，先用灰块占位。
     /// 绝不在每帧重跑 CoreImage。
     private static func drawPixelate(_ layer: Layer, preview: CGImage?, in ctx: CGContext) {

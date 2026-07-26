@@ -213,6 +213,21 @@ final class OverlayView: NSView {
             return
         }
 
+        // 指针模式下点中已画的图层 → 选中并准备拖动；点空处 → 取消选中，
+        // 落回下面的选区调整逻辑。只在选区内测试：图层出了选区的部分是看不见的。
+        if model.phase == .confirmed, annotation.tool == nil,
+           let selection = model.confirmedRect, selection.contains(global) {
+            let canvas = geometry.annotationPoint(fromViewLocal: local)
+            if let id = annotation.layer(at: canvas) {
+                annotation.endTextEditing()
+                annotation.beginMove(id: id, at: canvas)
+                onBecameActive?(self)
+                redraw()
+                return
+            }
+            redrawIfNeeded(annotation.select(nil))
+        }
+
         annotation.endTextEditing()
 
         // 点在已有选区的控制点或内部 → 调整，而不是重画
@@ -234,6 +249,10 @@ final class OverlayView: NSView {
             redrawIfNeeded(annotation.updateDraw(to: geometry.annotationPoint(fromViewLocal: local)))
             return
         }
+        if annotation.isMoving {
+            redrawIfNeeded(annotation.updateMove(to: geometry.annotationPoint(fromViewLocal: local)))
+            return
+        }
 
         let global = geometry.global(fromViewLocal: local)
         switch model.phase {
@@ -247,15 +266,12 @@ final class OverlayView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         if annotation.isDrawing {
-            // 马赛克要从冻结画面取原始像素：标注空间是显示器局部左上原点，先换回 AppKit 全局。
-            annotation.endDraw { [snapshot = model.snapshot] rect in
-                snapshot.crop(globalRect: CGRect(
-                    x: snapshot.frame.minX + rect.minX,
-                    y: snapshot.frame.maxY - rect.maxY,
-                    width: rect.width,
-                    height: rect.height
-                ))
-            }
+            annotation.endDraw(pixelSource: frozenPixels)
+            redraw()
+            return
+        }
+        if annotation.isMoving {
+            annotation.endMove(pixelSource: frozenPixels)
             redraw()
             return
         }
@@ -274,9 +290,22 @@ final class OverlayView: NSView {
         redraw()
     }
 
-    /// 右键逐级退出：文字输入 → 标注工具 → 选区 → 整个截图流程。
+    /// 马赛克要从冻结画面取原始像素：标注空间是显示器局部左上原点，先换回 AppKit 全局。
+    private func frozenPixels(_ rect: CGRect) -> CGImage? {
+        let snapshot = model.snapshot
+        return snapshot.crop(globalRect: CGRect(
+            x: snapshot.frame.minX + rect.minX,
+            y: snapshot.frame.maxY - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        ))
+    }
+
+    /// 右键逐级退出：图层选中 → 文字输入 → 标注工具 → 选区 → 整个截图流程。
     override func rightMouseDown(with event: NSEvent) {
-        if annotation.isEditingText {
+        if annotation.select(nil) {
+            redraw()
+        } else if annotation.isEditingText {
             annotation.endTextEditing()
             redraw()
         } else if annotation.tool != nil {

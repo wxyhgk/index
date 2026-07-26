@@ -99,6 +99,12 @@ enum OverlayRenderer {
             pixelatePreviews: annotation.pixelatePreviews,
             in: ctx
         )
+        AnnotationRenderer.drawSelectionHint(
+            selectedID: annotation.selectedID,
+            layers: layers,
+            strokeScale: CGFloat(annotation.strokeScale),
+            in: ctx
+        )
         ctx.restoreGState()
     }
 

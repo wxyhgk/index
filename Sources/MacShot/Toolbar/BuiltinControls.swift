@@ -47,8 +47,10 @@ struct ColorControl: ToolbarControl {
     var group: ToolbarGroup { .style }
     var order: Int { index }
 
-    /// 没拿画笔时颜色没有意义，不占位置。
-    func isVisible(_ context: ToolbarContext) -> Bool { context.annotation.tool != nil }
+    /// 拿着画笔、或选中了已画的图层时才有意义，其余时候不占位置。
+    func isVisible(_ context: ToolbarContext) -> Bool {
+        context.annotation.tool != nil || context.annotation.selectedID != nil
+    }
     func isSelected(_ context: ToolbarContext) -> Bool { context.annotation.colorIndex == index }
     func width(_ context: ToolbarContext) -> CGFloat { ToolbarStyle.swatchWidth }
 
@@ -66,6 +68,8 @@ struct ColorControl: ToolbarControl {
 
     func activate(_ context: ToolbarContext) {
         context.annotation.colorIndex = index
+        // 有选中图层时顺带改它的颜色 —— 「点中再点色」是最直觉的改色方式。
+        context.annotation.applyColorToSelection()
     }
 }
 
@@ -78,7 +82,9 @@ struct WidthControl: ToolbarControl {
     /// 排在颜色后面。
     var order: Int { 100 + index }
 
-    func isVisible(_ context: ToolbarContext) -> Bool { context.annotation.tool != nil }
+    func isVisible(_ context: ToolbarContext) -> Bool {
+        context.annotation.tool != nil || context.annotation.selectedID != nil
+    }
     func isSelected(_ context: ToolbarContext) -> Bool { context.annotation.widthIndex == index }
     func width(_ context: ToolbarContext) -> CGFloat { 24 }
 
@@ -95,6 +101,7 @@ struct WidthControl: ToolbarControl {
 
     func activate(_ context: ToolbarContext) {
         context.annotation.widthIndex = index
+        context.annotation.applyWidthToSelection()
     }
 }
 
