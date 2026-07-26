@@ -88,9 +88,97 @@ private struct GeneralSettings: View {
                 Text("按来源 App 归入代码、浏览器、聊天等分类，并附加系统 Vision 场景标签。图库里可按分类筛选，分类名也可直接搜索。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Toggle("语义搜索", isOn: $settings.semanticSearch)
+                Text("用自然语言描述画面来搜截图，如 “blue gradient dashboard”。需要下载 MobileCLIP 模型（约 111 MB），推理全部在本机完成。模型为英文训练，英文描述效果最好。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.semanticSearch {
+                    CLIPModelStatusRow()
+                }
             }
         }
         .formStyle(.grouped)
+        // 模型已在而开关后开：老截图的向量此刻才轮到补。
+        .onChange(of: settings.semanticSearch) { _, enabled in
+            if enabled && CLIPModelStore.shared.isReady {
+                AttributeBackfill.runIfNeeded()
+            }
+        }
+    }
+}
+
+/// 语义搜索模型的状态与管理：未下载 → 下载按钮 + 进度；已就绪 → 占用大小 + 删除。
+private struct CLIPModelStatusRow: View {
+    @ObservedObject private var modelStore = CLIPModelStore.shared
+
+    var body: some View {
+        LabeledContent("模型") {
+            switch modelStore.state {
+            case .notDownloaded:
+                Button("下载模型（约 \(Self.totalText)）") {
+                    Task { await download() }
+                }
+                .controlSize(.small)
+
+            case .downloading(let progress):
+                HStack(spacing: 8) {
+                    ProgressView(value: progress)
+                        .frame(width: 120)
+                    Text("\(Int(progress * 100))%")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+            case .compiling:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("编译中…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+            case .ready(let diskBytes):
+                HStack(spacing: 8) {
+                    Label(
+                        "已就绪 · \(ByteCountFormatter.string(fromByteCount: diskBytes, countStyle: .file))",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                    Button("删除") {
+                        Task { await modelStore.removeModels() }
+                    }
+                    .controlSize(.small)
+                }
+
+            case .failed(let message):
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                    Button("重试") {
+                        Task { await download() }
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private static let totalText = ByteCountFormatter.string(
+        fromByteCount: CLIPModelStore.totalDownloadBytes,
+        countStyle: .file
+    )
+
+    /// 下载完成即刻给老截图回填向量 —— 否则语义搜索开着却搜不到任何东西。
+    private func download() async {
+        await modelStore.ensureModels()
+        if modelStore.isReady {
+            AttributeBackfill.runIfNeeded()
+        }
     }
 }
 

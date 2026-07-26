@@ -76,6 +76,25 @@ struct FeaturePrintProcessor: CapturePostProcessor {
     }
 }
 
+/// MobileCLIP 图像向量。语义搜索（用自然语言搜截图）靠它算相似度。
+/// 开关关闭或模型还没下载好时直接跳过 —— 模型就绪后由回填补齐。
+struct CLIPEmbeddingProcessor: CapturePostProcessor {
+    let id = "clip-embedding"
+
+    @MainActor var isEnabled: Bool {
+        AppSettings.shared.semanticSearch && CLIPModelStore.shared.isReady
+    }
+
+    func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
+        guard let vector = await CLIPEncoder.shared.embedImage(input.image) else { return }
+        await writer.write(
+            shotID: input.shotID,
+            key: AttributeKey.clipEmbedding,
+            value: .data(CLIPEncoder.data(from: vector), searchableText: nil)
+        )
+    }
+}
+
 /// 敏感内容检测（邮箱 / 密钥 / 卡号 / 手机号 / 人脸）。
 /// 命中区域以 JSON 落库，详情页据此显示警示条并支持一键打码。
 /// searchableText 只放种类汇总 —— 搜「密钥」能找到含密钥的截图，
@@ -109,6 +128,7 @@ extension CapturePipeline {
         pipeline.register(CategoryProcessor())
         pipeline.register(VisionLabelsProcessor())
         pipeline.register(FeaturePrintProcessor())
+        pipeline.register(CLIPEmbeddingProcessor())
         pipeline.register(SensitiveContentProcessor())
     }
 }

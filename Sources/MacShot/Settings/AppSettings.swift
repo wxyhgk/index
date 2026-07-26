@@ -57,6 +57,7 @@ final class AppSettings: ObservableObject {
         static let runOCR = "runOCR"
         static let autoClassify = "autoClassify"
         static let detectSensitive = "detectSensitive"
+        static let semanticSearch = "semanticSearch"
         static let showMagnifier = "showMagnifier"
         static let enterBehavior = "enterBehavior"
         static let defaultColorIndex = "defaultColorIndex"
@@ -122,6 +123,11 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(detectSensitive, forKey: Keys.detectSensitive) }
     }
 
+    /// 语义搜索（MobileCLIP 向量）。默认关 —— 需要用户主动下载约 111 MB 模型。
+    @Published var semanticSearch: Bool {
+        didSet { defaults.set(semanticSearch, forKey: Keys.semanticSearch) }
+    }
+
     // MARK: - 上传图床
 
     /// 图床上传接口地址。空 = 未配置，「上传」动作会提示先去设置。
@@ -183,6 +189,7 @@ final class AppSettings: ObservableObject {
             Keys.runOCR: true,
             Keys.autoClassify: true,
             Keys.detectSensitive: true,
+            Keys.semanticSearch: false,
             Keys.showMagnifier: true,
             Keys.captureDelay: 3,
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
@@ -199,6 +206,7 @@ final class AppSettings: ObservableObject {
         runOCR = defaults.bool(forKey: Keys.runOCR)
         autoClassify = defaults.bool(forKey: Keys.autoClassify)
         detectSensitive = defaults.bool(forKey: Keys.detectSensitive)
+        semanticSearch = defaults.bool(forKey: Keys.semanticSearch)
         showMagnifier = defaults.bool(forKey: Keys.showMagnifier)
         captureDelay = defaults.integer(forKey: Keys.captureDelay)
         enterBehavior = defaults.string(forKey: Keys.enterBehavior)
