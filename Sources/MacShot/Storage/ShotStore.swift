@@ -403,6 +403,37 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    /// 批量读一批截图的某个文本属性。图库网格给卡片配分类胶囊用 ——
+    /// 逐卡片查一次库会在滚动时反复打主线程，这里一条 IN 查询拉全量。
+    func attributeTexts(key: String, shotIDs: [Int64]) -> [Int64: String] {
+        guard !shotIDs.isEmpty else { return [:] }
+        let rows = (try? dbQueue.read { db in
+            try ShotAttribute
+                .filter(Column("key") == key && shotIDs.contains(Column("shotID")))
+                .fetchAll(db)
+        }) ?? []
+        var result: [Int64: String] = [:]
+        for row in rows {
+            if let text = row.text { result[row.shotID] = text }
+        }
+        return result
+    }
+
+    /// 一批截图里「真的标注过」（修订数 > 1，超出入库时自动建的那条「原始」）
+    /// 的 ID 集合。图库网格的标注角标用，一条聚合查询。
+    func annotatedShotIDs(among shotIDs: [Int64]) -> Set<Int64> {
+        guard !shotIDs.isEmpty else { return [] }
+        let idList = shotIDs.map(String.init).joined(separator: ",")
+        return Set((try? dbQueue.read { db in
+            try Int64.fetchAll(db, sql: """
+                SELECT shotID FROM revision
+                WHERE shotID IN (\(idList))
+                GROUP BY shotID
+                HAVING COUNT(*) > 1
+                """)
+        }) ?? [])
+    }
+
     /// 读一条派生属性的二进制载荷。相似检索取目标指纹用。
     func attributePayload(shotID: Int64, key: String) -> Data? {
         try? dbQueue.read { db in
