@@ -133,6 +133,34 @@ struct BackdropControl: ToolbarControl {
     }
 }
 
+// MARK: - 带壳（macOS 窗口壳 / 浏览器壳）
+
+/// 套壳开关。和美化一样是**输出选项**：点一下加/删一层 frame，
+/// 导出成品把内容接上标题栏（红绿灯 + 真实窗口标题）；画布预览不变。
+/// 覆盖层/钉图只做开关（默认 macos 壳），样式切换在图库编辑器里。
+struct FrameControl: ToolbarControl {
+    let id = "frame"
+    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var group: ToolbarGroup { .style }
+    /// 排在美化（300）后面。
+    var order: Int { 310 }
+
+    /// 恒可见：同美化 —— 输出选项不依赖任何工具。
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.hasFrame
+    }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("macwindow", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        context.annotation.toggleFrame()
+    }
+}
+
 // MARK: - 撤销 / 重做
 
 struct UndoControl: ToolbarControl {
@@ -220,6 +248,7 @@ extension ToolbarRegistry {
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
         AnnotationState.widths.indices.forEach { registry.register(WidthControl(index: $0)) }
         registry.register(BackdropControl())
+        registry.register(FrameControl())
         registry.register(UndoControl())
         registry.register(RedoControl())
     }

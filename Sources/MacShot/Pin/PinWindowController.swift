@@ -60,6 +60,11 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         view.onAction = { [weak self] actionID in self?.perform(actionID) }
         view.onAnnotationsChanged = { [weak self] in self?.saveRevisionIfNeeded() }
         view.onToolbarHeightChanged = { [weak self] in self?.fitWindowToContent() }
+        // 套壳（frame）的倍率与元数据：钉图画布就是图像像素，壳的尺寸按 shot.scale
+        // 缩放。从图库钉出时元数据已齐；截图直钉时 URL 可能还没回填（同覆盖层）。
+        view.annotation.frameScale = max(1, shot?.scale ?? 1)
+        view.annotation.frameDefaultTitle = shot?.windowTitle
+        view.annotation.frameDefaultURL = shot?.sourceURL
         panel.contentView = view
 
         fitWindowToContent()
