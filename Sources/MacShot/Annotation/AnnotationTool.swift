@@ -7,6 +7,10 @@ enum AnnotationTool: CaseIterable {
     case text
     case highlight
     case pixelate
+    /// 直线与裁剪不进覆盖层/钉图的常驻工具条（`ToolbarRegistry.pinnedTools` 不含它们），
+    /// 只通过快捷键激活；图库编辑器的工具栏则全量展示。
+    case line
+    case crop
 
     var layerKind: Layer.Kind {
         switch self {
@@ -16,6 +20,8 @@ enum AnnotationTool: CaseIterable {
         case .text: return .text
         case .highlight: return .highlight
         case .pixelate: return .pixelate
+        case .line: return .line
+        case .crop: return .crop
         }
     }
 
@@ -48,7 +54,10 @@ extension AnnotationTool {
         ToolShortcut(keyCode: KeyCode.t, tool: .text,      label: "T"),
         ToolShortcut(keyCode: KeyCode.p, tool: .pixelate,  label: "P"),
         ToolShortcut(keyCode: KeyCode.o, tool: .ellipse,   label: "O"),
-        ToolShortcut(keyCode: KeyCode.h, tool: .highlight, label: "H")
+        ToolShortcut(keyCode: KeyCode.h, tool: .highlight, label: "H"),
+        ToolShortcut(keyCode: KeyCode.l, tool: .line,      label: "L"),
+        // C 被取色器占用，裁剪用 X。
+        ToolShortcut(keyCode: KeyCode.x, tool: .crop,      label: "X")
     ]
 
     /// 返回值是双层可选：外层 nil 表示这个键没绑工具，内层 nil 表示指针模式。

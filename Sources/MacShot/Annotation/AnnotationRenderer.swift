@@ -14,7 +14,27 @@ enum AnnotationRenderer {
         for layer in layers.elements where layer.kind == .pixelate {
             drawPixelate(layer, preview: pixelatePreviews[layer.id], in: ctx)
         }
+        for layer in layers.elements where layer.kind == .crop {
+            drawCropHint(layer, in: ctx)
+        }
         LayerRenderer.drawVectors(layers.elements, in: ctx)
+    }
+
+    /// 裁剪层只在导出时真正生效（`LayerRenderer.render` 最后一步），
+    /// 预览阶段画一个黑白虚线框示意保留范围。
+    private static func drawCropHint(_ layer: Layer, in ctx: CGContext) {
+        let rect = layer.rect.cg
+        guard rect.width >= 1, rect.height >= 1 else { return }
+
+        let width = max(1, layer.lineWidth / 2)
+        ctx.saveGState()
+        ctx.setLineWidth(width)
+        ctx.setStrokeColor(CGColor(gray: 0, alpha: 0.55))
+        ctx.stroke(rect)
+        ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.95))
+        ctx.setLineDash(phase: 0, lengths: [width * 4, width * 4])
+        ctx.stroke(rect)
+        ctx.restoreGState()
     }
 
     /// 选中图层的虚线外框。和图层画在同一个（左上原点、Y 向下的）上下文里；
