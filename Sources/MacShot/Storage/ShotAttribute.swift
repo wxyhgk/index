@@ -52,4 +52,7 @@ enum AttributeKey {
     static let visionLabels = "vision.labels"
     /// 收藏标记。存在即为已收藏，text 必须为 nil（不进全文索引）。
     static let favorite = "favorite"
+    /// Vision 图像特征指纹（NSKeyedArchiver 序列化的 VNFeaturePrintObservation）。
+    /// 二进制载荷，text 必须为 nil（不进全文索引）。
+    static let featurePrint = "vision.featureprint"
 }

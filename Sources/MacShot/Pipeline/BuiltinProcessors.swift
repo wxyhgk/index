@@ -61,6 +61,21 @@ struct VisionLabelsProcessor: CapturePostProcessor {
     }
 }
 
+/// 图像特征指纹。二进制载荷进通用属性表的 payload 列，
+/// searchableText 必须为 nil —— 二进制不进全文索引。「查找相似截图」靠它算距离。
+struct FeaturePrintProcessor: CapturePostProcessor {
+    let id = "feature-print"
+
+    func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
+        guard let data = await FeaturePrint().extract(from: input.image) else { return }
+        await writer.write(
+            shotID: input.shotID,
+            key: AttributeKey.featurePrint,
+            value: .data(data, searchableText: nil)
+        )
+    }
+}
+
 extension CapturePipeline {
     /// 在这里登记。
     static func registerBuiltins(into pipeline: CapturePipeline) {
@@ -68,5 +83,6 @@ extension CapturePipeline {
         pipeline.register(BrowserURLProcessor())
         pipeline.register(CategoryProcessor())
         pipeline.register(VisionLabelsProcessor())
+        pipeline.register(FeaturePrintProcessor())
     }
 }

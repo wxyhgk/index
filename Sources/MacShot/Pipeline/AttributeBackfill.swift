@@ -1,49 +1,89 @@
 import Foundation
 import CoreGraphics
 
-/// 历史数据回填：给分类功能上线之前的截图补上 `category` / `vision.labels`。
+/// 历史数据回填：给某项派生能力上线之前的截图补上对应属性
+/// （`category` / `vision.labels` / `vision.featureprint`）。
 ///
 /// 启动时调一次 `runIfNeeded()`。utility 优先级、串行逐张 ——
 /// 老图可能有几百张，宁可慢慢补，也不把机器打满。
 enum AttributeBackfill {
 
+    /// 一项待回填的能力：缺哪个 key，就用哪个处理器补。
+    /// 新增派生能力要参与回填 = 在 `jobs()` 里加一行。
+    private struct Job {
+        let key: String
+        let processor: CapturePostProcessor
+    }
+
+    @MainActor
+    private static func jobs() -> [Job] {
+        var jobs: [Job] = [
+            Job(key: AttributeKey.featurePrint, processor: FeaturePrintProcessor())
+        ]
+        if AppSettings.shared.autoClassify {
+            jobs.append(Job(key: AttributeKey.category, processor: CategoryProcessor()))
+            jobs.append(Job(key: AttributeKey.visionLabels, processor: VisionLabelsProcessor()))
+        }
+        return jobs
+    }
+
     @MainActor
     static func runIfNeeded() {
-        guard AppSettings.shared.autoClassify else { return }
-
         let store = ShotStore.shared
-        let pending = store.shotsMissingAttribute(key: AttributeKey.category)
-        guard !pending.isEmpty else { return }
+        let jobs = jobs()
 
+        // 按截图聚合缺失项：一张图不管缺几个 key，原图只解码一次。
         // 后台线程不能碰 @MainActor 的 ShotStore，先在主 actor 上备好路径。
-        let items: [(shot: Shot, url: URL)] = pending.compactMap { shot in
-            shot.id == nil ? nil : (shot, store.originalURL(for: shot))
+        struct Pending {
+            let shotID: Int64
+            let url: URL
+            let bundleID: String?
+            var jobIndexes: [Int] = []
         }
+        var pendingByID: [Int64: Pending] = [:]
+        for (index, job) in jobs.enumerated() {
+            for shot in store.shotsMissingAttribute(key: job.key) {
+                guard let id = shot.id else { continue }
+                pendingByID[
+                    id,
+                    default: Pending(
+                        shotID: id,
+                        url: store.originalURL(for: shot),
+                        bundleID: shot.appBundleID
+                    )
+                ].jobIndexes.append(index)
+            }
+        }
+        guard !pendingByID.isEmpty else { return }
 
-        NSLog("[MacShot] 分类回填：\(items.count) 张待处理")
+        // 按时间无关的稳定顺序处理即可，这里保持字典自然序。
+        let pending = Array(pendingByID.values)
+        NSLog("[MacShot] 属性回填：\(pending.count) 张待处理")
 
         let writer = ShotStoreAttributeWriter()
-        let category = CategoryProcessor()
-        let visionLabels = VisionLabelsProcessor()
 
         Task.detached(priority: .utility) {
-            for item in items {
+            for item in pending {
                 guard let image = ImageCodec.load(from: item.url) else {
-                    // 原图丢了也写入分类，避免每次启动都重扫这一张。
-                    await writer.write(
-                        shotID: item.shot.id!,
-                        key: AttributeKey.category,
-                        value: .text(ShotClassifier.classify(bundleID: item.shot.appBundleID))
-                    )
+                    // 原图丢了：分类不依赖像素，仍写入避免每次启动重扫这一张；
+                    // 依赖像素的 key（标签、特征指纹）只能跳过。
+                    if item.jobIndexes.contains(where: { jobs[$0].key == AttributeKey.category }) {
+                        await writer.write(
+                            shotID: item.shotID,
+                            key: AttributeKey.category,
+                            value: .text(ShotClassifier.classify(bundleID: item.bundleID))
+                        )
+                    }
                     continue
                 }
                 let input = PostProcessInput(
-                    shotID: item.shot.id!,
+                    shotID: item.shotID,
                     image: image,
-                    appBundleID: item.shot.appBundleID
+                    appBundleID: item.bundleID
                 )
-                await category.process(input, writer: writer)
-                await visionLabels.process(input, writer: writer)
+                for index in item.jobIndexes {
+                    await jobs[index].processor.process(input, writer: writer)
+                }
             }
         }
     }
