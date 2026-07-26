@@ -105,6 +105,34 @@ struct WidthControl: ToolbarControl {
     }
 }
 
+// MARK: - 美化（背景垫底 / 圆角 / 阴影）
+
+/// 美化开关。它不是画笔而是**输出选项** —— 点一下加/删一层 backdrop，
+/// 导出/复制的成品垫上渐变背景 + 圆角 + 投影；画布预览不变。
+/// 覆盖层/钉图只做开关（默认预设），预设切换在图库编辑器里。
+struct BackdropControl: ToolbarControl {
+    let id = "backdrop"
+    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var group: ToolbarGroup { .style }
+    /// 排在颜色（0..）和粗细（100..）之后。
+    var order: Int { 300 }
+
+    /// 恒可见：指针模式下也能开关 —— 它是输出选项，不依赖任何工具。
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.hasBackdrop
+    }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("sparkles", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        context.annotation.toggleBackdrop()
+    }
+}
+
 // MARK: - 撤销 / 重做
 
 struct UndoControl: ToolbarControl {
@@ -191,6 +219,7 @@ extension ToolbarRegistry {
 
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
         AnnotationState.widths.indices.forEach { registry.register(WidthControl(index: $0)) }
+        registry.register(BackdropControl())
         registry.register(UndoControl())
         registry.register(RedoControl())
     }

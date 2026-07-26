@@ -224,9 +224,10 @@ final class AnnotationState {
 
     /// 命中测试（画布空间），从最上层往下找。
     /// 线段类按点到线段的距离判定，其余按外接矩形（都带一圈容差，方便点中细线）。
+    /// 美化层没有画布上的形体，不参与命中，只能通过开关/预设菜单操作。
     func layer(at point: CGPoint) -> UUID? {
         let tolerance = 8 * strokeScale
-        for layer in layers.elements.reversed() {
+        for layer in layers.elements.reversed() where layer.kind != .backdrop {
             let hit: Bool
             switch layer.kind {
             case .line, .arrow:
@@ -336,6 +337,53 @@ final class AnnotationState {
         if before != layers[index] {
             record(.style(id: selectedID, before: before, after: layers[index]))
         }
+        return true
+    }
+
+    // MARK: - 美化层（backdrop）
+
+    /// 当前是否已开启美化。工具条开关的选中态看它。
+    var hasBackdrop: Bool {
+        layers.elements.contains { $0.kind == .backdrop }
+    }
+
+    /// 当前美化层的背景预设名；未开启时为 nil。
+    var backdropPresetID: String? {
+        layers.elements.last { $0.kind == .backdrop }?.text
+    }
+
+    /// 美化开关。backdrop 不是拖出来的图层，只有加/删两种操作：
+    /// 没有则加一层默认预设，有则全部删掉。都走 `record` 保持可撤销。
+    /// 同时只保留一层 —— 加之前先清干净（正常情况下最多一层）。
+    @discardableResult
+    func toggleBackdrop() -> Bool {
+        endTextEditing()
+        if hasBackdrop {
+            while let index = layers.elements.firstIndex(where: { $0.kind == .backdrop }) {
+                let old = layers[index]
+                record(.remove(old, index: index, preview: nil))
+                layers.remove(id: old.id)
+                if selectedID == old.id { selectedID = nil }
+            }
+            return false
+        }
+        var layer = Layer(kind: .backdrop, rect: LRect(x: 0, y: 0, w: 0, h: 0))
+        layer.lineWidth = 48            // 复用字段：四周留白 padding
+        layer.fontSize = 12             // 复用字段：内容圆角半径
+        layer.text = BackdropPreset.default.rawValue
+        layers.append(layer)
+        record(.add(layer, preview: nil))
+        return true
+    }
+
+    /// 替换美化层的背景预设，记一条 style 撤销记录。未开启时不做事。
+    @discardableResult
+    func setBackdropPreset(_ presetID: String) -> Bool {
+        guard let index = layers.elements.firstIndex(where: { $0.kind == .backdrop }),
+              layers[index].text != presetID else { return false }
+        let before = layers[index]
+        layers[index].text = presetID
+        record(.style(id: before.id, before: before, after: layers[index]))
         return true
     }
 
