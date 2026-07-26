@@ -578,12 +578,13 @@ private struct GalleryGrid: View {
                 }
                 .padding(.bottom, DS.s3)
             }
-            // 时间线 / 相似 sheet 里选中某张后要能真的滚到它，居中露脸。
-            // 多选跟随主选中（最后操作的那张）。
+            // 时间线 / 相似 sheet 里选中某张后要能真的滚到它。
+            // anchor 用 nil = 最小滚动：目标已可见就一动不动 ——
+            // 普通点击选中不能抢走用户的滚动位置（用 .center 会每点一下拽到中间）。
             .onChange(of: selection.primaryID) { _, newID in
                 guard let newID else { return }
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    proxy.scrollTo(newID, anchor: .center)
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(newID, anchor: nil)
                 }
             }
         }
@@ -835,24 +836,11 @@ private struct GalleryGrid: View {
         }
     }
 
-    /// 拖出卡片的载荷：渲染含标注的成品 PNG 到临时目录（和暂存栏拖出行为一致）。
-    /// 目录复用暂存栏的拖拽临时目录，下次启动统一清理。
-    /// 渲染失败时退回原图路径，保证拖拽永远有东西可放。
+    /// 拖出卡片的载荷。**必须是廉价构造**：`.draggable` 的载荷在 body 里
+    /// 逐卡片急切求值，任何重活（读原图/渲染/写盘）放在这里都会把主线程打满 ——
+    /// 表现就是「图库滚不动、点击丢失」。渲染推迟到真正拖放时的传输闭包里做。
     private func dragFile(for shot: Shot) -> ShotDragFile {
-        guard let rendered = renderedImage(for: shot),
-              let png = ImageCodec.pngData(from: rendered)
-        else { return ShotDragFile(url: store.originalURL(for: shot)) }
-
-        let dir = ShelfController.dragFileDirectory
-            .appendingPathComponent(shot.sha256, isDirectory: true)
-        let url = dir.appendingPathComponent(ImageExporter.suggestedName(for: shot))
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try png.write(to: url, options: .atomic)
-            return ShotDragFile(url: url)
-        } catch {
-            return ShotDragFile(url: store.originalURL(for: shot))
-        }
+        ShotDragFile(shot: shot)
     }
 
     private func pin(_ shot: Shot) {
@@ -962,14 +950,42 @@ private enum GalleryBatch {
 
 // MARK: - 卡片
 
-/// 拖出卡片的载荷：指向一份已渲染好的成品 PNG。文件在拖拽开始时写好，
-/// 接收方（访达 / Slack / 邮件）按普通文件收。
+/// 拖出卡片的载荷。构造只是拷一个 Shot 值 —— 渲染含标注的成品 PNG
+/// 发生在**接收方真正收文件时**（FileRepresentation 的导出闭包），
+/// 目录复用暂存栏的拖拽临时目录，下次启动统一清理；渲染失败退回原图路径。
 private struct ShotDragFile: Transferable {
-    let url: URL
+    let shot: Shot
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .png) { file in
-            SentTransferredFile(file.url, allowAccessingOriginalFile: true)
+            let url = await MainActor.run { file.writeRenderedPNG() }
+            return SentTransferredFile(url, allowAccessingOriginalFile: true)
+        }
+    }
+
+    /// 重活集中在这：读原图 → 合成最新修订 → 编码 → 写临时文件。
+    /// 只在一次真实的拖放里执行一次。
+    @MainActor
+    fileprivate func writeRenderedPNG() -> URL {
+        let store = ShotStore.shared
+        let fallback = store.originalURL(for: shot)
+
+        guard let base = store.originalImage(for: shot) else { return fallback }
+        let rendered = LayerRenderer.render(
+            base: base,
+            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers()
+        )
+        guard let png = ImageCodec.pngData(from: rendered) else { return fallback }
+
+        let dir = ShelfController.dragFileDirectory
+            .appendingPathComponent(shot.sha256, isDirectory: true)
+        let url = dir.appendingPathComponent(ImageExporter.suggestedName(for: shot))
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try png.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return fallback
         }
     }
 }
