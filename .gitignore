@@ -3,3 +3,4 @@ build/
 .swiftpm/
 Package.resolved
 .DS_Store
+.claude/
