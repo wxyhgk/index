@@ -145,6 +145,72 @@ struct FrameSpec: Codable, Equatable {
     }
 }
 
+/// 捕获信息层（captureInfo）的参数。`Layer.text` 存 JSON：
+/// `{"fields":["app","url","date"],"app":"Safari 17.4","url":"https://…","date":"2026-07-27 14:30"}`。
+/// `fields` 是用户勾选要显示的字段；具体值在**开启效果时烤入**（编辑器/钉图从
+/// shot 取，覆盖层从 confirmedWindow 取、URL 留空）—— 和 frame 的元数据填充
+/// 同一时机、同一来源。照 `FrameSpec` 的模式逐字段容错：解析失败退回全勾空值，
+/// 老数据/坏数据都不至于炸；`fields` 里出现未来版本的未知字段名时逐个丢弃。
+struct CaptureInfoSpec: Codable, Equatable {
+    enum Field: String, Codable, CaseIterable {
+        case app
+        case url
+        case date
+
+        var displayName: String {
+            switch self {
+            case .app: return "App"
+            case .url: return "网址"
+            case .date: return "时间"
+            }
+        }
+    }
+
+    var fields: [Field] = Field.allCases
+    var app: String = ""
+    var url: String = ""
+    var date: String = ""
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // fields 按裸字符串解，未知字段名逐个丢弃而不是让整个数组失败。
+        if let raw = try? container.decode([String].self, forKey: .fields) {
+            fields = raw.compactMap(Field.init(rawValue:))
+        }
+        app = (try? container.decode(String.self, forKey: .app)) ?? ""
+        url = (try? container.decode(String.self, forKey: .url)) ?? ""
+        date = (try? container.decode(String.self, forKey: .date)) ?? ""
+    }
+
+    /// 解析 `Layer.text`。任何失败（空串、坏 JSON）都退回全勾空值的缺省参数。
+    static func parse(_ json: String) -> CaptureInfoSpec {
+        guard let data = json.data(using: .utf8),
+              let spec = try? JSONDecoder().decode(CaptureInfoSpec.self, from: data)
+        else { return CaptureInfoSpec() }
+        return spec
+    }
+
+    /// 键排序固定，同参数编码结果一致（Layer 是 Equatable，style 撤销记录靠它判等）。
+    var json: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(self),
+              let string = String(data: data, encoding: .utf8)
+        else { return "{}" }
+        return string
+    }
+
+    /// 「App 名 + 版本」的一行式描述（如 "Safari 17.4"）。三处注入点共用，
+    /// 保证同一份元数据在哪儿开效果都排出同样的字。
+    static func appDescription(name: String?, version: String?) -> String? {
+        guard let name, !name.isEmpty else { return nil }
+        guard let version, !version.isEmpty else { return name }
+        return "\(name) \(version)"
+    }
+}
+
 /// 把「原图 + 图层数组」渲染成一张图。
 /// 原图始终只读；这里产出的是临时结果，只在预览和导出时使用。
 enum LayerRenderer {
@@ -202,14 +268,21 @@ enum LayerRenderer {
             result = applyWatermark(to: result, layer: watermark) ?? result
         }
 
-        // 4. 带壳在水印之后套上：内容上方接标题栏（浏览器壳再加地址栏）。
+        // 4. 捕获信息在水印之后、带壳之前：成品底部接一条元数据信息栏。
+        //    信息栏属于内容的一部分（在壳之内）—— 套壳时它和截图一起被
+        //    标题栏 + 圆角包住，backdrop 再连壳一起垫底。它同样只存在于导出路径。
+        if let info = layers.last(where: { $0.kind == .captureInfo }) {
+            result = applyCaptureInfo(to: result, layer: info) ?? result
+        }
+
+        // 5. 带壳在捕获信息之后套上：内容上方接标题栏（浏览器壳再加地址栏）。
         //    壳属于内容的一部分，所以排在美化之前 —— 叠加时壳在内、背景在外，
         //    backdrop 连壳一起垫底。它同样只存在于导出路径。
         if let frame = layers.last(where: { $0.kind == .frame }) {
             result = applyFrame(to: result, layer: frame) ?? result
         }
 
-        // 5. 美化最后套上：先裁出内容（可能已带壳），再把内容垫到背景上。
+        // 6. 美化最后套上：先裁出内容（可能已带壳），再把内容垫到背景上。
         //    它只存在于导出路径 —— 预览（AnnotationRenderer / LayerCanvas）跳过
         //    backdrop，编辑时画布尺寸不变。
         if let backdrop = layers.last(where: { $0.kind == .backdrop }) {
@@ -411,6 +484,140 @@ enum LayerRenderer {
             end: CGPoint(x: rect.maxX, y: rect.minY),
             options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
         )
+    }
+
+    // MARK: - 捕获信息（底部元数据信息栏）
+
+    /// 成品底部接一条信息栏：深色半透明底、白字 caption 排版 ——
+    /// 左侧 App 名+版本、中间网址（有则显示、中间截断）、右侧日期时间。
+    /// 只勾了部分字段（或值为空，如覆盖层的 URL 还没回填）就只排那些，均匀分布：
+    /// 一项居中、两项靠两端、三项左/中/右。输出画布宽度不变，高度 = 内容 + 信息栏。
+    ///
+    /// 结构尺寸（栏高 28、字号 11、边距 12）全部乘 `layer.lineWidth` ——
+    /// 创建时烤进去的像素倍率（见 `AnnotationState.toggleCaptureInfo`），
+    /// 语义同 frame，2x 图上的信息栏和 1x 图视觉大小一致。
+    private static func applyCaptureInfo(to image: CGImage, layer: Layer) -> CGImage? {
+        let scale = layer.lineWidth > 0 ? layer.lineWidth : 1
+        let spec = CaptureInfoSpec.parse(layer.text)
+
+        // 勾选了且烤入值非空才排；URL 中间截断（首尾都有信息量），其余尾部省略。
+        let items: [(text: String, truncation: CTLineTruncationType)] = spec.fields
+            .compactMap { field in
+                let value: String
+                switch field {
+                case .app: value = spec.app
+                case .url: value = spec.url
+                case .date: value = spec.date
+                }
+                guard !value.isEmpty else { return nil }
+                return (value, field == .url ? .middle : .end)
+            }
+        guard !items.isEmpty else { return image }
+
+        let barHeight = (28 * scale).rounded()
+        let width = image.width
+        let height = image.height + Int(barHeight)
+
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        // 上下文是 CG 默认的左下原点：内容在上、信息栏贴底。
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(
+            x: 0, y: barHeight, width: CGFloat(width), height: CGFloat(image.height)
+        ))
+
+        let bar = CGRect(x: 0, y: 0, width: CGFloat(width), height: barHeight)
+        ctx.setFillColor(CGColor(gray: 0, alpha: 0.75))
+        ctx.fill(bar)
+
+        let font = NSFont.systemFont(ofSize: 11 * scale, weight: .medium)
+        let margin = 12 * scale
+        let usable = bar.width - margin * 2
+        guard usable > font.pointSize else { return ctx.makeImage() }
+
+        // 均匀分布：锚点按 0…1 等分排开，首项左对齐、末项右对齐、其余居中；
+        // 单独一项时锚在正中。每项最多占一个等分槽位，超长按各自策略截断。
+        let slotWidth = usable / CGFloat(items.count) - (items.count > 1 ? 8 * scale : 0)
+        for (index, item) in items.enumerated() {
+            let anchorX: CGFloat
+            let alignment: CaptureInfoAlignment
+            if items.count == 1 {
+                anchorX = bar.midX
+                alignment = .center
+            } else {
+                anchorX = margin + usable * CGFloat(index) / CGFloat(items.count - 1)
+                alignment = index == 0 ? .leading
+                    : (index == items.count - 1 ? .trailing : .center)
+            }
+            drawCaptureInfoItem(
+                item.text,
+                font: font,
+                truncation: item.truncation,
+                maxWidth: slotWidth,
+                anchorX: anchorX,
+                alignment: alignment,
+                midY: bar.midY,
+                in: ctx
+            )
+        }
+
+        return ctx.makeImage()
+    }
+
+    private enum CaptureInfoAlignment { case leading, center, trailing }
+
+    /// 信息栏里的一段白字：先按 maxWidth 截断，再按对齐方式相对锚点排。
+    /// 和 `drawFrameText` 同一套 CT 画法，多一个「右对齐」——
+    /// 截断后的实际宽度才是排右侧那项要减去的宽度，所以不能直接复用。
+    /// 上下文是左下原点（信息栏的画布没有翻转），CT 按 identity 直接画。
+    private static func drawCaptureInfoItem(
+        _ text: String,
+        font: NSFont,
+        truncation: CTLineTruncationType,
+        maxWidth: CGFloat,
+        anchorX: CGFloat,
+        alignment: CaptureInfoAlignment,
+        midY: CGFloat,
+        in ctx: CGContext
+    ) {
+        guard maxWidth > font.pointSize, !text.isEmpty else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ]
+        var line = CTLineCreateWithAttributedString(
+            NSAttributedString(string: text, attributes: attributes)
+        )
+        if CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)) > maxWidth {
+            let token = CTLineCreateWithAttributedString(
+                NSAttributedString(string: "…", attributes: attributes)
+            )
+            line = CTLineCreateTruncatedLine(line, Double(maxWidth), truncation, token) ?? line
+        }
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+
+        let x: CGFloat
+        switch alignment {
+        case .leading: x = anchorX
+        case .center: x = anchorX - width / 2
+        case .trailing: x = anchorX - width
+        }
+
+        ctx.saveGState()
+        ctx.textMatrix = .identity
+        ctx.textPosition = CGPoint(x: x, y: midY - (ascent - descent) / 2)
+        CTLineDraw(line, ctx)
+        ctx.restoreGState()
     }
 
     // MARK: - 带壳（macOS 窗口壳 / 浏览器壳）
@@ -669,7 +876,8 @@ enum LayerRenderer {
         }
         for layer in layers where layer.kind != .pixelate && layer.kind != .crop
             && layer.kind != .spotlight && layer.kind != .backdrop
-            && layer.kind != .watermark && layer.kind != .frame {
+            && layer.kind != .watermark && layer.kind != .frame
+            && layer.kind != .captureInfo {
             draw(layer, in: ctx)
         }
     }
@@ -735,7 +943,7 @@ enum LayerRenderer {
         case .dimension:
             drawDimension(layer, in: ctx)
 
-        case .pixelate, .crop, .spotlight, .backdrop, .watermark, .frame:
+        case .pixelate, .crop, .spotlight, .backdrop, .watermark, .frame, .captureInfo:
             break   // 已在别处处理
         }
     }

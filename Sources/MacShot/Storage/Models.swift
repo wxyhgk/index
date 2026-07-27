@@ -78,6 +78,15 @@ struct Layer: Codable, Identifiable, Equatable {
         /// 结构尺寸按它缩放，Retina 下不发虚）。
         /// 同时只保留一层（见 `AnnotationState.toggleFrame`），只影响导出，不参与画布预览。
         case frame
+        /// 捕获信息：成品底部接一条深色信息栏，排真实的捕获元数据 ——
+        /// App 名+版本 / 来源网址 / 日期时间（竞品只能标 App 名+系统版本，网址是独家）。
+        /// 复用现有字段避免动 Codable：`text` = 参数 JSON（见 `CaptureInfoSpec`：
+        /// fields = 勾选要显示的字段，app/url/date = **开启效果时烤入**的真实值，
+        /// 与 frame 的元数据填充同一时机、同一来源）、`lineWidth` = 创建时烤入的
+        /// 像素倍率（信息栏的结构尺寸按它缩放，语义同 frame —— 「每视觉点的画布
+        /// 单位」，投影乘 scale 后恰好是成品像素倍率，不会平方放大）。
+        /// 同时只保留一层（见 `AnnotationState.toggleCaptureInfo`），只影响导出，不参与画布预览。
+        case captureInfo
 
         var displayName: String {
             switch self {
@@ -95,6 +104,7 @@ struct Layer: Codable, Identifiable, Equatable {
             case .backdrop: return "美化"
             case .watermark: return "水印"
             case .frame: return "外壳"
+            case .captureInfo: return "捕获信息"
             }
         }
 
@@ -114,6 +124,7 @@ struct Layer: Codable, Identifiable, Equatable {
             case .backdrop: return "sparkles.rectangle.stack"
             case .watermark: return "signature"
             case .frame: return "macwindow"
+            case .captureInfo: return "info.square"
             }
         }
     }

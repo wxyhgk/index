@@ -222,16 +222,31 @@ final class OverlayView: NSView {
         handle?.cursor ?? .crosshair
     }
 
+    /// 捕获信息层的「App 名+版本」：按窗口归因的 pid 查在跑的 App，版本从其
+    /// bundle 读（和 `MetadataCollector.collect` 同一取法）；查不到退回
+    /// CGWindowList 的 ownerName。只在激活工具条控件时取一次，都是内存操作。
+    private func captureInfoApp(for window: WindowInfo?) -> String? {
+        guard let window else { return nil }
+        let runningApp = NSRunningApplication(processIdentifier: window.pid)
+        let version = runningApp?.bundleURL
+            .flatMap { Bundle(url: $0)?.infoDictionary?["CFBundleShortVersionString"] as? String }
+        return CaptureInfoSpec.appDescription(
+            name: runningApp?.localizedName ?? window.ownerName,
+            version: version
+        )
+    }
+
     override func mouseDown(with event: NSEvent) {
         let local = localPoint(of: event)
 
         // 工具条命中优先
         if model.phase == .confirmed,
            let control = slots.first(where: { $0.control != nil && $0.frame.contains(local) })?.control {
-            // 套壳（frame）要用的真实元数据：窗口归因在确认选区时已定，激活前取一次
-            // 最新值；浏览器 URL 是落库后异步回填的，截图这一刻还没有 → 留空，
-            // 浏览器壳的地址栏画成空胶囊。
+            // 套壳（frame）/ 捕获信息要用的真实元数据：窗口归因在确认选区时已定，
+            // 激活前取一次最新值；浏览器 URL 是落库后异步回填的，截图这一刻还没有
+            // → 留空，浏览器壳的地址栏画成空胶囊、信息栏不排网址那一段。
             annotation.frameDefaultTitle = model.confirmedWindow?.title
+            annotation.captureInfoDefaultApp = captureInfoApp(for: model.confirmedWindow)
             control.activate(toolbarContext)
             redraw()
             return
