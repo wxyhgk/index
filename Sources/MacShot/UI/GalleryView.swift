@@ -653,9 +653,10 @@ private struct GalleryGrid: View {
         )
         .draggable(dragFile(for: shot))
         .contextMenu {
-            // Finder 行为：右键落在选中集合外 = 先把该张设为单选，再出单张菜单；
-            // 落在集合内且是多选 = 批量菜单。
-            let _ = retargetContextMenuIfNeeded(shot)
+            // ⚠️ 这个 ViewBuilder 会在**普通渲染时**被 SwiftUI 求值，不是右键才跑 ——
+            // 在这里写任何状态（哪怕 async）都会形成「渲染→改选中→重渲染」的自激振荡
+            // （曾经的尾部卡片 20Hz 闪烁事故，选中乒乓 4 万次/分钟）。只准纯读。
+            // 右键未选中的卡不再抢选中（Finder 的预选行为放弃）：菜单项本就绑定该 shot。
             if selection.isMultiple && selection.isSelected(shot.id) {
                 batchContextMenu()
             } else {
@@ -683,13 +684,6 @@ private struct GalleryGrid: View {
     /// SwiftUI 的 TapGesture 不带修饰键信息，从触发点击的 NSEvent 上取。
     private func currentModifiers() -> NSEvent.ModifierFlags {
         NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
-    }
-
-    /// 右键落在选中集合外：把该张设为单选（Finder 行为）。
-    /// 菜单构建期间不能改状态，推到下一轮 runloop。
-    private func retargetContextMenuIfNeeded(_ shot: Shot) {
-        guard let id = shot.id, !selection.selectedIDs.contains(id) else { return }
-        DispatchQueue.main.async { selection.select(only: id) }
     }
 
     /// 多选右键的批量菜单：标题带张数，动作与多选详情栏共用一套实现。
