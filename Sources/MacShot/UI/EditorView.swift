@@ -267,7 +267,9 @@ struct EditorView: View {
                 backdropCard
                 watermarkCard
                 frameCard
-                // 插槽：captureInfo 效果行（另一分支提供 EditorCaptureInfoRow）
+                EditorCaptureInfoRow(annotation: annotation, shot: shot) {
+                    annotationTick += 1
+                }
             }
             .padding(DS.s3)
         }
