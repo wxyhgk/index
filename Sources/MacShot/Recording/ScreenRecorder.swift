@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ScreenCaptureKit
 
 enum RecordingError: Error, LocalizedError {
@@ -6,6 +7,8 @@ enum RecordingError: Error, LocalizedError {
     case alreadyRecording
     case notRecording
     case displayNotFound
+    case nothingRecorded
+    case exportFailed
 
     var errorDescription: String? {
         switch self {
@@ -17,6 +20,10 @@ enum RecordingError: Error, LocalizedError {
             return "当前没有进行中的录制"
         case .displayNotFound:
             return "找不到选区所在的显示器"
+        case .nothingRecorded:
+            return "没有录到任何有效画面"
+        case .exportFailed:
+            return "分段拼接导出失败"
         }
     }
 }
@@ -24,8 +31,12 @@ enum RecordingError: Error, LocalizedError {
 /// 选区录屏。SCStream 直接产 mp4 文件（`SCRecordingOutput`，macOS 15+），
 /// 不自建 AVAssetWriter 管线 —— 低版本明确报「需要 macOS 15」。
 ///
-/// 状态机：idle → recording(startedAt) → finishing → idle。
-/// `isRecording` 同时是全局互斥位：录制中 `CaptureCoordinator.begin` 会拒绝再开截图。
+/// 状态机：idle → recording(segmentStartedAt) ⇄ paused → finishing → idle。
+/// SCStream 没有原生暂停：暂停 = 停掉当前段（一个独立 mp4 分段），
+/// 继续 = 开新段；最终停止时把全部分段拼成一个 mp4（见 `RecordingJob`）。
+///
+/// `isRecording` 同时是全局互斥位（**含暂停中**）：会话进行中
+/// `CaptureCoordinator.begin` 会拒绝再开截图。
 @MainActor
 final class ScreenRecorder {
 
@@ -33,24 +44,39 @@ final class ScreenRecorder {
 
     enum State {
         case idle
-        case recording(startedAt: Date)
+        case recording(segmentStartedAt: Date)
+        case paused
         case finishing
     }
 
     private(set) var state: State = .idle
 
+    /// 已完成段落的累计时长。计时显示 = 它 + 当前段已录时长，暂停期不走字。
+    private var accumulated: TimeInterval = 0
+
     /// macOS 15 之前拿不到 `SCRecordingOutput`，存成 AnyObject 绕开
     /// 「存储属性不能按可用性注解」的限制，用的时候在可用性块里转回来。
-    private var session: AnyObject?
+    private var job: AnyObject?
 
+    /// 录制会话进行中（含暂停）。
     var isRecording: Bool {
-        if case .recording = state { return true }
+        switch state {
+        case .recording, .paused: return true
+        case .idle, .finishing: return false
+        }
+    }
+
+    var isPaused: Bool {
+        if case .paused = state { return true }
         return false
     }
 
-    var startedAt: Date? {
-        if case .recording(let date) = state { return date }
-        return nil
+    /// 已录制的净时长（只累计录制段，不含暂停期）。
+    var elapsed: TimeInterval {
+        if case .recording(let segmentStartedAt) = state {
+            return accumulated + Date().timeIntervalSince(segmentStartedAt)
+        }
+        return accumulated
     }
 
     static var isSupported: Bool {
@@ -61,24 +87,57 @@ final class ScreenRecorder {
     private init() {}
 
     /// 开始录制 `display` 上的 `region`（AppKit 全局坐标，点）。
+    /// 音频开关在此刻从设置定格 —— 录制中途改设置不影响本次会话。
     func start(region: CGRect, display: DisplayInfo) async throws {
         guard case .idle = state else { throw RecordingError.alreadyRecording }
         guard #available(macOS 15.0, *) else { throw RecordingError.unsupportedOS }
 
-        let session = RecordingSession(
+        let settings = AppSettings.shared
+        let job = try RecordingJob(
             region: region,
             display: display,
-            outputURL: try Self.makeOutputURL()
+            outputURL: Self.makeOutputURL(),
+            capturesSystemAudio: settings.recordSystemAudio,
+            capturesMicrophone: settings.recordMicrophone
         )
-        try await session.start()
-        self.session = session
-        state = .recording(startedAt: Date())
+        try await job.startSegment()
+        self.job = job
+        accumulated = 0
+        state = .recording(segmentStartedAt: Date())
     }
 
-    /// 停止并收尾（写完 moov box），返回 mp4 路径。
+    /// 暂停：当前段收尾成一个分段文件。段收尾失败只丢该段，不打断暂停。
+    func pause() async throws {
+        guard case .recording(let segmentStartedAt) = state,
+              #available(macOS 15.0, *), let job = job as? RecordingJob
+        else { throw RecordingError.notRecording }
+
+        accumulated += Date().timeIntervalSince(segmentStartedAt)
+        state = .paused
+        await job.pauseSegment()
+    }
+
+    /// 继续：开一个新分段。开段失败（权限被收回、显示器拔掉）留在暂停态并抛错。
+    func resume() async throws {
+        guard case .paused = state,
+              #available(macOS 15.0, *), let job = job as? RecordingJob
+        else { throw RecordingError.notRecording }
+
+        try await job.startSegment()
+        state = .recording(segmentStartedAt: Date())
+    }
+
+    /// 停止并收尾：结掉当前段（如在录），把全部分段拼成一个 mp4，返回其路径。
     func stop() async throws -> URL {
-        guard isRecording else { throw RecordingError.notRecording }
-        guard #available(macOS 15.0, *), let session = session as? RecordingSession else {
+        switch state {
+        case .recording(let segmentStartedAt):
+            accumulated += Date().timeIntervalSince(segmentStartedAt)
+        case .paused:
+            break
+        case .idle, .finishing:
+            throw RecordingError.notRecording
+        }
+        guard #available(macOS 15.0, *), let job = job as? RecordingJob else {
             state = .idle
             throw RecordingError.notRecording
         }
@@ -86,10 +145,10 @@ final class ScreenRecorder {
         state = .finishing
         defer {
             state = .idle
-            self.session = nil
+            self.job = nil
+            accumulated = 0
         }
-        try await session.stop()
-        return session.outputURL
+        return try await job.finish()
     }
 
     // MARK: - 输出位置
@@ -107,13 +166,179 @@ final class ScreenRecorder {
     }
 }
 
-/// 一次录制会话：SCStream + SCRecordingOutput 的生命周期。
+/// 一次录屏作业：管理分段（暂停/恢复各成一段）和最终拼接。
+///
+/// 分段文件放在输出同目录的 `.parts/<输出名>/part-N.mp4` 下，拼完即删。
+/// 只有一段时直接改名成成品（没暂停过的常见路径，零拷贝零转码）；
+/// 多段用 `AVMutableComposition` 顺序拼接、passthrough 导出。
+/// 单段损坏（极短没写出关键帧、磁盘问题）跳过该段。
+@available(macOS 15.0, *)
+@MainActor
+private final class RecordingJob {
+
+    let outputURL: URL
+
+    private let region: CGRect
+    private let display: DisplayInfo
+    private let capturesSystemAudio: Bool
+    private let capturesMicrophone: Bool
+    private let partsDirectory: URL
+
+    /// 已成功收尾的分段。当前录制中的段不在里面。
+    private var partURLs: [URL] = []
+    private var segmentIndex = 0
+    private var current: RecordingSession?
+
+    init(
+        region: CGRect,
+        display: DisplayInfo,
+        outputURL: URL,
+        capturesSystemAudio: Bool,
+        capturesMicrophone: Bool
+    ) throws {
+        self.region = region
+        self.display = display
+        self.outputURL = outputURL
+        self.capturesSystemAudio = capturesSystemAudio
+        self.capturesMicrophone = capturesMicrophone
+        partsDirectory = outputURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".parts", isDirectory: true)
+            .appendingPathComponent(
+                outputURL.deletingPathExtension().lastPathComponent,
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: partsDirectory,
+            withIntermediateDirectories: true
+        )
+    }
+
+    func startSegment() async throws {
+        let url = partsDirectory.appendingPathComponent("part-\(segmentIndex).mp4")
+        segmentIndex += 1
+        let session = RecordingSession(
+            region: region,
+            display: display,
+            outputURL: url,
+            capturesSystemAudio: capturesSystemAudio,
+            capturesMicrophone: capturesMicrophone
+        )
+        try await session.start()
+        current = session
+    }
+
+    /// 停掉当前段。收尾失败（比如段极短没写出关键帧）只跳过该段。
+    func pauseSegment() async {
+        guard let session = current else { return }
+        current = nil
+        do {
+            try await session.stop()
+            partURLs.append(session.outputURL)
+        } catch {
+            NSLog("[MacShot] 录屏分段收尾失败，跳过该段: \(error)")
+        }
+    }
+
+    func finish() async throws -> URL {
+        await pauseSegment()
+        let valid = partURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !valid.isEmpty else {
+            cleanup()
+            throw RecordingError.nothingRecorded
+        }
+
+        if valid.count == 1 {
+            try FileManager.default.moveItem(at: valid[0], to: outputURL)
+        } else {
+            try await Self.concatenate(parts: valid, into: outputURL)
+        }
+        cleanup()
+        await Self.logTracks(of: outputURL)
+        return outputURL
+    }
+
+    private func cleanup() {
+        try? FileManager.default.removeItem(at: partsDirectory)
+    }
+
+    // MARK: - 分段拼接
+
+    /// 按录制顺序把分段接成一条：轨道按「媒体类型 + 段内序号」对齐
+    /// （系统声音和麦克风是两条独立音轨，不能混插到同一条）。
+    /// passthrough 导出保持 SCRecordingOutput 写的 H.264/AAC 原样，不重编码。
+    private static func concatenate(parts: [URL], into outputURL: URL) async throws {
+        let composition = AVMutableComposition()
+        var tracksByKey: [String: AVMutableCompositionTrack] = [:]
+        var cursor = CMTime.zero
+        var merged = 0
+
+        for part in parts {
+            do {
+                let asset = AVURLAsset(url: part)
+                let duration = try await asset.load(.duration)
+                let tracks = try await asset.load(.tracks)
+                guard duration > .zero,
+                      tracks.contains(where: { $0.mediaType == .video })
+                else {
+                    NSLog("[MacShot] 录屏分段无有效画面，跳过: \(part.lastPathComponent)")
+                    continue
+                }
+
+                let range = CMTimeRange(start: .zero, duration: duration)
+                var indexInType: [AVMediaType: Int] = [:]
+                for track in tracks {
+                    let slot = indexInType[track.mediaType, default: 0]
+                    indexInType[track.mediaType] = slot + 1
+                    let key = "\(track.mediaType.rawValue)#\(slot)"
+
+                    let target: AVMutableCompositionTrack
+                    if let existing = tracksByKey[key] {
+                        target = existing
+                    } else if let created = composition.addMutableTrack(
+                        withMediaType: track.mediaType,
+                        preferredTrackID: kCMPersistentTrackID_Invalid
+                    ) {
+                        tracksByKey[key] = created
+                        target = created
+                    } else {
+                        continue
+                    }
+                    try target.insertTimeRange(range, of: track, at: cursor)
+                }
+                cursor = cursor + duration
+                merged += 1
+            } catch {
+                NSLog("[MacShot] 录屏分段不可用，跳过: \(part.lastPathComponent) \(error)")
+            }
+        }
+
+        guard merged > 0 else { throw RecordingError.nothingRecorded }
+        guard let exporter = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetPassthrough
+        ) else { throw RecordingError.exportFailed }
+        try await exporter.export(to: outputURL, as: .mp4)
+    }
+
+    /// 成品轨道清单打进日志 —— 验证「音轨确实写进去了」的最直接证据。
+    private static func logTracks(of url: URL) async {
+        let asset = AVURLAsset(url: url)
+        guard let tracks = try? await asset.load(.tracks) else { return }
+        let kinds = tracks.map(\.mediaType.rawValue).joined(separator: ", ")
+        NSLog("[MacShot] 录屏完成 \(url.lastPathComponent)，轨道: [\(kinds)]")
+    }
+}
+
+/// 一个录制分段：SCStream + SCRecordingOutput 的生命周期。
 ///
 /// 关键配置：
 ///   · `sourceRect` 是**显示器局部**坐标、左上原点、单位「点」；输出尺寸另用
 ///     width/height 按 scale 指定，两者配合才能拿到 Retina 全分辨率的选区画面
 ///   · 过滤器排除自身进程 —— 红色录制边框、菜单栏图标都不会进画面
 ///   · `showsCursor = true`：录屏要看到光标（和截图相反）
+///   · `capturesAudio` 收系统声音（排除自身进程的提示音）、
+///     `captureMicrophone` 收默认麦克风，SCRecordingOutput 把音轨一起写进 mp4
 @available(macOS 15.0, *)
 private final class RecordingSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate {
 
@@ -121,15 +346,25 @@ private final class RecordingSession: NSObject, SCStreamDelegate, SCRecordingOut
 
     private let region: CGRect
     private let display: DisplayInfo
+    private let capturesSystemAudio: Bool
+    private let capturesMicrophone: Bool
     private var stream: SCStream?
     private var recordingOutput: SCRecordingOutput?
     /// 录制中途的失败（磁盘满、显示器断开）。stop 时抛给调用方。
     private var runtimeError: Error?
 
-    init(region: CGRect, display: DisplayInfo, outputURL: URL) {
+    init(
+        region: CGRect,
+        display: DisplayInfo,
+        outputURL: URL,
+        capturesSystemAudio: Bool,
+        capturesMicrophone: Bool
+    ) {
         self.region = region
         self.display = display
         self.outputURL = outputURL
+        self.capturesSystemAudio = capturesSystemAudio
+        self.capturesMicrophone = capturesMicrophone
     }
 
     func start() async throws {
@@ -163,6 +398,12 @@ private final class RecordingSession: NSObject, SCStreamDelegate, SCRecordingOut
         config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
         config.queueDepth = 6
         config.colorSpaceName = CGColorSpace.sRGB
+        config.capturesAudio = capturesSystemAudio
+        if capturesSystemAudio {
+            // 自己弹的提示音不进录音。
+            config.excludesCurrentProcessAudio = true
+        }
+        config.captureMicrophone = capturesMicrophone
 
         let recording = SCRecordingOutputConfiguration()
         recording.outputURL = outputURL

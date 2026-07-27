@@ -26,6 +26,9 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @ObservedObject var settings: AppSettings
 
+    /// 麦克风权限被明确拒绝。开着「录制麦克风」却没权限时给出去系统设置的入口。
+    @State private var microphoneDenied = false
+
     var body: some View {
         Form {
             Section("启动") {
@@ -146,6 +149,32 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("录屏") {
+                Toggle("录制系统声音", isOn: $settings.recordSystemAudio)
+                Text("把其它 App 播放的声音一起写进视频。转 GIF 时音轨会被丢弃。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("录制麦克风", isOn: $settings.recordMicrophone)
+                Text("首次开启会请求系统麦克风权限，录制用系统默认麦克风。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.recordMicrophone && microphoneDenied {
+                    HStack(spacing: 8) {
+                        Text("麦克风权限被拒绝 —— 录出来的视频不会有麦克风声音。")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Button("打开系统设置") { MicrophonePermission.openSystemSettings() }
+                            .controlSize(.small)
+                    }
+                }
+
+                Toggle("录屏完成后保存到图库", isOn: $settings.recordingSaveToLibrary)
+                Text("把录像首帧作为截图入库当锚点，详情栏提供「打开录像」按钮。视频文件本身仍保存在录屏目录。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("识别") {
                 Toggle("自动识别截图中的文字", isOn: $settings.runOCR)
                 Text("在后台运行，识别结果进入全文索引，可以直接搜截图里的字。")
@@ -178,6 +207,16 @@ private struct GeneralSettings: View {
                 AttributeBackfill.runIfNeeded()
             }
         }
+        // 勾选「录制麦克风」的当下就请求权限 —— 弹窗出现在用户做决定的时刻，
+        // 而不是按下录制键的紧要关头。
+        .onChange(of: settings.recordMicrophone) { _, enabled in
+            if enabled {
+                MicrophonePermission.request { _ in
+                    microphoneDenied = MicrophonePermission.isDenied
+                }
+            }
+        }
+        .onAppear { microphoneDenied = MicrophonePermission.isDenied }
     }
 
     /// 用假数据渲染的示例 —— 和真实导出走同一份 `ImageExporter.renderName`，

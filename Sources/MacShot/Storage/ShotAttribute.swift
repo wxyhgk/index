@@ -64,6 +64,10 @@ enum AttributeKey {
     /// 二进制载荷，text 必须为 nil（不进全文索引）。key 带版本号 ——
     /// 换模型时换 key，新旧向量不会被误比。
     static let clipEmbedding = "clip.embedding.v1"
+    /// 录屏成品 mp4 的绝对路径（UTF-8 存 payload）。挂在录屏首帧锚点截图上，
+    /// 详情栏据此显示「打开录像」。text 必须为 nil —— attributeFts 会索引
+    /// 整个 text 列，文件路径不该进搜索索引。
+    static let recordingPath = "recording.path"
     /// 敏感内容检测结果（[SensitiveRegion] 的 JSON）。
     /// searchableText 只放命中的**种类**汇总（如 "邮箱,密钥"）——
     /// 具体内容（邮箱地址、密钥本身）绝不进全文索引。

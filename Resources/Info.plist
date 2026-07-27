@@ -26,6 +26,9 @@
     <!-- 取浏览器当前标签页地址需要 Apple Events 授权 -->
     <key>NSAppleEventsUsageDescription</key>
     <string>MacShot 需要询问浏览器当前页面的网址，以便把它记录到截图的元数据里。</string>
+    <!-- 录屏可选录麦克风（设置里默认关，首次开启触发此弹窗） -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>MacShot 需要使用麦克风，以便在录屏时把你的声音一起录进视频。</string>
     <!-- URL scheme：快捷指令 / Raycast / 终端 open 都能经 macshot:// 调起，见 App/URLCommandRouter.swift -->
     <key>CFBundleURLTypes</key>
     <array>
