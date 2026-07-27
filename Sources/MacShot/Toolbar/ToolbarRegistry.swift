@@ -20,11 +20,28 @@ final class ToolbarRegistry {
     }
 
     /// 某个场景下按分组和组内顺序排好的全部控件（含由动作展开来的）。
+    ///
+    /// 截图工具条要短：只平铺主力动作（`isPrimary`），其余聚合成一个
+    /// 「更多」菜单控件；钉图窗口空间充裕，动作全量平铺、不折叠。
     func controls(for scope: ActionScope) -> [any ToolbarControl] {
         let registered = controls.filter { $0.scopes.contains(scope) }
-        let actions = CaptureActionRegistry.shared.descriptors(in: scope)
-            .enumerated()
-            .map { ActionControl(descriptor: $1, order: $0, scope: scope) }
+        let descriptors = CaptureActionRegistry.shared.descriptors(in: scope)
+
+        var actions: [any ToolbarControl]
+        if scope == .capture {
+            let primary = descriptors.filter(\.isPrimary)
+            let secondary = descriptors.filter { !$0.isPrimary }
+            actions = primary.enumerated()
+                .map { ActionControl(descriptor: $1, order: $0, scope: scope) }
+            if !secondary.isEmpty {
+                actions.append(MoreActionsControl(
+                    descriptors: secondary, order: primary.count, scope: scope
+                ))
+            }
+        } else {
+            actions = descriptors.enumerated()
+                .map { ActionControl(descriptor: $1, order: $0, scope: scope) }
+        }
 
         return (registered + actions).sorted {
             $0.group == $1.group ? $0.order < $1.order : $0.group < $1.group

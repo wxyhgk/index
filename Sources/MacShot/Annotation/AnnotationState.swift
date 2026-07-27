@@ -20,6 +20,14 @@ final class AnnotationState {
 
     /// nil 表示指针模式：拖拽是调整选区，而不是画标注。
     var tool: AnnotationTool?
+
+    /// 「鼠标（指针）」是否被主动选中。截图覆盖层有一个**中性默认态** ——
+    /// 确认选区后 tool == nil 且 pointerEngaged == false：没有任何工具高亮，
+    /// 拖拽只调整选区，不做图层命中、不做选字；点「鼠标」按钮（或按 V）后
+    /// 才进入 tool == nil && pointerEngaged 的完整指针模式（图层可选、Live Text 选字）。
+    /// 钉图/编辑器没有中性态概念，默认 true 维持现状。
+    var pointerEngaged: Bool = true
+
     var colorIndex: Int
     var widthIndex: Int
 

@@ -394,15 +394,17 @@ private struct ShortcutSettings: View {
                 ForEach(AnnotationTool.shortcuts, id: \.keyCode) { shortcut in
                     shortcutRow(shortcut.label, shortcut.toolName)
                 }
+                Text("截图工具条常驻 指针 / 矩形 / 箭头 / 文字 / 马赛克，其余工具（含序号）按快捷键激活时临时出现。截图默认不选中任何工具；按 V 或点「指针」后可选中图层、并直接拖选画面里的文字（实况文本）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("其它按键") {
                 shortcutRow("⌘Z", "撤销标注")
-                shortcutRow("⌘C / ⌘S", "复制 / 保存")
+                shortcutRow("⌘C / ⌘S", "复制 / 保存（指针模式下选中了文字则 ⌘C 复制文字）")
                 shortcutRow("⏎", "确定（行为见「通用」）")
                 shortcutRow("方向键", "微调选区，⇧ 十倍步进，⌥ 改尺寸")
-                shortcutRow("右键", "逐级退出：文字输入 → 工具 → 选区")
-                shortcutRow("⎋", "取消")
+                shortcutRow("右键 / ⎋", "逐级退出：文字输入 → 图层选中 → 指针/工具 → 选区 → 取消")
             }
 
             Section("钉图窗口") {

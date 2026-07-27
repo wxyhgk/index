@@ -63,9 +63,9 @@ enum OverlayRenderer {
             in: bounds
         )
 
-        // 有标注工具在手、或选字模式激活（选区被冻结）时隐藏控制点，
-        // 避免和画布上的操作混淆。
-        if model.showsHandles && annotation.tool == nil && !toolbarContext.isLiveTextActive() {
+        // 有标注工具在手时隐藏控制点，避免和画布上的操作混淆。
+        // 中性态和鼠标模式都显示 —— 两种状态下拖空白处仍是调整选区。
+        if model.showsHandles && annotation.tool == nil {
             drawHandles(in: local)
         }
 

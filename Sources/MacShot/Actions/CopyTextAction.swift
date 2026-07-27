@@ -11,6 +11,8 @@ struct CopyTextAction: CaptureAction {
     let scopes: Set<ActionScope> = [.capture]
     /// 用户要的是文字，别让全局自动复制用图片把它盖掉。
     let suppressesAutoCopy = true
+    /// 低频动作，收进截图工具条的「更多」菜单。
+    let isPrimaryAction = false
 
     func perform(_ context: CaptureContext) async throws {
         // 对原图识别，不含标注 —— 画上去的箭头和高亮可能盖住文字。

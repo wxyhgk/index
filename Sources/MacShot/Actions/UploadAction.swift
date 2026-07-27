@@ -14,6 +14,8 @@ struct UploadAction: CaptureAction {
     let scopes: Set<ActionScope> = [.capture, .pinned]
     /// 用户要的是链接不是图片，全局自动复制不许来盖一次。
     let suppressesAutoCopy = true
+    /// 低频动作，收进截图工具条的「更多」菜单（钉图不折叠）。
+    let isPrimaryAction = false
 
     func perform(_ context: CaptureContext) async throws {
         let settings = AppSettings.shared

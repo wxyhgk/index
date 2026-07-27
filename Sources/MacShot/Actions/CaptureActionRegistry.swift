@@ -30,7 +30,12 @@ final class CaptureActionRegistry {
 
     func descriptors(in scope: ActionScope) -> [ToolbarActionDescriptor] {
         actions(in: scope).map {
-            ToolbarActionDescriptor(id: $0.id, title: $0.title, symbolName: $0.symbolName)
+            ToolbarActionDescriptor(
+                id: $0.id,
+                title: $0.title,
+                symbolName: $0.symbolName,
+                isPrimary: $0.isPrimaryAction
+            )
         }
     }
 }
