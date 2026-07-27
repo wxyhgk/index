@@ -455,6 +455,12 @@ private struct ShotSection: Identifiable {
     }
 }
 
+/// 图库显示模式：网格（固定高度，裁切显示）/ 瀑布（等宽不裁切，Eagle 式）。
+private enum GalleryLayoutMode: String {
+    case grid
+    case waterfall
+}
+
 private struct GalleryGrid: View {
 
     /// 外层（不受滚动条出没影响的）可用宽度，列数由它显式算出。
@@ -464,7 +470,11 @@ private struct GalleryGrid: View {
     @ObservedObject private var selection = GallerySelection.shared
 
     /// 缩略图基准宽度，底部滑杆控制，跨启动记住。
+    /// 瀑布模式下同一个值语义变成「列宽基准」，滑杆行为自然成立。
     @AppStorage("galleryZoom") private var zoom = 200.0
+
+    /// 显示模式，底部条切换，跨启动记住。
+    @AppStorage("galleryLayout") private var layoutMode = GalleryLayoutMode.grid
 
     /// 按时间段分好组的结果，随 store.shots 变化重算一次。
     @State private var sections: [ShotSection] = []
@@ -480,15 +490,20 @@ private struct GalleryGrid: View {
     /// 接实体鼠标时 macOS 显示常驻滚动条：内容超高 → 滚动条挤窄内容区 →
     /// adaptive 重排少一列 → 内容变矮 → 滚动条消失 → 变宽 → 翻回来……
     /// 自持振荡，表现为尾部卡片无输入也一直闪。列数只看外层宽度就稳了。
-    private func fixedColumns(for width: CGFloat) -> (items: [GridItem], count: Int) {
+    private func columnMetrics(for width: CGFloat) -> (itemWidth: CGFloat, count: Int) {
         var count = max(1, Int((width - 2 * DS.s4 + DS.s4) / (zoom + DS.s4)))
         // 给常驻滚动条预留：列宽按可用宽扣除 16pt 计算，列数不受它出没影响。
         let usable = width - 2 * DS.s4 - 16 - CGFloat(count - 1) * DS.s4
         if usable < CGFloat(count) * zoom * 0.6 { count = max(1, count - 1) }
         let itemWidth = max(80, (width - 2 * DS.s4 - 16 - CGFloat(count - 1) * DS.s4) / CGFloat(count))
+        return (itemWidth, count)
+    }
+
+    private func fixedColumns(for width: CGFloat) -> (items: [GridItem], count: Int) {
+        let metrics = columnMetrics(for: width)
         return (
-            Array(repeating: GridItem(.fixed(itemWidth), spacing: DS.s4), count: count),
-            count
+            Array(repeating: GridItem(.fixed(metrics.itemWidth), spacing: DS.s4), count: metrics.count),
+            metrics.count
         )
     }
 
@@ -575,30 +590,37 @@ private struct GalleryGrid: View {
 
     private var grid: some View {
         let layout = fixedColumns(for: width)
+        // 瀑布模式各列行高不齐，「上下 = ±列数」的网格假设失效 ——
+        // 键盘列数报 1，上下键退化为顺序前后（和左右一致）。
+        let keyboardColumns = layoutMode == .waterfall ? 1 : layout.count
         return ScrollViewReader { proxy in
             ScrollView {
-                // 单层 LazyVGrid + Section：嵌套懒容器（LazyVStack>LazyVGrid）
-                // 在内容尾部有已知的重排抖动，扁平化后吸顶头由网格自己管。
-                LazyVGrid(
-                    columns: layout.items,
-                    alignment: .leading,
-                    spacing: DS.s4,
-                    pinnedViews: [.sectionHeaders]
-                ) {
-                    ForEach(sections) { section in
-                        Section {
-                            ForEach(section.shots) { shot in
-                                card(for: shot)
+                if layoutMode == .waterfall {
+                    waterfall
+                } else {
+                    // 单层 LazyVGrid + Section：嵌套懒容器（LazyVStack>LazyVGrid）
+                    // 在内容尾部有已知的重排抖动，扁平化后吸顶头由网格自己管。
+                    LazyVGrid(
+                        columns: layout.items,
+                        alignment: .leading,
+                        spacing: DS.s4,
+                        pinnedViews: [.sectionHeaders]
+                    ) {
+                        ForEach(sections) { section in
+                            Section {
+                                ForEach(section.shots) { shot in
+                                    card(for: shot, height: zoom * 0.68)
+                                }
+                            } header: {
+                                sectionHeader(for: section)
                             }
-                        } header: {
-                            sectionHeader(for: section)
                         }
                     }
+                    .padding(.horizontal, DS.s4)
+                    .padding(.bottom, DS.s3)
                 }
-                .padding(.horizontal, DS.s4)
-                .padding(.bottom, DS.s3)
             }
-            .onChange(of: layout.count, initial: true) { _, count in
+            .onChange(of: keyboardColumns, initial: true) { _, count in
                 GalleryKeyboard.shared.columnCountOverride = count
             }
             // 时间线 / 相似 sheet 里选中某张后要能真的滚到它。
@@ -611,6 +633,45 @@ private struct GalleryGrid: View {
                 }
             }
         }
+    }
+
+    /// 瀑布模式内容：外层 LazyVStack 保持**组级**懒加载 + 吸顶头，
+    /// 每个时间段内用 WaterfallLayout 一次排完（Layout 协议不懒，
+    /// 单段几十张全实例化可接受；几百张的库靠分段兜住）。
+    /// 这是「懒容器套非懒容器」—— 和出过事的 LazyVStack>LazyVGrid 双懒嵌套不同，
+    /// Layout 是确定性布局，没有内层懒实例化与吸顶 pin 的竞态。
+    private var waterfall: some View {
+        let metrics = columnMetrics(for: width)
+        return LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+            ForEach(sections) { section in
+                Section {
+                    WaterfallLayout(
+                        columnCount: metrics.count,
+                        columnWidth: metrics.itemWidth,
+                        spacing: DS.s4
+                    ) {
+                        ForEach(section.shots) { shot in
+                            card(for: shot, height: waterfallHeight(for: shot, columnWidth: metrics.itemWidth))
+                        }
+                    }
+                    .padding(.bottom, DS.s4)
+                } header: {
+                    sectionHeader(for: section)
+                }
+            }
+        }
+        .padding(.horizontal, DS.s4)
+        .padding(.bottom, DS.s3)
+    }
+
+    /// 瀑布卡片的缩略图高度 = 列宽 / 图片长宽比。
+    /// 尺寸元数据（pixelWidth/Height）建库时就有，不用解码图片。
+    /// 缩略图生成是等比缩放（ImageCodec.resized），CachedImage 的 .fit
+    /// 在这个高度下正好铺满，不裁切也不留边。
+    private func waterfallHeight(for shot: Shot, columnWidth: CGFloat) -> CGFloat {
+        let pixelWidth = CGFloat(max(1, shot.pixelWidth))
+        let pixelHeight = CGFloat(max(1, shot.pixelHeight))
+        return columnWidth * pixelHeight / pixelWidth
     }
 
     /// 吸顶分组标题：「今天 · 12」，垫 .bar 材质盖住滚过的卡片。
@@ -628,10 +689,10 @@ private struct GalleryGrid: View {
         .background(.bar)
     }
 
-    private func card(for shot: Shot) -> some View {
+    private func card(for shot: Shot, height: CGFloat) -> some View {
         ShotCard(
             shot: shot,
-            height: zoom * 0.68,
+            height: height,
             isSelected: selection.isSelected(shot.id),
             isFavorite: shot.id.map(store.isFavorite) ?? false,
             category: shot.id.flatMap { categoriesByShot[$0] },
@@ -763,6 +824,17 @@ private struct GalleryGrid: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Picker("显示模式", selection: $layoutMode) {
+                Image(systemName: "square.grid.2x2")
+                    .tag(GalleryLayoutMode.grid)
+                Image(systemName: "square.grid.3x1.below.line.grid.1x2")
+                    .tag(GalleryLayoutMode.waterfall)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .help("网格：整齐等高，超出裁切；瀑布：等宽不裁切，完整显示长图")
             Image(systemName: "square.grid.3x3")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
