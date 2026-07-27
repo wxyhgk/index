@@ -35,6 +35,17 @@ struct EditorView: View {
     private enum CanvasDrag { case draw, move, resize, idle }
     @State private var canvasDrag: CanvasDrag?
 
+    /// 画布缩放倍率。`nil` = 适应窗口（自适应 fitted 分支）；
+    /// 非 nil 时画布尺寸 = 图像点尺寸 × 倍率，包进 ScrollView 可平移。
+    @State private var zoomLevel: Double?
+
+    /// 缩放菜单的固定档位。
+    private static let zoomSteps: [Double] = [0.25, 0.5, 1, 2, 4]
+
+    /// 右侧面板的两个 tab：图层（列表 + 文字编辑 + 历史版本）/ 效果（美化、水印、外壳）。
+    private enum InspectorTab: String, CaseIterable { case layers = "图层", effects = "效果" }
+    @State private var inspectorTab: InspectorTab = .layers
+
     /// 右侧文字框获得焦点时，裸键工具快捷键（R / A / …）必须让位给打字。
     @FocusState private var textFieldFocused: Bool
 
@@ -112,14 +123,16 @@ struct EditorView: View {
 
     private var toolbar: some View {
         HStack(spacing: 12) {
+            // Snagit 式大按钮：图标上、标签下，工具一目了然。
             HStack(spacing: 2) {
                 ForEach(Array(Self.toolOrder.enumerated()), id: \.offset) { _, tool in
                     toolButton(tool)
                 }
             }
 
-            Divider().frame(height: 18)
+            Spacer(minLength: DS.s2)
 
+            // 颜色 / 粗细保持小控件，靠右紧凑放。
             HStack(spacing: 4) {
                 ForEach(AnnotationState.palette.indices, id: \.self) { index in
                     colorButton(index)
@@ -155,35 +168,9 @@ struct EditorView: View {
             .disabled(!annotation.canRedo)
             .keyboardShortcut("z", modifiers: [.command, .shift])
             .help("重做（⇧⌘Z）")
-
-            Divider().frame(height: 18)
-
-            // 三组输出选项包进 Group：HStack 的 ViewBuilder 最多 10 个子视图，
-            // 开关 + 条件菜单已经把名额吃满了。
-            Group {
-                backdropToggle
-                if annotation.hasBackdrop {
-                    backdropPresetMenu
-                }
-                watermarkToggle
-                if annotation.hasWatermark {
-                    watermarkModeMenu
-                }
-                frameToggle
-                if annotation.hasFrame {
-                    frameStyleMenu
-                }
-            }
-
-            Spacer()
-
-            Text(shot.sourceSummary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.vertical, 6)
     }
 
     private func toolButton(_ tool: AnnotationTool?) -> some View {
@@ -193,12 +180,18 @@ struct EditorView: View {
         return Button {
             selectTool(tool)
         } label: {
-            Image(systemName: tool?.symbolName ?? "cursorarrow")
-                .frame(width: 26, height: 22)
+            VStack(spacing: 3) {
+                Image(systemName: tool?.symbolName ?? "cursorarrow")
+                    .font(.system(size: 15))
+                    .frame(height: 18)
+                Text(tool?.title ?? "指针")
+                    .font(.caption2)
+            }
+            .frame(width: 48, height: 44)
         }
         .buttonStyle(.plain)
         .background(
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(selected ? Color.accentColor.opacity(0.22) : .clear)
         )
         .foregroundStyle(selected ? Color.accentColor : .primary)
@@ -255,53 +248,107 @@ struct EditorView: View {
         .help("粗细 \(index + 1)")
     }
 
-    /// 美化开关。backdrop 只影响导出/复制/保存的成品 ——
-    /// 画布预览刻意不变（见 `AnnotationRenderer` 的说明），按钮高亮表达状态。
-    private var backdropToggle: some View {
-        let on = annotation.hasBackdrop
-        return Button {
+    // MARK: - 效果面板（右侧「效果」tab）
+
+    /// 效果 tab：每个效果一行分组卡片（开关 + 展开的样式子选项）。
+    /// 行样式对齐图库 inspector：quaternary 底 + DS.radiusCard + caption.semibold 组题。
+    private var effectsPanel: some View {
+        ScrollView {
+            VStack(spacing: DS.s3) {
+                backdropCard
+                watermarkCard
+                frameCard
+                // 插槽：captureInfo 效果行（另一分支提供 EditorCaptureInfoRow）
+            }
+            .padding(DS.s3)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// 分组卡片骨架：组题 + 右侧开关，开着时展开子选项。
+    private func effectCard(
+        _ title: String,
+        isOn: Bool,
+        toggle: @escaping () -> Void,
+        @ViewBuilder options: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DS.s2) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Toggle(title, isOn: Binding(get: { isOn }, set: { _ in toggle() }))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+            }
+            if isOn {
+                options()
+            }
+        }
+        .padding(DS.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: DS.radiusCard))
+    }
+
+    /// 美化行。backdrop 只影响导出/复制/保存的成品 ——
+    /// 画布预览刻意不变（见 `AnnotationRenderer` 的说明），开关表达状态。
+    /// 预设色块点选即换（`setBackdropPreset`），作为一条可撤销的 style 记录。
+    private var backdropCard: some View {
+        effectCard("美化", isOn: annotation.hasBackdrop, toggle: {
             annotation.toggleBackdrop()
             annotationTick += 1
-        } label: {
-            Image(systemName: "sparkles").frame(width: 26, height: 22)
-        }
-        .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(on ? Color.accentColor.opacity(0.22) : .clear)
-        )
-        .foregroundStyle(on ? Color.accentColor : .primary)
-        .help("美化背景（导出时垫渐变背景 + 圆角 + 阴影）")
-    }
-
-    /// 背景预设选择。选中即替换 backdrop 层的预设名，作为一条可撤销的 style 记录。
-    private var backdropPresetMenu: some View {
-        Menu {
-            ForEach(BackdropPreset.allCases, id: \.rawValue) { preset in
-                Button {
-                    annotation.setBackdropPreset(preset.rawValue)
-                    annotationTick += 1
-                } label: {
-                    if annotation.backdropPresetID == preset.rawValue {
-                        Label(preset.displayName, systemImage: "checkmark")
-                    } else {
-                        Text(preset.displayName)
-                    }
+        }) {
+            HStack(spacing: DS.s2) {
+                ForEach(BackdropPreset.allCases, id: \.rawValue) { preset in
+                    backdropSwatch(preset)
                 }
             }
-        } label: {
-            Image(systemName: "paintpalette").frame(width: 26, height: 22)
         }
-        .menuStyle(.borderlessButton)
-        .frame(width: 40)
-        .help("美化背景预设")
     }
 
-    /// 水印开关。按设置里的参数造层（没配文案时用 "MacShot" 兜底）。
-    /// 和美化不同，水印会画进画布预览 —— 它影响构图判断。
-    private var watermarkToggle: some View {
-        let on = annotation.hasWatermark
+    /// 背景预设小色块：渐变预设画渐变、纯色预设画灰块，选中态描 accent 边。
+    private func backdropSwatch(_ preset: BackdropPreset) -> some View {
+        let selected = annotation.backdropPresetID == preset.rawValue
         return Button {
+            annotation.setBackdropPreset(preset.rawValue)
+            annotationTick += 1
+        } label: {
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(swatchGradient(preset))
+                .frame(width: 40, height: 26)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .strokeBorder(
+                            selected ? Color.accentColor : Color.primary.opacity(0.12),
+                            lineWidth: selected ? 2 : 1
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .help(preset.displayName)
+    }
+
+    private func swatchGradient(_ preset: BackdropPreset) -> LinearGradient {
+        guard let (a, b) = preset.gradientColors else {
+            // solid 预设：导出时用图层自身颜色，色块示意为中性灰。
+            return LinearGradient(
+                colors: [Color(.sRGB, white: 0.4, opacity: 1)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+        }
+        return LinearGradient(
+            colors: [Color(cgColor: a), Color(cgColor: b)],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+        )
+    }
+
+    /// 水印行。按设置里的参数造层（没配文案时用 "MacShot" 兜底）。
+    /// 和美化不同，水印会画进画布预览 —— 它影响构图判断。
+    /// 位置三选走 `setWatermarkMode`，作为一条可撤销的 style 记录。
+    private var watermarkCard: some View {
+        effectCard("水印", isOn: annotation.hasWatermark, toggle: {
             let settings = AppSettings.shared
             let text = settings.trimmedWatermarkText
             annotation.toggleWatermark(
@@ -310,82 +357,45 @@ struct EditorView: View {
                 alpha: settings.watermarkAlpha
             )
             annotationTick += 1
-        } label: {
-            Image(systemName: "signature").frame(width: 26, height: 22)
-        }
-        .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(on ? Color.accentColor.opacity(0.22) : .clear)
-        )
-        .foregroundStyle(on ? Color.accentColor : .primary)
-        .help("水印（文字盖在成品上，文案/透明度见设置）")
-    }
-
-    /// 水印位置切换。选中即替换 watermark 层的模式，作为一条可撤销的 style 记录。
-    private var watermarkModeMenu: some View {
-        Menu {
-            ForEach(WatermarkMode.allCases) { mode in
-                Button {
+        }) {
+            Picker("水印位置", selection: Binding(
+                get: { annotation.watermarkMode ?? .corner },
+                set: { mode in
                     annotation.setWatermarkMode(mode)
                     annotationTick += 1
-                } label: {
-                    if annotation.watermarkMode == mode {
-                        Label(mode.displayName, systemImage: "checkmark")
-                    } else {
-                        Text(mode.displayName)
-                    }
+                }
+            )) {
+                ForEach(WatermarkMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
                 }
             }
-        } label: {
-            Image(systemName: "square.grid.3x3").frame(width: 26, height: 22)
+            .pickerStyle(.segmented)
+            .labelsHidden()
         }
-        .menuStyle(.borderlessButton)
-        .frame(width: 40)
-        .help("水印位置")
     }
 
-    /// 套壳开关。frame 只影响导出/复制/保存的成品，画布预览刻意不变（同美化的取舍）。
-    /// 开壳时把 shot 的真实窗口标题 / 网址烤进壳的参数 JSON（见 `load`）。
-    private var frameToggle: some View {
-        let on = annotation.hasFrame
-        return Button {
+    /// 外壳行。frame 只影响导出/复制/保存的成品，画布预览刻意不变（同美化的取舍）。
+    /// 开壳时把 shot 的真实窗口标题 / 网址烤进壳的参数 JSON（见 `load`）；
+    /// 样式二选走 `setFrameStyle`，作为一条可撤销的 style 记录。
+    private var frameCard: some View {
+        effectCard("外壳", isOn: annotation.hasFrame, toggle: {
             annotation.toggleFrame()
             annotationTick += 1
-        } label: {
-            Image(systemName: "macwindow").frame(width: 26, height: 22)
-        }
-        .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(on ? Color.accentColor.opacity(0.22) : .clear)
-        )
-        .foregroundStyle(on ? Color.accentColor : .primary)
-        .help("带壳截图（导出时套 macOS 窗口 / 浏览器壳，标题和网址是真实元数据）")
-    }
-
-    /// 壳样式切换（macOS 窗口 / 浏览器）。选中即改写壳的参数 JSON，
-    /// 作为一条可撤销的 style 记录。
-    private var frameStyleMenu: some View {
-        Menu {
-            ForEach(FrameSpec.Style.allCases, id: \.rawValue) { style in
-                Button {
+        }) {
+            Picker("壳样式", selection: Binding(
+                get: { annotation.frameStyle ?? .macos },
+                set: { style in
                     annotation.setFrameStyle(style)
                     annotationTick += 1
-                } label: {
-                    if annotation.frameStyle == style {
-                        Label(style.displayName, systemImage: "checkmark")
-                    } else {
-                        Text(style.displayName)
-                    }
+                }
+            )) {
+                ForEach(FrameSpec.Style.allCases, id: \.rawValue) { style in
+                    Text(style.displayName).tag(style)
                 }
             }
-        } label: {
-            Image(systemName: "menubar.dock.rectangle").frame(width: 26, height: 22)
+            .pickerStyle(.segmented)
+            .labelsHidden()
         }
-        .menuStyle(.borderlessButton)
-        .frame(width: 40)
-        .help("壳样式")
     }
 
     private func selectTool(_ tool: AnnotationTool?) {
@@ -394,14 +404,21 @@ struct EditorView: View {
         annotationTick += 1
     }
 
-    /// ⌫ 删除选中图层。挂在一个不可见按钮上；打字时禁用，退格让给文字框。
+    /// 不可见按钮承载的快捷键：⌫ 删除选中图层（打字时禁用，退格让给文字框）、
+    /// ⌘0 适应窗口、⌘+ 放大（⌘= 挂在底栏的加号按钮上，这里补真正的 "+" 键）。
     private var hiddenShortcuts: some View {
-        Button("删除选中图层") { performDelete() }
-            .keyboardShortcut(.delete, modifiers: [])
-            .disabled(textFieldFocused || annotation.selectedID == nil)
-            .opacity(0)
-            .frame(width: 0, height: 0)
-            .accessibilityHidden(true)
+        Group {
+            Button("删除选中图层") { performDelete() }
+                .keyboardShortcut(.delete, modifiers: [])
+                .disabled(textFieldFocused || annotation.selectedID == nil)
+            Button("适应窗口") { zoomLevel = nil }
+                .keyboardShortcut("0", modifiers: .command)
+            Button("放大") { zoomIn() }
+                .keyboardShortcut("+", modifiers: .command)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
     }
 
     // MARK: - 操作
@@ -426,50 +443,74 @@ struct EditorView: View {
 
     // MARK: - 画布
 
+    /// 两种布局分支共用一条 `canvasBody` 修饰链，只是 fitted 矩形来源不同：
+    /// 适应窗口时由视口大小算 fitted；缩放时画布尺寸 = 图像点尺寸 × 倍率，
+    /// 包进双向 ScrollView 平移，小于视口时通过 fitted 的 origin 居中。
+    @ViewBuilder
     private var canvas: some View {
-        GeometryReader { geo in
-            let fitted = fittedRect(in: geo.size)
-
-            LayerCanvas(
-                image: canvasImage ?? blankImage,
-                layers: annotation.displayLayers.projected(onto: .zero, scale: 1),
-                pixelatePreviews: annotation.pixelatePreviews,
-                selectedLayerID: annotation.selectedID
-            )
-            .frame(width: fitted.width, height: fitted.height)
-            .offset(x: fitted.minX, y: fitted.minY)
-            .contentShape(Rectangle())
-            .onContinuousHover { phase in
-                // 指针模式下悬停到选中图层的缩放控制点 → resize 光标。
-                // 坐标映射和下面的 DragGesture 完全一致（同一条修饰链）。
-                switch phase {
-                case .active(let location):
-                    annotation.strokeScale = Double(
-                        CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width)
-                    )
-                    if annotation.tool == nil,
-                       let handle = annotation.resizeHandle(
-                           at: imagePoint(location, fitted: fitted)
-                       ) {
-                        handle.cursor.set()
-                    } else {
-                        NSCursor.arrow.set()
-                    }
-                case .ended:
-                    NSCursor.arrow.set()
+        if let zoom = zoomLevel {
+            GeometryReader { geo in
+                let rects = zoomedRects(zoom: zoom, viewport: geo.size)
+                ScrollView([.horizontal, .vertical]) {
+                    canvasBody(fitted: rects.fitted)
+                        .frame(
+                            width: rects.content.width,
+                            height: rects.content.height,
+                            alignment: .topLeading
+                        )
                 }
             }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        handleDragChanged(value, fitted: fitted)
-                    }
-                    .onEnded { _ in
-                        handleDragEnded()
-                    }
-            )
+        } else {
+            GeometryReader { geo in
+                canvasBody(fitted: fittedRect(in: geo.size))
+            }
+            .padding(16)
         }
-        .padding(16)
+    }
+
+    /// 画布本体 + 手势。`fitted` 是画布在其父容器坐标里的摆放矩形 ——
+    /// 视图以 topLeading 参与布局（origin 在父容器 (0,0)），再 offset 到 fitted 的
+    /// origin。offset 只挪渲染和命中位置、不动布局 frame，所以手势的 .local 坐标
+    /// 落在父容器空间里，`imagePoint` 统一减掉 fitted.origin 再除显示倍率。
+    private func canvasBody(fitted: CGRect) -> some View {
+        LayerCanvas(
+            image: canvasImage ?? blankImage,
+            layers: annotation.displayLayers.projected(onto: .zero, scale: 1),
+            pixelatePreviews: annotation.pixelatePreviews,
+            selectedLayerID: annotation.selectedID
+        )
+        .frame(width: fitted.width, height: fitted.height)
+        .offset(x: fitted.minX, y: fitted.minY)
+        .contentShape(Rectangle())
+        .onContinuousHover { phase in
+            // 指针模式下悬停到选中图层的缩放控制点 → resize 光标。
+            // 坐标映射和下面的 DragGesture 完全一致（同一条修饰链）。
+            switch phase {
+            case .active(let location):
+                annotation.strokeScale = Double(
+                    CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width)
+                )
+                if annotation.tool == nil,
+                   let handle = annotation.resizeHandle(
+                       at: imagePoint(location, fitted: fitted)
+                   ) {
+                    handle.cursor.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            case .ended:
+                NSCursor.arrow.set()
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    handleDragChanged(value, fitted: fitted)
+                }
+                .onEnded { _ in
+                    handleDragEnded()
+                }
+        )
     }
 
     private func handleDragChanged(_ value: DragGesture.Value, fitted: CGRect) {
@@ -558,6 +599,24 @@ struct EditorView: View {
         return CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
     }
 
+    /// 固定倍率下的布局：画布尺寸 = 图像点尺寸（像素 ÷ shot.scale）× 倍率，
+    /// 四周留 16pt 空白；ScrollView 内容至少撑满视口，画布小于视口时居中。
+    /// 返回的 `fitted` 与自适应分支同构（origin = 画布在滚动内容里的位置），
+    /// `imagePoint` / 手势因此不区分分支。
+    private func zoomedRects(
+        zoom: Double, viewport: CGSize
+    ) -> (fitted: CGRect, content: CGSize) {
+        let pointScale = CGFloat(max(1, shot.scale))
+        let w = CGFloat(max(1, shot.pixelWidth)) / pointScale * CGFloat(zoom)
+        let h = CGFloat(max(1, shot.pixelHeight)) / pointScale * CGFloat(zoom)
+        let cw = max(w + 32, viewport.width)
+        let ch = max(h + 32, viewport.height)
+        return (
+            fitted: CGRect(x: (cw - w) / 2, y: (ch - h) / 2, width: w, height: h),
+            content: CGSize(width: cw, height: ch)
+        )
+    }
+
     /// 视图坐标 → 图像像素坐标（左上原点）。
     private func imagePoint(_ point: CGPoint, fitted: CGRect) -> CGPoint {
         let scale = CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width)
@@ -567,9 +626,47 @@ struct EditorView: View {
         )
     }
 
-    // MARK: - 右侧图层面板
+    // MARK: - 缩放控制
+
+    /// 升到下一档；已是最大档或从「适应窗口」起步时按 100% 为基准。
+    private func zoomIn() {
+        let current = zoomLevel ?? 1
+        zoomLevel = Self.zoomSteps.first { $0 > current + 0.001 } ?? Self.zoomSteps.last
+    }
+
+    private func zoomOut() {
+        let current = zoomLevel ?? 1
+        zoomLevel = Self.zoomSteps.last { $0 < current - 0.001 } ?? Self.zoomSteps.first
+    }
+
+    private var zoomLabel: String {
+        zoomLevel.map { "\(Int(($0 * 100).rounded()))%" } ?? "适应"
+    }
+
+    // MARK: - 右侧面板（图层 / 效果双 tab）
 
     private var inspector: some View {
+        VStack(spacing: 0) {
+            Picker("面板", selection: $inspectorTab) {
+                ForEach(InspectorTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, DS.s3)
+            .padding(.vertical, DS.s2)
+
+            Divider()
+
+            switch inspectorTab {
+            case .layers: layersPanel
+            case .effects: effectsPanel
+            }
+        }
+    }
+
+    private var layersPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("图层（\(annotation.layers.count)）")
                 .font(.headline)
@@ -683,13 +780,24 @@ struct EditorView: View {
         .padding(12)
     }
 
-    // MARK: - 底部
+    // MARK: - 底部状态栏
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            Text("原图 \(shot.pixelWidth) × \(shot.pixelHeight) · 从不被修改")
-                .font(.caption)
+            zoomControls
+
+            Divider().frame(height: 14)
+
+            // 尺寸读数：像素尺寸 @ 显示倍率。原图字节从不被修改（见文件头注释）。
+            Text("\(shot.pixelWidth) × \(shot.pixelHeight) @\(scaleReadout)x")
+                .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+
+            Text(shot.sourceSummary)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+
             Spacer()
             Button("复制") { copyRendered() }
             Button("导出 PNG") { exportRendered() }
@@ -701,6 +809,65 @@ struct EditorView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// 缩放控制：`-` / 百分比菜单 / `+`。⌘- 缩小、⌘=（和 ⌘+，见 hiddenShortcuts）
+    /// 放大、⌘0 适应窗口。
+    private var zoomControls: some View {
+        HStack(spacing: 2) {
+            Button {
+                zoomOut()
+            } label: {
+                Image(systemName: "minus.magnifyingglass").frame(width: 22, height: 18)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("-", modifiers: .command)
+            .help("缩小（⌘-）")
+
+            Menu {
+                ForEach(Self.zoomSteps, id: \.self) { step in
+                    Button {
+                        zoomLevel = step
+                    } label: {
+                        if zoomLevel == step {
+                            Label("\(Int((step * 100).rounded()))%", systemImage: "checkmark")
+                        } else {
+                            Text("\(Int((step * 100).rounded()))%")
+                        }
+                    }
+                }
+                Divider()
+                Button {
+                    zoomLevel = nil
+                } label: {
+                    if zoomLevel == nil {
+                        Label("适应窗口", systemImage: "checkmark")
+                    } else {
+                        Text("适应窗口")
+                    }
+                }
+            } label: {
+                Text(zoomLabel)
+                    .font(.caption.monospacedDigit())
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("缩放（⌘0 适应窗口）")
+
+            Button {
+                zoomIn()
+            } label: {
+                Image(systemName: "plus.magnifyingglass").frame(width: 22, height: 18)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("=", modifiers: .command)
+            .help("放大（⌘+）")
+        }
+    }
+
+    /// 显示倍率读数：整数倍去掉小数点（"2" 而不是 "2.0"）。
+    private var scaleReadout: String {
+        String(format: "%g", max(1, shot.scale))
     }
 
     private func rendered() -> CGImage? {
