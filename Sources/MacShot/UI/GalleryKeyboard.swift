@@ -42,6 +42,10 @@ final class GalleryKeyboard {
               window.attachedSheet == nil
         else { return false }
 
+        // 编辑器模式（单窗口双模式）：方向键/空格/回车/⌘⌫ 全放行 ——
+        // 编辑器有自己的快捷键体系（SwiftUI keyboardShortcut），这里一个键都不抢。
+        guard GallerySelection.shared.editingShot == nil else { return false }
+
         let responder = window.firstResponder
         // 搜索框输入中（字段编辑器是 NSTextView）：一个键都不抢。
         if responder is NSTextView { return false }
@@ -54,7 +58,7 @@ final class GalleryKeyboard {
         case KeyCode.returnKey where flags.isEmpty,
              KeyCode.keypadEnter where flags.isEmpty:
             guard let shot = selectedShot() else { return false }
-            EditorWindowController.open(shot)
+            GallerySelection.shared.editingShot = shot
             return true
 
         case KeyCode.a where flags == .command:

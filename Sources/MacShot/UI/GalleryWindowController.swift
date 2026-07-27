@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Quartz
 import SwiftUI
 
@@ -6,6 +7,9 @@ import SwiftUI
 final class GalleryWindowController: NSWindowController {
 
     static let shared = GalleryWindowController()
+
+    /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
+    private var editingCancellable: AnyCancellable?
 
     private init() {
         let hosting = NSHostingController(rootView: GalleryView())
@@ -26,6 +30,17 @@ final class GalleryWindowController: NSWindowController {
         super.init(window: window)
 
         GalleryKeyboard.shared.install()
+
+        // 单窗口双模式（Editor/Library）：编辑中把标题换成「标注 — 出处」，
+        // 返回图库时恢复；进入编辑瞬间若 Quick Look 面板开着，顺手收掉 ——
+        // 编辑器有自己的空格语义，面板留着只会盖住画布。
+        editingCancellable = GallerySelection.shared.$editingShot
+            .sink { [weak self] shot in
+                self?.window?.title = shot.map { "标注 — \($0.sourceSummary)" } ?? "MacShot 图库"
+                if shot != nil {
+                    QuickLookController.shared.close()
+                }
+            }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -55,5 +70,12 @@ final class GalleryWindowController: NSWindowController {
             GallerySelection.shared.select(only: shot.id)
         }
         WindowRegistry.shared.present(self, dockIcon: true)
+    }
+
+    /// 图库外部的编辑入口（钉图「编辑标注」、滚动截图完成等）：
+    /// 弹出图库窗口并直接进入编辑器模式。
+    func showEditor(for shot: Shot) {
+        show(selecting: shot)
+        GallerySelection.shared.editingShot = shot
     }
 }
