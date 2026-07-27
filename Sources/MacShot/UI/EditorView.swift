@@ -10,8 +10,10 @@ import AppKit
 struct EditorView: View {
 
     let shot: Shot
+    /// 关闭宿主窗口。编辑器活在独立 NSWindow 里（EditorWindowController），
+    /// SwiftUI 的 `dismiss` 环境值在这儿不起作用，由窗口控制器注入。
+    let onClose: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     // 不订阅 store：后台 OCR 回填会触发它发布变更，没必要为此重建整个编辑器。
     private let store = ShotStore.shared
 
@@ -694,7 +696,7 @@ struct EditorView: View {
             Button("保存为新版本") { saveRevision() }
                 .keyboardShortcut("s", modifiers: .command)
                 .buttonStyle(.borderedProminent)
-            Button("关闭") { dismiss() }
+            Button("关闭") { onClose() }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 14)
@@ -708,6 +710,7 @@ struct EditorView: View {
 
     private func saveRevision() {
         annotation.endTextEditing()
+        guard confirmSaveOverNewerRevision() else { return }
         store.appendRevision(
             shot: shot,
             layers: exportedLayers,
@@ -716,6 +719,25 @@ struct EditorView: View {
         revisions = store.revisions(for: shot)
         loadedRevisionIndex = revisions.count - 1
         annotationTick += 1
+    }
+
+    /// 多窗口下的并发保存检测：修订链本身由 appendRevision 的单事务保证线性
+    /// （不会坏链），但后保存的一方是基于打开时的旧图层覆盖式追加 ——
+    /// 图库里已经出现更新的修订（另一个编辑器窗口 / 钉图 / 自动脱敏落的）时，
+    /// 先问一声再追加。`revisions` 在打开和每次保存后都会与库同步，
+    /// 它的尾项就是本窗口所认知的「最新」。
+    private func confirmSaveOverNewerRevision() -> Bool {
+        guard store.latestRevision(for: shot)?.id != revisions.last?.id else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = "图库中已有更新的修订，仍要保存吗？"
+        alert.informativeText = "这张截图在别处（另一个编辑器窗口、钉图或自动脱敏）"
+            + "已保存了更新的版本。继续保存会把当前画布内容追加为最新修订，"
+            + "历史版本都还在，不会丢失。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "仍要保存")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func copyRendered() {
