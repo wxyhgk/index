@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import AppKit
 
@@ -16,6 +17,9 @@ struct EditorView: View {
     /// 胶片条换图：由窗口控制器注入，控制器**重建 rootView** 完成切换
     /// （`shot` 因此得以保持 `let`）。未保存守卫在本视图侧（见 `requestSwitch`）。
     let onSwitchShot: (Shot) -> Void
+    /// 图库双击发来的换图请求（单窗口模式：编辑中双击别的图不弹新窗）。
+    /// 和胶片条走同一条 `requestSwitch` 守卫链路。
+    let switchRequests: AnyPublisher<Shot, Never>
 
     // 不订阅 store：后台 OCR 回填会触发它发布变更，没必要为此重建整个编辑器。
     private let store = ShotStore.shared
@@ -83,6 +87,7 @@ struct EditorView: View {
         .frame(minWidth: 900, minHeight: 620)
         .background(hiddenShortcuts)
         .onAppear(perform: load)
+        .onReceive(switchRequests) { requestSwitch(to: $0) }
     }
 
     // MARK: - 加载

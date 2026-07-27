@@ -2,46 +2,46 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// 标注编辑器的独立窗口。每个 shot 一个窗口实例 —— 编辑不再是模态 sheet，
-/// 图库照常可用，多张截图可以并排同时编辑、互相参考。
+/// 标注编辑器的独立窗口 —— **单窗口模式**：全 App 同时只有一个编辑器窗口，
+/// 再次双击别的截图不弹新窗，而是在这个窗口里换图（走和胶片条同一条
+/// 未保存守卫链路）。编辑不再是模态 sheet，图库照常可用。
 ///
 /// 生命周期由 `WindowRegistry.present(dockIcon: true, retain: true)` 统一持有
 /// （同钉图的持有方式；编辑器是「正经窗口」，参与 Dock 图标引用计数）。
-/// 查重是本控制器自己的弱引用映射：WindowRegistry 只管生命周期不做查重，
-/// 同一张图重复打开时激活已有窗口而不是再开一个。
+/// `current` 是弱引用 —— 强持有仍在 WindowRegistry 那一份，
+/// 窗口关闭析构后自动置 nil，不构成第二套 living 集合。
 @MainActor
 final class EditorWindowController: NSWindowController {
 
-    /// shotID → 已打开的编辑器窗口。**弱引用** —— 强持有仍在 WindowRegistry
-    /// （retain: true）那一份，这里只做查重，窗口析构后自动出表，
-    /// 不构成第二套 living 集合。
-    private static let openEditors =
-        NSMapTable<NSNumber, EditorWindowController>.strongToWeakObjects()
+    private static weak var current: EditorWindowController?
 
-    /// 所有编辑器窗口共用一个 frame autosave 名：用户预期是
-    /// 「编辑器上次的位置和大小」，按 shot 独立记没有必要。
     private static let frameAutosaveName = "MacShotEditor"
 
-    /// 当前编辑中的 shot。胶片条换图（`switchTo`）时更新，查重表随之迁移。
+    /// 当前编辑中的 shot。换图（`switchTo`）时更新。
     private var shot: Shot
+
+    /// 图库双击 → 已有窗口时把换图请求发给视图（视图侧持有未保存基线，
+    /// 守卫必须在那边跑）。视图 `.onReceive` 接住后走 `requestSwitch`。
+    private let switchRequests = PassthroughSubject<Shot, Never>()
 
     /// 订阅库的变更：正在编辑的 shot 被删（图库删除等）时关掉本窗口 ——
     /// 编辑一条已不存在的记录没有意义，保存也无处可去。
     private var storeCancellable: AnyCancellable?
 
-    /// 打开（或激活）某张截图的编辑器窗口。
+    /// 打开编辑器。已有窗口时不弹新窗：同一张就只激活，
+    /// 不同张则把换图请求交给视图的未保存守卫。
     static func open(_ shot: Shot) {
-        if let id = shot.id,
-           let existing = openEditors.object(forKey: NSNumber(value: id)) {
+        if let existing = current {
             NSApp.activate(ignoringOtherApps: true)
             existing.window?.makeKeyAndOrderFront(nil)
+            if shot.id != existing.shot.id {
+                existing.switchRequests.send(shot)
+            }
             return
         }
 
         let controller = EditorWindowController(shot: shot)
-        if let id = shot.id {
-            openEditors.setObject(controller, forKey: NSNumber(value: id))
-        }
+        current = controller
         WindowRegistry.shared.present(controller, dockIcon: true, retain: true)
     }
 
@@ -67,13 +67,7 @@ final class EditorWindowController: NSWindowController {
         if !window.setFrameUsingName(Self.frameAutosaveName) {
             window.center()
         }
-        // 同名 autosave 同时只能挂在一个窗口上：第二个编辑器挂不上（返回 false）,
-        // 只恢复不追踪，并往右下错开一点，避免和已有窗口完全重叠。
-        if !window.setFrameAutosaveName(Self.frameAutosaveName) {
-            window.setFrameTopLeftPoint(
-                NSPoint(x: window.frame.minX + 28, y: window.frame.maxY - 28)
-            )
-        }
+        window.setFrameAutosaveName(Self.frameAutosaveName)
 
         storeCancellable = ShotStore.shared.objectWillChange.sink { [weak self] _ in
             // objectWillChange 在变更**之前**发布；转一拍再查库，读到的才是变更后的状态。
@@ -85,35 +79,17 @@ final class EditorWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    // MARK: - 换图（胶片条驱动）
+    // MARK: - 换图（胶片条 / 图库双击共用）
 
     /// 不出编辑器换到另一张截图。
     ///
     /// 换图 = 重建 rootView：EditorView 保持 `shot: let` 零改动，重新走一遍
     /// onAppear → load()（`annotation.load` 清撤销栈，与打开新窗口行为一致）。
     /// 未保存守卫在 EditorView 侧（基线数据在视图内部），守卫通过后才会调到这里。
-    ///
-    /// 目标 shot 已有另一个编辑器窗口时**不换图**，转而激活那个窗口 ——
-    /// 与 `open(_:)` 的查重语义一致；否则查重表迁移：旧 shotID 出表、新 shotID 入表。
     func switchTo(_ target: Shot) {
         guard target.id != shot.id, let window else { return }
 
-        if let id = target.id,
-           let existing = Self.openEditors.object(forKey: NSNumber(value: id)),
-           existing !== self {
-            NSApp.activate(ignoringOtherApps: true)
-            existing.window?.makeKeyAndOrderFront(nil)
-            return
-        }
-
-        if let oldID = shot.id {
-            Self.openEditors.removeObject(forKey: NSNumber(value: oldID))
-        }
         shot = target
-        if let newID = target.id {
-            Self.openEditors.setObject(self, forKey: NSNumber(value: newID))
-        }
-
         window.title = "标注 — \(target.sourceSummary)"
         // 替换 contentViewController 会让窗口缩回视图的理想尺寸，先记住帧再恢复。
         let frame = window.frame
@@ -125,7 +101,8 @@ final class EditorWindowController: NSWindowController {
         EditorView(
             shot: shot,
             onClose: { [weak self] in self?.window?.close() },
-            onSwitchShot: { [weak self] target in self?.switchTo(target) }
+            onSwitchShot: { [weak self] target in self?.switchTo(target) },
+            switchRequests: switchRequests.eraseToAnyPublisher()
         )
     }
 
