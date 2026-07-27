@@ -54,7 +54,7 @@ final class GalleryKeyboard {
         case KeyCode.returnKey where flags.isEmpty,
              KeyCode.keypadEnter where flags.isEmpty:
             guard let shot = selectedShot() else { return false }
-            GallerySelection.shared.editing = shot
+            EditorWindowController.open(shot)
             return true
 
         case KeyCode.a where flags == .command:

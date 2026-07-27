@@ -13,7 +13,6 @@ final class GallerySelection: ObservableObject {
     /// 主选中：单选时的那张 / 多选时最后操作的那张。
     /// inspector 展示、键盘走格起点、Quick Look 定位都以它为准。
     @Published private(set) var primaryID: Int64?
-    @Published var editing: Shot?
     /// 待确认删除的截图 ID（展示顺序）。键盘 ⌘⌫、右键菜单、多选面板都写这里，
     /// 由 GalleryGrid 上唯一的 confirmationDialog 消费 —— 确认框只有一套。
     @Published var pendingDeleteIDs: [Int64]?
@@ -176,9 +175,6 @@ struct GalleryView: View {
             if !semantic { store.clearSemanticResults() }
         }
         .frame(minWidth: 1000, minHeight: 600)
-        .sheet(item: $selection.editing) { shot in
-            EditorView(shot: shot)
-        }
     }
 
     @ViewBuilder
@@ -648,7 +644,7 @@ private struct GalleryGrid: View {
             TapGesture(count: 2).onEnded {
                 // 带修饰键的双击只是两次修饰点击（toggle / 范围），不进编辑器。
                 guard currentModifiers().isEmpty else { return }
-                selection.editing = shot
+                EditorWindowController.open(shot)
             }
         )
         .draggable(dragFile(for: shot))
@@ -787,7 +783,7 @@ private struct GalleryGrid: View {
         Button(shot.id.map(store.isFavorite) ?? false ? "取消收藏" : "收藏") {
             store.toggleFavorite(shot)
         }
-        Button("编辑标注") { selection.editing = shot }
+        Button("编辑标注") { EditorWindowController.open(shot) }
         Button("钉在桌面") { pin(shot) }
         Button("复制图片") { copy(shot) }
         Divider()
@@ -1362,12 +1358,12 @@ private struct ShotDetailPane: View {
         // 指纹由后台分析异步补上：store 每次刷新（属性落库会触发 reload）都重查一次。
         // 属性写入不一定改变 shots 数组本身，所以订阅 objectWillChange 而不是 onChange。
         // 单行 LIMIT 1 查询，代价可忽略。
+        // 修订列表同理：编辑器已是独立窗口（非模态），保存时机不再有
+        // 「sheet 收起」这样的锚点 —— appendRevision 落库会发布变更，这里重查。
         .onReceive(store.objectWillChange) { _ in
             refreshFeaturePrint()
             refreshSensitiveRegions()
-        }
-        .onChange(of: selection.editing) { _, newValue in
-            if newValue == nil { loadRevisions() }
+            loadRevisions()
         }
         .sheet(isPresented: $showingSimilar) {
             SimilarShotsSheet(shot: shot)
@@ -1496,7 +1492,7 @@ private struct ShotDetailPane: View {
     private var actions: some View {
         HStack(spacing: DS.s2) {
             Button {
-                selection.editing = shot
+                EditorWindowController.open(shot)
             } label: {
                 Label("编辑", systemImage: "pencil.tip.crop.circle")
             }

@@ -397,7 +397,7 @@ final class ShotStore: ObservableObject {
         guard let shotID = shot.id else { return nil }
 
         do {
-            return try dbQueue.write { db -> Revision in
+            let saved = try dbQueue.write { db -> Revision in
                 let parent = try Revision
                     .filter(Revision.Columns.shotID == shotID)
                     .order(Column("id").desc)
@@ -412,6 +412,10 @@ final class ShotStore: ObservableObject {
                 try rev.insert(db)
                 return rev
             }
+            // 修订不在 shots 数组里，落库不会自己触发发布 —— 编辑器已是独立
+            // 非模态窗口，图库详情栏（历史版本 / 已打码判定）靠这次发布重查。
+            objectWillChange.send()
+            return saved
         } catch {
             // 此前是 try?，写失败仍返回一个 id 为 nil 的 Revision，调用方无从分辨。
             NSLog("[MacShot] 追加修订失败: \(error)")
