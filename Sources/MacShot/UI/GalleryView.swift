@@ -1334,12 +1334,17 @@ private struct ShotDetailPane: View {
     /// 是否已打码。加载时按「最新修订的马赛克层是否盖住全部命中区域」判定，
     /// 一键打码完成后直接置真。
     @State private var sensitiveMasked = false
+    /// 录屏锚点：这张截图是某段录屏的首帧时，`recording.path` 属性存着 mp4 路径。
+    @State private var recordingPath: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.s3) {
                 preview
                 actions
+                if let recordingPath {
+                    openRecordingButton(path: recordingPath)
+                }
                 if !sensitiveRegions.isEmpty {
                     sensitiveBanner
                 }
@@ -1358,6 +1363,10 @@ private struct ShotDetailPane: View {
             refreshFeaturePrint()
             refreshSensitiveRegions()
             relatedCount = store.relatedShots(to: shot).count
+            // 路径存在 payload 里（不进全文索引），这里转回字符串。
+            recordingPath = shot.id
+                .flatMap { store.attributePayload(shotID: $0, key: AttributeKey.recordingPath) }
+                .flatMap { String(data: $0, encoding: .utf8) }
         }
         // 指纹由后台分析异步补上：store 每次刷新（属性落库会触发 reload）都重查一次。
         // 属性写入不一定改变 shots 数组本身，所以订阅 objectWillChange 而不是 onChange。
@@ -1375,6 +1384,20 @@ private struct ShotDetailPane: View {
         .sheet(isPresented: $showingTimeline) {
             TimelineSheet(shot: shot)
         }
+    }
+
+    /// 录屏首帧锚点的「打开录像」：用系统默认播放器打开 mp4。
+    /// 视频文件被用户删掉时按钮禁用（锚点截图还在，历史不丢）。
+    private func openRecordingButton(path: String) -> some View {
+        Button {
+            SystemNavigator.open(url: URL(fileURLWithPath: path))
+        } label: {
+            Label("打开录像", systemImage: "play.rectangle")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(!FileManager.default.fileExists(atPath: path))
+        .help(path)
     }
 
     private func refreshFeaturePrint() {

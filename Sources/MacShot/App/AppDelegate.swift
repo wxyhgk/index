@@ -116,6 +116,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         record.tag = Tag.record
         menu.addItem(record)
 
+        // 录制中才出现：录制态显示「暂停录制」，暂停态显示「继续录制」。
+        let recordPause = NSMenuItem(
+            title: "暂停录制",
+            action: #selector(togglePauseRecording),
+            keyEquivalent: ""
+        )
+        recordPause.target = self
+        recordPause.tag = Tag.recordPause
+        recordPause.isHidden = true
+        menu.addItem(recordPause)
+
         let gallery = NSMenuItem(title: "图库…", action: #selector(openGallery), keyEquivalent: "")
         gallery.target = self
         gallery.tag = Tag.gallery
@@ -160,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         static let record = 4
         static let scrollCapture = 5
         static let liftPassthrough = 6
+        static let recordPause = 7
     }
 
     // MARK: - 快捷键
@@ -205,6 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RecordingCoordinator.shared.toggle()
     }
 
+    @objc private func togglePauseRecording() {
+        RecordingCoordinator.shared.pauseOrResume()
+    }
+
     /// 采集期间再触发一次 = 完成（begin 内部处理）。
     @objc private func startScrollCapture() {
         ScrollCaptureController.shared.begin()
@@ -225,7 +241,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingTimer?.invalidate()
         recordingTimer = nil
 
-        if ScreenRecorder.shared.isRecording {
+        // 暂停中不走字，计时器也不必转。
+        if ScreenRecorder.shared.isRecording, !ScreenRecorder.shared.isPaused {
             // .common 模式：菜单开着（追踪运行循环）时计时也要走字。
             let timer = Timer(timeInterval: 1, repeats: true) { _ in
                 Task { @MainActor in self.updateRecordingMenuItem() }
@@ -236,28 +253,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateRecordingMenuItem()
     }
 
-    /// 录制中换成红色圆点 —— 菜单栏是唯一常驻界面，必须一眼看出正在录。
+    /// 录制中换成红色圆点、暂停中换成黄色暂停标 ——
+    /// 菜单栏是唯一常驻界面，必须一眼看出当前状态。
     private func refreshStatusIcon() {
-        let recording = ScreenRecorder.shared.isRecording
-        var image = NSImage(
-            systemSymbolName: recording ? "record.circle.fill" : "camera.viewfinder",
-            accessibilityDescription: "MacShot"
-        )
-        if recording {
-            image = image?.withSymbolConfiguration(.init(paletteColors: [.systemRed]))
-            image?.isTemplate = false   // 模板渲染会抹掉红色
+        let recorder = ScreenRecorder.shared
+        let symbolName: String
+        let tint: NSColor?
+        if recorder.isPaused {
+            symbolName = "pause.circle.fill"
+            tint = .systemYellow
+        } else if recorder.isRecording {
+            symbolName = "record.circle.fill"
+            tint = .systemRed
+        } else {
+            symbolName = "camera.viewfinder"
+            tint = nil
+        }
+        var image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "MacShot")
+        if let tint {
+            image = image?.withSymbolConfiguration(.init(paletteColors: [tint]))
+            image?.isTemplate = false   // 模板渲染会抹掉颜色
         }
         statusItem?.button?.image = image
     }
 
     private func updateRecordingMenuItem() {
-        guard let item = statusItem?.menu?.item(withTag: Tag.record) else { return }
-        if let startedAt = ScreenRecorder.shared.startedAt {
-            let elapsed = Int(Date().timeIntervalSince(startedAt))
+        guard let menu = statusItem?.menu, let item = menu.item(withTag: Tag.record) else { return }
+        let pauseItem = menu.item(withTag: Tag.recordPause)
+        let recorder = ScreenRecorder.shared
+        if recorder.isRecording {
+            // elapsed 只累计录制段，暂停期不走字。
+            let elapsed = Int(recorder.elapsed)
             let clock = String(format: "%02d:%02d", elapsed / 60, elapsed % 60)
-            item.title = "停止录制（\(clock)）\t\(settings.recordingShortcut.displayString)"
+            let suffix = recorder.isPaused ? "，已暂停" : ""
+            item.title = "停止录制（\(clock)\(suffix)）\t\(settings.recordingShortcut.displayString)"
+            pauseItem?.isHidden = false
+            pauseItem?.title = recorder.isPaused ? "继续录制" : "暂停录制"
         } else {
             item.title = "录屏…\t\(settings.recordingShortcut.displayString)"
+            pauseItem?.isHidden = true
         }
     }
 

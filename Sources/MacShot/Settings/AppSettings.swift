@@ -84,6 +84,9 @@ final class AppSettings: ObservableObject {
         static let autoCopyDirectory = "autoCopyDirectory"
         static let autoCleanupEnabled = "autoCleanupEnabled"
         static let autoCleanupDays = "autoCleanupDays"
+        static let recordSystemAudio = "recordSystemAudio"
+        static let recordMicrophone = "recordMicrophone"
+        static let recordingSaveToLibrary = "recordingSaveToLibrary"
     }
 
     private let defaults = UserDefaults.standard
@@ -118,6 +121,24 @@ final class AppSettings: ObservableObject {
 
     @Published var captureDelay: Int {
         didSet { defaults.set(captureDelay, forKey: Keys.captureDelay) }
+    }
+
+    // MARK: - 录屏
+
+    /// 录制系统声音（App 播放的音频，MacShot 自身除外）。默认开。
+    @Published var recordSystemAudio: Bool {
+        didSet { defaults.set(recordSystemAudio, forKey: Keys.recordSystemAudio) }
+    }
+
+    /// 录制麦克风。默认关 —— 首次开启会触发系统麦克风权限弹窗。
+    @Published var recordMicrophone: Bool {
+        didSet { defaults.set(recordMicrophone, forKey: Keys.recordMicrophone) }
+    }
+
+    /// 录屏完成后把首帧截图入库当锚点（视频路径挂 `recording.path` 属性）。
+    /// 默认关 —— 图库目前是截图库，视频只是借首帧「能被找到」。
+    @Published var recordingSaveToLibrary: Bool {
+        didSet { defaults.set(recordingSaveToLibrary, forKey: Keys.recordingSaveToLibrary) }
     }
 
     // MARK: - 导出
@@ -312,7 +333,10 @@ final class AppSettings: ObservableObject {
             Keys.autoCopyEnabled: false,
             Keys.autoCopyDirectory: "",
             Keys.autoCleanupEnabled: false,
-            Keys.autoCleanupDays: 30
+            Keys.autoCleanupDays: 30,
+            Keys.recordSystemAudio: true,
+            Keys.recordMicrophone: false,
+            Keys.recordingSaveToLibrary: false
         ])
 
         copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
@@ -345,6 +369,9 @@ final class AppSettings: ObservableObject {
         autoCopyDirectory = defaults.string(forKey: Keys.autoCopyDirectory) ?? ""
         autoCleanupEnabled = defaults.bool(forKey: Keys.autoCleanupEnabled)
         autoCleanupDays = defaults.integer(forKey: Keys.autoCleanupDays)
+        recordSystemAudio = defaults.bool(forKey: Keys.recordSystemAudio)
+        recordMicrophone = defaults.bool(forKey: Keys.recordMicrophone)
+        recordingSaveToLibrary = defaults.bool(forKey: Keys.recordingSaveToLibrary)
         captureShortcut = Self.load(Keys.captureShortcut, from: defaults) ?? .captureDefault
         galleryShortcut = Self.load(Keys.galleryShortcut, from: defaults) ?? .galleryDefault
         delayedCaptureShortcut = Self.load(Keys.delayedCaptureShortcut, from: defaults)
