@@ -42,11 +42,32 @@ struct EditorView: View {
     @State private var canvasDrag: CanvasDrag?
 
     /// 画布缩放倍率。`nil` = 适应窗口（自适应 fitted 分支）；
-    /// 非 nil 时画布尺寸 = 图像点尺寸 × 倍率，包进 ScrollView 可平移。
+    /// 非 nil 时画布尺寸 = 图像点尺寸 × 倍率，包进滚动容器可平移。
     @State private var zoomLevel: Double?
 
-    /// 缩放菜单的固定档位。
+    /// 缩放菜单的固定档位。⌃滚轮 / 捏合走连续缩放，范围见 `zoomRange`。
     private static let zoomSteps: [Double] = [0.25, 0.5, 1, 2, 4]
+
+    /// 连续缩放的钳制范围。
+    private static let zoomRange: ClosedRange<Double> = 0.1...8.0
+
+    /// 画布模式：指针（画/选/移图层）或抓手（拖拽平移视口）。
+    /// 抓手**不是**标注工具（不进 AnnotationTool）—— 覆盖层 / 钉图没有滚动概念。
+    private enum CanvasMode { case pointer, hand }
+    @State private var canvasMode: CanvasMode = .pointer
+
+    /// 滚动容器的命令桥：抓手平移、锚点缩放都经它摸 NSClipView。
+    @State private var panBox = CanvasPanBox()
+
+    /// 抓手拖拽的上一次光标位置（窗口坐标 —— 平移时内容在光标下滑动，
+    /// 本地坐标会跟着变，只有窗口坐标是稳定参照）。nil = 没在拖。
+    @State private var panLastWindowLocation: CGPoint?
+
+    /// 光标是否悬在画布上（空格临时抓手切换光标样式时用）。
+    @State private var canvasHovered = false
+
+    /// 按住空格临时抓手的按键监视器。
+    @StateObject private var spaceMonitor = EditorSpaceHandMonitor()
 
     /// 右侧面板的两个 tab：图层（列表 + 文字编辑 + 历史版本）/ 效果（美化、水印、外壳）。
     private enum InspectorTab: String, CaseIterable { case layers = "图层", effects = "效果" }
@@ -81,7 +102,23 @@ struct EditorView: View {
         }
         .frame(minWidth: 900, minHeight: 620)
         .background(hiddenShortcuts)
-        .onAppear(perform: load)
+        .onAppear {
+            load()
+            spaceMonitor.install()
+        }
+        .onDisappear { spaceMonitor.remove() }
+        .onChange(of: zoomLevel) { _, newValue in
+            // 适应窗口态没有可平移空间，抓手模式随之退场（按钮也已置灰）。
+            if newValue == nil { canvasMode = .pointer }
+        }
+        .onChange(of: spaceMonitor.spaceHeld) { _, held in
+            // 空格切手势会让进行中的标注拖拽收不到 onEnded，主动收尾避免状态卡住。
+            if held, canvasDrag != nil { handleDragEnded() }
+            if !held { panLastWindowLocation = nil }
+            if canvasHovered {
+                (handModeActive ? NSCursor.openHand : NSCursor.arrow).set()
+            }
+        }
     }
 
     // MARK: - 加载
@@ -150,8 +187,11 @@ struct EditorView: View {
             Divider().frame(height: 24)
 
             // Snagit 式大按钮：图标上、标签下，工具一目了然。
+            // 指针旁是抓手（画布模式，不是标注工具），其后才是标注工具。
             HStack(spacing: 2) {
-                ForEach(Array(Self.toolOrder.enumerated()), id: \.offset) { _, tool in
+                toolButton(nil)
+                handButton
+                ForEach(Array(Self.toolOrder.dropFirst().enumerated()), id: \.offset) { _, tool in
                     toolButton(tool)
                 }
             }
@@ -200,7 +240,8 @@ struct EditorView: View {
     }
 
     private func toolButton(_ tool: AnnotationTool?) -> some View {
-        let selected = annotation.tool == tool
+        // 抓手激活时指针按钮不再高亮（两者都对应 annotation.tool == nil）。
+        let selected = annotation.tool == tool && canvasMode == .pointer
         let shortcut = AnnotationTool.shortcuts.first { $0.tool == tool }
 
         return Button {
@@ -223,6 +264,47 @@ struct EditorView: View {
         .foregroundStyle(selected ? Color.accentColor : .primary)
         .keyboardShortcut(bareKeyShortcut(shortcut?.label))
         .help(shortcut.map { "\($0.toolName)（\($0.label)）" } ?? tool?.title ?? "指针")
+    }
+
+    /// 抓手按钮（Snagit 式大按钮同款样式）。适应窗口态没有可平移空间，置灰。
+    /// 快捷键刻意不占字母（H 已是高亮）：按住空格即临时抓手，点按钮是常驻抓手。
+    private var handButton: some View {
+        let selected = canvasMode == .hand
+        let disabled = zoomLevel == nil
+        return Button {
+            toggleHandMode()
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "hand.raised")
+                    .font(.system(size: 15))
+                    .frame(height: 18)
+                Text("抓手")
+                    .font(.caption2)
+            }
+            .frame(width: 48, height: 44)
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(selected ? Color.accentColor.opacity(0.22) : .clear)
+        )
+        .foregroundStyle(selected ? Color.accentColor : .primary)
+        .opacity(disabled ? 0.35 : 1)
+        .disabled(disabled)
+        .help(disabled
+              ? "抓手：放大后可拖拽平移画布（按住空格临时抓手）"
+              : "抓手：拖拽平移画布（按住空格临时抓手）")
+    }
+
+    private func toggleHandMode() {
+        annotation.endTextEditing()
+        if canvasMode == .hand {
+            canvasMode = .pointer
+        } else {
+            canvasMode = .hand
+            annotation.tool = nil
+        }
+        annotationTick += 1
     }
 
     /// 裸键快捷键（无修饰）。文字框在打字时返回 nil，把按键让给输入。
@@ -429,6 +511,7 @@ struct EditorView: View {
     private func selectTool(_ tool: AnnotationTool?) {
         annotation.endTextEditing()
         annotation.tool = tool
+        canvasMode = .pointer
         annotationTick += 1
     }
 
@@ -471,29 +554,54 @@ struct EditorView: View {
 
     // MARK: - 画布
 
-    /// 两种布局分支共用一条 `canvasBody` 修饰链，只是 fitted 矩形来源不同：
-    /// 适应窗口时由视口大小算 fitted；缩放时画布尺寸 = 图像点尺寸 × 倍率，
-    /// 包进双向 ScrollView 平移，小于视口时通过 fitted 的 origin 居中。
-    @ViewBuilder
+    /// 两种布局态共用一条 `canvasBody` 修饰链，只是 fitted 矩形来源不同：
+    /// 适应窗口时内容 = 视口（无滚动，fitted 居中带 16pt 留白）；
+    /// 缩放时画布尺寸 = 图像点尺寸 × 倍率，小于视口时通过 fitted 的 origin 居中。
+    /// 两态都包在 `EditorCanvasScrollView`（NSScrollView）里 ——
+    /// ⌃滚轮 / 捏合缩放、抓手平移、锚点定位都要程序化摸滚动原点，
+    /// SwiftUI 的 ScrollView 给不了（见 EditorCanvasScrollView 的说明）。
     private var canvas: some View {
-        if let zoom = zoomLevel {
-            GeometryReader { geo in
-                let rects = zoomedRects(zoom: zoom, viewport: geo.size)
-                ScrollView([.horizontal, .vertical]) {
-                    canvasBody(fitted: rects.fitted)
-                        .frame(
-                            width: rects.content.width,
-                            height: rects.content.height,
-                            alignment: .topLeading
-                        )
+        GeometryReader { geo in
+            let viewport = geo.size
+            let layout = canvasLayout(viewport: viewport)
+            EditorCanvasScrollView(
+                contentSize: layout.content,
+                panBox: panBox,
+                onZoom: { factor, docPoint, clipPoint in
+                    handleContinuousZoom(
+                        factor: factor, docPoint: docPoint,
+                        clipPoint: clipPoint, viewport: viewport
+                    )
                 }
+            ) {
+                canvasBody(fitted: layout.fitted)
+                    .frame(
+                        width: layout.content.width,
+                        height: layout.content.height,
+                        alignment: .topLeading
+                    )
             }
-        } else {
-            GeometryReader { geo in
-                canvasBody(fitted: fittedRect(in: geo.size))
-            }
-            .padding(16)
         }
+    }
+
+    /// 两态统一的画布布局。返回的 `fitted` 同构（origin = 画布在滚动内容里的
+    /// 位置），`imagePoint` / 手势因此不区分分支。
+    private func canvasLayout(viewport: CGSize) -> (fitted: CGRect, content: CGSize) {
+        if let zoom = zoomLevel {
+            return zoomedRects(zoom: zoom, viewport: viewport)
+        }
+        // 适应窗口：四周 16pt 留白里适配居中，内容恰好一个视口大（无滚动）。
+        let inner = CGSize(
+            width: max(1, viewport.width - 32),
+            height: max(1, viewport.height - 32)
+        )
+        let fitted = fittedRect(in: inner).offsetBy(dx: 16, dy: 16)
+        return (fitted, viewport)
+    }
+
+    /// 抓手是否生效：常驻抓手或按住空格，且处于缩放态（适应态无可平移空间）。
+    private var handModeActive: Bool {
+        zoomLevel != nil && (canvasMode == .hand || spaceMonitor.spaceHeld)
     }
 
     /// 画布本体 + 手势。`fitted` 是画布在其父容器坐标里的摆放矩形 ——
@@ -501,7 +609,8 @@ struct EditorView: View {
     /// origin。offset 只挪渲染和命中位置、不动布局 frame，所以手势的 .local 坐标
     /// 落在父容器空间里，`imagePoint` 统一减掉 fitted.origin 再除显示倍率。
     private func canvasBody(fitted: CGRect) -> some View {
-        LayerCanvas(
+        let handActive = handModeActive
+        return LayerCanvas(
             image: canvasImage ?? blankImage,
             layers: annotation.displayLayers.projected(onto: .zero, scale: 1),
             pixelatePreviews: annotation.pixelatePreviews,
@@ -515,6 +624,12 @@ struct EditorView: View {
             // 坐标映射和下面的 DragGesture 完全一致（同一条修饰链）。
             switch phase {
             case .active(let location):
+                canvasHovered = true
+                if handModeActive {
+                    (panLastWindowLocation == nil
+                        ? NSCursor.openHand : NSCursor.closedHand).set()
+                    return
+                }
                 annotation.strokeScale = Double(
                     CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width)
                 )
@@ -527,6 +642,7 @@ struct EditorView: View {
                     NSCursor.arrow.set()
                 }
             case .ended:
+                canvasHovered = false
                 NSCursor.arrow.set()
             }
         }
@@ -539,6 +655,29 @@ struct EditorView: View {
                     handleDragEnded()
                 }
         )
+        // 抓手激活时外层平移手势独占（.gesture 掩码屏蔽内层标注手势），
+        // 掩码切换不改视图 identity，空格按住 / 松开的瞬间切换不重建画布。
+        .gesture(panGesture, including: handActive ? .gesture : .subviews)
+    }
+
+    /// 抓手平移：拖多少滚多少（内容跟着光标走）。用窗口坐标算增量 ——
+    /// 平移时文档在光标下滑动，本地 / 内容坐标会跟着变，会形成反馈回环。
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { value in
+                if let last = panLastWindowLocation {
+                    panBox.scrollBy(
+                        dx: last.x - value.location.x,
+                        dy: last.y - value.location.y
+                    )
+                }
+                panLastWindowLocation = value.location
+                NSCursor.closedHand.set()
+            }
+            .onEnded { _ in
+                panLastWindowLocation = nil
+                NSCursor.openHand.set()
+            }
     }
 
     private func handleDragChanged(_ value: DragGesture.Value, fitted: CGRect) {
@@ -656,15 +795,75 @@ struct EditorView: View {
 
     // MARK: - 缩放控制
 
-    /// 升到下一档；已是最大档或从「适应窗口」起步时按 100% 为基准。
+    /// 图像的点尺寸（像素 ÷ 显示倍率），zoomLevel 的换算基准。
+    private var imagePointWidth: CGFloat {
+        CGFloat(max(1, shot.pixelWidth)) / CGFloat(max(1, shot.scale))
+    }
+
+    /// 当前实际倍率：缩放态就是 zoomLevel；适应窗口态用 fitted 宽反推 ——
+    /// 从适应态开始连续缩放 / 归档时以它为起点，体验上无跳变。
+    private func effectiveZoom(viewport: CGSize) -> Double {
+        if let zoom = zoomLevel { return zoom }
+        guard viewport.width > 1 else { return 1 }
+        return Double(canvasLayout(viewport: viewport).fitted.width / imagePointWidth)
+    }
+
+    /// ⌃滚轮 / 捏合的连续缩放：锚定光标处的图像点不动。
+    private func handleContinuousZoom(
+        factor: Double, docPoint: CGPoint, clipPoint: CGPoint, viewport: CGSize
+    ) {
+        guard viewport.width > 1 else { return }
+        let oldZoom = effectiveZoom(viewport: viewport)
+        let newZoom = min(Self.zoomRange.upperBound,
+                          max(Self.zoomRange.lowerBound, oldZoom * factor))
+        applyZoom(newZoom, docPoint: docPoint, clipPoint: clipPoint, viewport: viewport)
+    }
+
+    /// 设定新倍率并把 `docPoint`（旧内容坐标系）锚在视口 `clipPoint` 处：
+    /// 旧 fitted 反解出图像像素 → 新 fitted 下的内容坐标 → 期望滚动原点，
+    /// 写进 pendingOrigin 由滚动容器在内容尺寸更新后的 update 应用（自动钳制）。
+    /// 全程只走 fittedRect/imagePoint 那一条公式，坐标不变量不破。
+    private func applyZoom(
+        _ newZoom: Double, docPoint: CGPoint, clipPoint: CGPoint, viewport: CGSize
+    ) {
+        let oldFitted = canvasLayout(viewport: viewport).fitted
+        let pixel = imagePoint(docPoint, fitted: oldFitted)
+        zoomLevel = newZoom
+        let newFitted = zoomedRects(zoom: newZoom, viewport: viewport).fitted
+        let scale = newFitted.width / CGFloat(max(1, shot.pixelWidth))
+        panBox.pendingOrigin = CGPoint(
+            x: newFitted.minX + pixel.x * scale - clipPoint.x,
+            y: newFitted.minY + pixel.y * scale - clipPoint.y
+        )
+    }
+
+    /// 档位直设（缩放菜单 / ⌘± 归档共用）：视口中心为锚。
+    private func setZoom(_ zoom: Double) {
+        let viewport = panBox.viewportSize
+        guard viewport.width > 1 else {
+            zoomLevel = zoom
+            return
+        }
+        let clipPoint = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+        let origin = panBox.scrollOrigin
+        applyZoom(
+            zoom,
+            docPoint: CGPoint(x: origin.x + clipPoint.x, y: origin.y + clipPoint.y),
+            clipPoint: clipPoint,
+            viewport: viewport
+        )
+    }
+
+    /// 升到下一档。基准是当前**实际**倍率（连续缩放后的散值就近归档，
+    /// 适应窗口态用 fitted 反推的倍率），与连续缩放自然共存。
     private func zoomIn() {
-        let current = zoomLevel ?? 1
-        zoomLevel = Self.zoomSteps.first { $0 > current + 0.001 } ?? Self.zoomSteps.last
+        let current = effectiveZoom(viewport: panBox.viewportSize)
+        setZoom(Self.zoomSteps.first { $0 > current + 0.001 } ?? Self.zoomSteps.last!)
     }
 
     private func zoomOut() {
-        let current = zoomLevel ?? 1
-        zoomLevel = Self.zoomSteps.last { $0 < current - 0.001 } ?? Self.zoomSteps.first
+        let current = effectiveZoom(viewport: panBox.viewportSize)
+        setZoom(Self.zoomSteps.last { $0 < current - 0.001 } ?? Self.zoomSteps.first!)
     }
 
     private var zoomLabel: String {
@@ -855,7 +1054,7 @@ struct EditorView: View {
             Menu {
                 ForEach(Self.zoomSteps, id: \.self) { step in
                     Button {
-                        zoomLevel = step
+                        setZoom(step)
                     } label: {
                         if zoomLevel == step {
                             Label("\(Int((step * 100).rounded()))%", systemImage: "checkmark")
