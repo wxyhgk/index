@@ -109,8 +109,8 @@ final class ScrollCaptureController {
             }
 
             // 长图直接开编辑器 —— 入库 + 标注比钉一整条长图实用。
-            GalleryWindowController.shared.show(selecting: shot)
-            EditorWindowController.open(shot)
+            // 编辑器活在图库窗口内（单窗口双模式）：弹图库并直接进编辑模式。
+            GalleryWindowController.shared.showEditor(for: shot)
         } catch {
             NSLog("[MacShot] 滚动截图保存失败: \(error)")
         }

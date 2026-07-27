@@ -1,9 +1,13 @@
-import Combine
 import SwiftUI
 import AppKit
 
 /// 非破坏性标注编辑器。
 /// 画布上的一切都是图层；保存时只是往 revision 表追加一条记录，原图字节永远不变。
+///
+/// 活在**图库窗口内**（Snagit 的 Editor/Library 单窗口双模式）：
+/// `GallerySelection.editingShot` 非 nil 时 GalleryView 整窗切到本视图，
+/// 返回图库 = 置回 nil；换图 = 换成目标 shot（宿主用 `.id(shot.id)` 保证重建，
+/// `shot` 因此得以保持 `let`，重新走一遍 onAppear → load）。
 ///
 /// 状态机是和截图覆盖层 / 钉图窗口**同一个** `AnnotationState` ——
 /// 工具、固定 4 色 3 档粗细、选中 / 拖动 / 删除、全量撤销重做因此完全一致。
@@ -11,15 +15,6 @@ import AppKit
 struct EditorView: View {
 
     let shot: Shot
-    /// 关闭宿主窗口。编辑器活在独立 NSWindow 里（EditorWindowController），
-    /// SwiftUI 的 `dismiss` 环境值在这儿不起作用，由窗口控制器注入。
-    let onClose: () -> Void
-    /// 胶片条换图：由窗口控制器注入，控制器**重建 rootView** 完成切换
-    /// （`shot` 因此得以保持 `let`）。未保存守卫在本视图侧（见 `requestSwitch`）。
-    let onSwitchShot: (Shot) -> Void
-    /// 图库双击发来的换图请求（单窗口模式：编辑中双击别的图不弹新窗）。
-    /// 和胶片条走同一条 `requestSwitch` 守卫链路。
-    let switchRequests: AnyPublisher<Shot, Never>
 
     // 不订阅 store：后台 OCR 回填会触发它发布变更，没必要为此重建整个编辑器。
     private let store = ShotStore.shared
@@ -87,7 +82,6 @@ struct EditorView: View {
         .frame(minWidth: 900, minHeight: 620)
         .background(hiddenShortcuts)
         .onAppear(perform: load)
-        .onReceive(switchRequests) { requestSwitch(to: $0) }
     }
 
     // MARK: - 加载
@@ -137,6 +131,24 @@ struct EditorView: View {
 
     private var toolbar: some View {
         HStack(spacing: 12) {
+            // Snagit 的 Editor/Library 位：左上角返回图库（同一窗口整体切回）。
+            Button {
+                requestReturnToGallery()
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("图库")
+                }
+                .frame(height: 44)
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("返回图库（⎋）")
+
+            Divider().frame(height: 24)
+
             // Snagit 式大按钮：图标上、标签下，工具一目了然。
             HStack(spacing: 2) {
                 ForEach(Array(Self.toolOrder.enumerated()), id: \.offset) { _, tool in
@@ -820,7 +832,7 @@ struct EditorView: View {
             Button("保存为新版本") { saveRevision() }
                 .keyboardShortcut("s", modifiers: .command)
                 .buttonStyle(.borderedProminent)
-            Button("关闭") { onClose() }
+            Button("返回图库") { requestReturnToGallery() }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 14)
@@ -905,45 +917,56 @@ struct EditorView: View {
         annotationTick += 1
     }
 
-    /// 胶片条点击换图。有未保存的标注时先问一声（保存并切换 / 不保存切换 / 取消），
-    /// 守卫通过才把请求转给窗口控制器（它重建 rootView 完成切换）。
+    /// 胶片条点击换图。未保存守卫通过后直接换 `editingShot` ——
+    /// 宿主（GalleryView）挂了 `.id(shot.id)`，identity 变化即重建本视图完成切换。
     private func requestSwitch(to target: Shot) {
-        guard target.id != shot.id else { return }
-        annotation.endTextEditing()
-        if exportedLayers.persisted != baselineLayers {
-            let alert = NSAlert()
-            alert.messageText = "有未保存的标注，仍要切换吗？"
-            alert.informativeText = "当前画布上的改动还没有保存为新版本，切换后会丢失。"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "保存并切换")
-            alert.addButton(withTitle: "不保存切换")
-            alert.addButton(withTitle: "取消")
-            switch alert.runModal() {
-            case .alertFirstButtonReturn:
-                saveRevision()
-                // 保存可能被并发修订确认（confirmSaveOverNewerRevision）取消 ——
-                // 那样基线不会更新，改动仍未保存，不能切。
-                guard exportedLayers.persisted == baselineLayers else { return }
-            case .alertSecondButtonReturn:
-                break
-            default:
-                return
-            }
-        }
-        onSwitchShot(target)
+        guard target.id != shot.id, resolveUnsavedChanges() else { return }
+        GallerySelection.shared.editingShot = target
     }
 
-    /// 多窗口下的并发保存检测：修订链本身由 appendRevision 的单事务保证线性
+    /// 左上「‹ 图库」/ 底部「返回图库」/ Esc：守卫通过后整窗切回图库模式。
+    private func requestReturnToGallery() {
+        guard resolveUnsavedChanges() else { return }
+        GallerySelection.shared.editingShot = nil
+    }
+
+    /// 未保存守卫（返回图库和换图共用）。有未保存的标注时先问一声
+    /// （保存并继续 / 不保存继续 / 取消）；返回 true = 可以离开当前画布。
+    private func resolveUnsavedChanges() -> Bool {
+        annotation.endTextEditing()
+        guard exportedLayers.persisted != baselineLayers else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = "有未保存的标注，仍要离开吗？"
+        alert.informativeText = "当前画布上的改动还没有保存为新版本，离开后会丢失。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "保存并继续")
+        alert.addButton(withTitle: "不保存继续")
+        alert.addButton(withTitle: "取消")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            saveRevision()
+            // 保存可能被并发修订确认（confirmSaveOverNewerRevision）取消 ——
+            // 那样基线不会更新，改动仍未保存，不能走。
+            return exportedLayers.persisted == baselineLayers
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 并发保存检测：修订链本身由 appendRevision 的单事务保证线性
     /// （不会坏链），但后保存的一方是基于打开时的旧图层覆盖式追加 ——
-    /// 图库里已经出现更新的修订（另一个编辑器窗口 / 钉图 / 自动脱敏落的）时，
+    /// 图库里已经出现更新的修订（钉图 / 自动脱敏落的）时，
     /// 先问一声再追加。`revisions` 在打开和每次保存后都会与库同步，
-    /// 它的尾项就是本窗口所认知的「最新」。
+    /// 它的尾项就是本编辑器所认知的「最新」。
     private func confirmSaveOverNewerRevision() -> Bool {
         guard store.latestRevision(for: shot)?.id != revisions.last?.id else { return true }
 
         let alert = NSAlert()
         alert.messageText = "图库中已有更新的修订，仍要保存吗？"
-        alert.informativeText = "这张截图在别处（另一个编辑器窗口、钉图或自动脱敏）"
+        alert.informativeText = "这张截图在别处（钉图或自动脱敏）"
             + "已保存了更新的版本。继续保存会把当前画布内容追加为最新修订，"
             + "历史版本都还在，不会丢失。"
         alert.alertStyle = .warning

@@ -17,6 +17,11 @@ final class GallerySelection: ObservableObject {
     /// 由 GalleryGrid 上唯一的 confirmationDialog 消费 —— 确认框只有一套。
     @Published var pendingDeleteIDs: [Int64]?
 
+    /// 正在编辑的截图 —— Snagit 的 Editor/Library 单窗口双模式：
+    /// 非 nil 时图库窗口整体切到编辑器视图，nil = 图库模式。
+    /// 整窗切换，不是 sheet；胶片条换图 = 换成目标 shot（EditorView 按 id 重建）。
+    @Published var editingShot: Shot?
+
     var isMultiple: Bool { selectedIDs.count > 1 }
 
     func isSelected(_ id: Int64?) -> Bool {
@@ -116,6 +121,26 @@ struct GalleryView: View {
     }
 
     var body: some View {
+        // 单窗口双模式（Snagit 的 Editor/Library）：editingShot 非 nil 时
+        // 整窗切到编辑器，返回按钮置回 nil 切回图库（选中状态原样保留）。
+        // .searchable / .inspector / .toolbar 只挂在图库分支 ——
+        // 编辑器模式下窗口工具栏不该出现搜索框和详情开关。
+        if let shot = selection.editingShot {
+            EditorView(shot: shot)
+                // 换图 = 换 editingShot；靠 identity 变化整个重建编辑器
+                // （重新走 onAppear → load，清撤销栈，与重开行为一致）。
+                .id(shot.id)
+                .onReceive(store.objectWillChange) { _ in
+                    // objectWillChange 发在变更**之前**，转一拍再查库。
+                    // 正在编辑的 shot 被删（自动清理等）时退回图库。
+                    DispatchQueue.main.async { closeEditorIfShotDeleted() }
+                }
+        } else {
+            gallery
+        }
+    }
+
+    private var gallery: some View {
         // 两栏（侧边栏 + 网格）+ 可开关的 inspector 详情栏 ——
         // 详情从 NavigationSplitView 的 detail 列挪出来，换取标准的
         // 「随时收起给网格让路」行为和系统自带的材质/分隔线。
@@ -191,6 +216,14 @@ struct GalleryView: View {
                 description: Text("在网格中选择一张截图查看详情")
             )
         }
+    }
+
+    /// 正在编辑的记录已不存在（图库外的删除 / 清理）→ 退回图库模式。
+    /// 编辑一条已删除的记录没有意义，保存也无处可去。
+    private func closeEditorIfShotDeleted() {
+        guard let id = selection.editingShot?.id,
+              !store.shotExists(id: id) else { return }
+        selection.editingShot = nil
     }
 
     /// 把网格列的实际宽度报给键盘导航（上下键 = ±列数，列数从宽度反推）。
@@ -705,7 +738,7 @@ private struct GalleryGrid: View {
             TapGesture(count: 2).onEnded {
                 // 带修饰键的双击只是两次修饰点击（toggle / 范围），不进编辑器。
                 guard currentModifiers().isEmpty else { return }
-                EditorWindowController.open(shot)
+                selection.editingShot = shot
             }
         )
         .draggable(dragFile(for: shot))
@@ -855,7 +888,7 @@ private struct GalleryGrid: View {
         Button(shot.id.map(store.isFavorite) ?? false ? "取消收藏" : "收藏") {
             store.toggleFavorite(shot)
         }
-        Button("编辑标注") { EditorWindowController.open(shot) }
+        Button("编辑标注") { selection.editingShot = shot }
         Button("钉在桌面") { pin(shot) }
         Button("复制图片") { copy(shot) }
         Divider()
@@ -1587,7 +1620,7 @@ private struct ShotDetailPane: View {
     private var actions: some View {
         HStack(spacing: DS.s2) {
             Button {
-                EditorWindowController.open(shot)
+                GallerySelection.shared.editingShot = shot
             } label: {
                 Label("编辑", systemImage: "pencil.tip.crop.circle")
             }
