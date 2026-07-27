@@ -501,6 +501,24 @@ final class ShotStore: ObservableObject {
         (try? dbQueue.read { db in try Shot.fetchCount(db) }) ?? 0
     }
 
+    /// 全库时间倒序，**不受** `searchText` / `filter` 影响（`shots` 是筛选后的列表）。
+    /// 编辑器胶片条用：换图的心智是「库里最近截了什么」，不跟图库窗口的筛选联动。
+    /// 上限与图库一致（500），避免超大库一次性拉全表。
+    func allShots(limit: Int = 500) -> [Shot] {
+        (try? dbQueue.read { db in
+            try Shot.fetchAll(db, sql: """
+                SELECT * FROM shot ORDER BY capturedAt DESC LIMIT ?
+                """, arguments: [limit])
+        }) ?? []
+    }
+
+    /// 记录是否还在库里。编辑器窗口用它在库变更后判断「正在编辑的 shot 被删了」。
+    func shotExists(id: Int64) -> Bool {
+        (try? dbQueue.read { db in
+            try Shot.filter(key: id).fetchCount(db) > 0
+        }) ?? false
+    }
+
     /// 现有分类及各自的截图数量，按数量降序。图库侧边栏用。
     func categories() -> [(name: String, count: Int)] {
         (try? dbQueue.read { db in

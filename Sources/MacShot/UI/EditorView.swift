@@ -13,6 +13,9 @@ struct EditorView: View {
     /// 关闭宿主窗口。编辑器活在独立 NSWindow 里（EditorWindowController），
     /// SwiftUI 的 `dismiss` 环境值在这儿不起作用，由窗口控制器注入。
     let onClose: () -> Void
+    /// 胶片条换图：由窗口控制器注入，控制器**重建 rootView** 完成切换
+    /// （`shot` 因此得以保持 `let`）。未保存守卫在本视图侧（见 `requestSwitch`）。
+    let onSwitchShot: (Shot) -> Void
 
     // 不订阅 store：后台 OCR 回填会触发它发布变更，没必要为此重建整个编辑器。
     private let store = ShotStore.shared
@@ -27,6 +30,10 @@ struct EditorView: View {
     @State private var canvasImage: CGImage?
 
     @State private var loadedRevisionIndex: Int?
+
+    /// 未保存检测的基线：最近一次载入 / 保存时的图层数组。
+    /// 当前图层与它不等 = 有未保存的标注（换图守卫用，Layer 是 Equatable）。
+    @State private var baselineLayers: [Layer] = []
 
     /// 拖拽标注时 body 每帧都会重建 —— 修订列表绝不能挂在 body 上做数据库查询。
     @State private var revisions: [Revision] = []
@@ -71,6 +78,7 @@ struct EditorView: View {
             }
             Divider()
             bottomBar
+            EditorFilmstrip(currentShotID: shot.id, onSelect: requestSwitch)
         }
         .frame(minWidth: 900, minHeight: 620)
         .background(hiddenShortcuts)
@@ -95,6 +103,7 @@ struct EditorView: View {
 
     private func loadRevision(layers: [Layer], index: Int) {
         annotation.load(Layers(persisted: layers), pixelSource: cropPixels)
+        baselineLayers = layers
         loadedRevisionIndex = index
         refreshCanvasImage()
         annotationTick += 1
@@ -885,7 +894,36 @@ struct EditorView: View {
         )
         revisions = store.revisions(for: shot)
         loadedRevisionIndex = revisions.count - 1
+        baselineLayers = exportedLayers.persisted
         annotationTick += 1
+    }
+
+    /// 胶片条点击换图。有未保存的标注时先问一声（保存并切换 / 不保存切换 / 取消），
+    /// 守卫通过才把请求转给窗口控制器（它重建 rootView 完成切换）。
+    private func requestSwitch(to target: Shot) {
+        guard target.id != shot.id else { return }
+        annotation.endTextEditing()
+        if exportedLayers.persisted != baselineLayers {
+            let alert = NSAlert()
+            alert.messageText = "有未保存的标注，仍要切换吗？"
+            alert.informativeText = "当前画布上的改动还没有保存为新版本，切换后会丢失。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "保存并切换")
+            alert.addButton(withTitle: "不保存切换")
+            alert.addButton(withTitle: "取消")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                saveRevision()
+                // 保存可能被并发修订确认（confirmSaveOverNewerRevision）取消 ——
+                // 那样基线不会更新，改动仍未保存，不能切。
+                guard exportedLayers.persisted == baselineLayers else { return }
+            case .alertSecondButtonReturn:
+                break
+            default:
+                return
+            }
+        }
+        onSwitchShot(target)
     }
 
     /// 多窗口下的并发保存检测：修订链本身由 appendRevision 的单事务保证线性
