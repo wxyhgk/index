@@ -1,4 +1,5 @@
 import AppKit
+import VisionKit
 
 /// 钉图的内容视图。
 ///
@@ -24,6 +25,8 @@ final class PinImageView: NSView {
             // 穿透后 mouseExited 不会再来，手动清掉悬停态。
             isHovering = false
             hoveredControlID = nil
+            // 穿透中收不到任何鼠标事件，选字层留着只会误导。
+            if isPassthrough { exitLiveText() }
             needsDisplay = true
         }
     }
@@ -38,6 +41,13 @@ final class PinImageView: NSView {
 
     private var isHovering = false
     private var hoveredControlID: String?
+
+    /// 选字（Live Text）模式：系统 `ImageAnalysisOverlayView` 叠在图像区域上。
+    /// 分析对象是 canvasImage（含已应用马赛克）—— 打了码的字不该还能选出来。
+    private(set) var isLiveTextActive = false
+    private var liveTextOverlay: ImageAnalysisOverlayView?
+    /// 分析结果按当时的马赛克图层缓存 —— 撤销/重做增删了马赛克就过期。
+    private var liveTextAnalysis: (pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
 
     init(base: CGImage, layers: Layers<ImageSpace>) {
         self.base = base
@@ -112,7 +122,12 @@ final class PinImageView: NSView {
         ToolbarContext(
             annotation: annotation,
             scope: .pinned,
-            perform: { [weak self] actionID in self?.onAction?(actionID) }
+            perform: { [weak self] actionID in self?.onAction?(actionID) },
+            isLiveTextActive: { [weak self] in self?.isLiveTextActive ?? false },
+            // 不支持的机型不传 toggle → 「选字」控件整个不出现。
+            toggleLiveText: LiveTextAnalyzer.isSupported
+                ? { [weak self] in self?.toggleLiveText() }
+                : nil
         )
     }
 
@@ -137,6 +152,10 @@ final class PinImageView: NSView {
         let heightBefore = requiredStripHeight
         syncStrokeScale()
         control.activate(toolbarContext)
+        // 选字模式下点了别的工具（画笔 / 指针）→ 自动退出选字。
+        if isLiveTextActive, control.group == .tools, control.id != LiveTextControl.controlID {
+            exitLiveText()
+        }
         refreshCanvas()
         needsDisplay = true
         onAnnotationsChanged?()
@@ -148,6 +167,12 @@ final class PinImageView: NSView {
     func commitAnnotationChange() {
         let heightBefore = requiredStripHeight
         refreshCanvas()
+        // 选字模式中 ⌘Z 撤销 / 重做可能增删马赛克 —— 底图变了，分析跟着换
+        //（缓存按马赛克图层判等，没动马赛克就是空操作）。
+        if isLiveTextActive {
+            prepareLiveTextAnalysis()
+            applyLiveTextAnalysis()
+        }
         needsDisplay = true
         onAnnotationsChanged?()
         if requiredStripHeight != heightBefore { onToolbarHeightChanged?() }
@@ -169,6 +194,13 @@ final class PinImageView: NSView {
 
     /// 自己接管拖动，AppKit 不要插手 —— 否则点工具条会被当成拖窗口。
     override var mouseDownCanMoveWindow: Bool { false }
+
+    /// 窗口缩放 / 工具条行数变化都会改 imageRect，选字层跟着贴齐。
+    /// 分析结果是归一化坐标，只改 frame 不用重跑。
+    override func layout() {
+        super.layout()
+        liveTextOverlay?.frame = imageRect
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -201,6 +233,11 @@ final class PinImageView: NSView {
             hoveredControlID = hit
             needsDisplay = true
         }
+        if isLiveTextActive {
+            // 图像区域的光标（I-beam）由系统 overlay 自己管，这里不抢；其余恢复箭头。
+            if hit != nil || !imageRect.contains(point) { NSCursor.arrow.set() }
+            return
+        }
         if hit == nil, annotation.tool == nil, imageRect.contains(point) {
             // 指针模式：悬停到选中图层的缩放控制点时换 resize 光标。
             syncStrokeScale()
@@ -219,6 +256,11 @@ final class PinImageView: NSView {
             activate(control)
             return
         }
+
+        // 选字模式：图像区域的事件归系统 overlay（子视图，命中优先）；
+        // 能落到这里的点击都在条带区，一律忽略 —— 不画标注、不拖窗口，
+        // 退出只走控件 / Esc / 切工具 / 右键。
+        if isLiveTextActive { return }
 
         if annotation.tool != nil, imageRect.contains(point) {
             syncStrokeScale()
@@ -306,7 +348,10 @@ final class PinImageView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        if annotation.isEditingText {
+        if isLiveTextActive {
+            // 图像区域上的右键归系统 overlay（服务菜单），能落到这里的都在条带区。
+            exitLiveText()
+        } else if annotation.isEditingText {
             annotation.endTextEditing()
             needsDisplay = true
         } else if annotation.tool != nil {
@@ -315,6 +360,72 @@ final class PinImageView: NSView {
         } else {
             super.rightMouseDown(with: event)
         }
+    }
+
+    // MARK: - 选字（Live Text）
+
+    /// 进模式时才跑分析（截图侧是确认选区就预跑；钉图常驻屏幕、随时可能改标注，
+    /// 常态预跑浪费）。按马赛克图层缓存：没变就复用任务，变了取消重跑。
+    /// 分析输入就是 canvasImage —— 打了码的字不该还能被拖选出来。
+    private func prepareLiveTextAnalysis() {
+        let pixelates = allLayers.filter { $0.kind == .pixelate }
+        if let cached = liveTextAnalysis, cached.pixelates == pixelates { return }
+        liveTextAnalysis?.task.cancel()
+        let image = canvasImage
+        liveTextAnalysis = (pixelates, Task { await LiveTextAnalyzer.analyze(image) })
+    }
+
+    /// 等分析任务出结果后塞进当前的系统层。任务可能是复用的（早就跑完，立即返回）。
+    /// 退出/换层后迟到的结果直接丢弃。
+    private func applyLiveTextAnalysis() {
+        let task = liveTextAnalysis?.task
+        Task { [weak self, weak overlay = liveTextOverlay] in
+            let analysis = await task?.value
+            guard let self, let overlay,
+                  self.isLiveTextActive, overlay === self.liveTextOverlay else { return }
+            overlay.analysis = analysis
+        }
+    }
+
+    private func toggleLiveText() {
+        isLiveTextActive ? exitLiveText() : enterLiveText()
+    }
+
+    private func enterLiveText() {
+        guard !isLiveTextActive else { return }
+        annotation.endTextEditing()
+        annotation.select(nil)
+        annotation.tool = nil
+        isLiveTextActive = true
+        prepareLiveTextAnalysis()
+
+        // 系统层盖住图像区域（不含工具条条带）。分析的是完整的 canvasImage，
+        // imageRect 恰好是整图等比缩放后的显示区域，归一化坐标按 bounds
+        // 映射即对齐 —— 与窗口缩放倍率、Retina 与否无关。
+        let overlay = ImageAnalysisOverlayView()
+        overlay.preferredInteractionTypes = [.textSelection]
+        overlay.frame = imageRect
+        addSubview(overlay)
+        liveTextOverlay = overlay
+        applyLiveTextAnalysis()
+        needsDisplay = true
+    }
+
+    /// 退出选字：拆掉系统层，键盘焦点收回来。键盘扩展也要用，所以不是 private。
+    func exitLiveText() {
+        guard isLiveTextActive else { return }
+        isLiveTextActive = false
+        liveTextOverlay?.removeFromSuperview()
+        liveTextOverlay = nil
+        window?.makeFirstResponder(self)
+        needsDisplay = true
+    }
+
+    /// 选字模式下的 ⌘C：有选中文字就复制文字（而不是整张图）。返回是否已处理。
+    func copyLiveTextSelection() -> Bool {
+        guard let overlay = liveTextOverlay, overlay.hasActiveTextSelection else { return false }
+        Clipboard.copy(text: overlay.selectedText)
+        return true
     }
 
     // MARK: - 绘制
