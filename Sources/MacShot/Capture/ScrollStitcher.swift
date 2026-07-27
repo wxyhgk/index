@@ -1,5 +1,7 @@
 import Foundation
+import Accelerate
 import CoreGraphics
+import CoreVideo
 
 /// 滚动拼接的一帧输入：紧凑 RGBA8 像素，行优先，行 0 在顶部。
 /// 与 CGImage 解耦 —— 算法核心只看字节，纯函数、可脱离 AppKit 测试。
@@ -92,16 +94,15 @@ struct ScrollStitcher {
     // MARK: - 追加一帧
 
     mutating func append(_ frame: ScrollFrame) -> AppendOutcome {
+        append(frame, signatures: Self.signatures(of: frame, config: config))
+    }
+
+    /// 同 `append(_:)`，但复用调用方已算好的行签名（必须出自同一 `config` 的
+    /// `signatures(of:config:)`）。连续流采集在后台队列先算签名做去重节流，
+    /// 通过后原样传回来 —— 一帧的签名只算一次。
+    mutating func append(_ frame: ScrollFrame, signatures sigs: [[Float]]) -> AppendOutcome {
         guard !finalized, height < config.maxHeight else { return .limitReached }
         guard frame.width > 0, frame.height > 0 else { return .noOverlap }
-
-        let sigs = Self.rowSignatures(
-            pixels: frame.pixels,
-            width: frame.width,
-            height: frame.height,
-            bytesPerRow: frame.bytesPerRow,
-            hashWidth: config.hashWidth
-        )
 
         let edge = Int(Double(frame.height) * config.edgeIgnoreFraction)
         let bandEnd = frame.height - edge
@@ -223,6 +224,26 @@ struct ScrollStitcher {
 
     // MARK: - 纯函数核心（可独立测试）
 
+    /// 整帧的行签名（`append(_:)` 内部同款）。暴露成静态纯函数是给采集管线用的：
+    /// 后台队列先算一次，既做「与上一帧相同就丢弃」的节流判定（`isDuplicate`），
+    /// 算好的结果又可原样传给 `append(_:signatures:)` —— 一帧只算一次。
+    static func signatures(of frame: ScrollFrame, config: Config = Config()) -> [[Float]] {
+        rowSignatures(
+            pixels: frame.pixels,
+            width: frame.width,
+            height: frame.height,
+            bytesPerRow: frame.bytesPerRow,
+            hashWidth: config.hashWidth
+        )
+    }
+
+    /// 「这一帧画面与上一帧相同」的快速判定：行签名逐行全等。
+    /// 连续流采集用它在进拼接器之前丢掉静止帧 —— 签名是模糊指纹，
+    /// 全等意味着画面没有肉眼可见的变化，喂给拼接器也只会得到 `.unchanged`。
+    static func isDuplicate(_ signatures: [[Float]], of previous: [[Float]]?) -> Bool {
+        previous == signatures
+    }
+
     /// 行签名：每行分 `hashWidth` 个桶，桶内最多采 4 个像素取灰度均值。
     /// 签名是模糊指纹，不需要精确均值 —— 采样把成本压到与图像宽度无关。
     static func rowSignatures(
@@ -307,6 +328,50 @@ struct ScrollStitcher {
             chosen = p
         }
         return chosen
+    }
+}
+
+// MARK: - CVPixelBuffer 桥（SCStream 连续流路径）
+
+extension ScrollFrame {
+    /// 把 SCStream 送来的 BGRA `CVPixelBuffer` 规格化成紧凑 RGBA8 缓冲。
+    /// 一次 `vImagePermuteChannels` 同时完成两件事：BGRA→RGBA 通道重排，
+    /// 以及去掉 CoreVideo 的行尾对齐填充（源 bytesPerRow → 紧凑 width*4）——
+    /// SIMD 加速、内存带宽级吞吐，比逐像素手工换序快一个量级。
+    init?(pixelBuffer: CVPixelBuffer) {
+        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA else {
+            return nil
+        }
+        let w = CVPixelBufferGetWidth(pixelBuffer)
+        let h = CVPixelBufferGetHeight(pixelBuffer)
+        guard w > 0, h > 0 else { return nil }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
+
+        let dstBPR = w * 4
+        var pixels = [UInt8](repeating: 0, count: dstBPR * h)
+        var src = vImage_Buffer(
+            data: base,
+            height: vImagePixelCount(h),
+            width: vImagePixelCount(w),
+            rowBytes: CVPixelBufferGetBytesPerRow(pixelBuffer)
+        )
+        let permuted = pixels.withUnsafeMutableBytes { dst -> Bool in
+            var dest = vImage_Buffer(
+                data: dst.baseAddress,
+                height: vImagePixelCount(h),
+                width: vImagePixelCount(w),
+                rowBytes: dstBPR
+            )
+            let map: [UInt8] = [2, 1, 0, 3]   // BGRA → RGBA
+            return vImagePermuteChannels_ARGB8888(&src, &dest, map, vImage_Flags(kvImageNoFlags))
+                == kvImageNoError
+        }
+        guard permuted else { return nil }
+
+        self.init(width: w, height: h, bytesPerRow: dstBPR, pixels: pixels)
     }
 }
 

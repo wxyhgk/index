@@ -203,7 +203,7 @@ extension Layers where Space == CanvasSpace {
 
 阶段 4 结论（完成）：`CaptureSource` 协议、`CaptureSourceRegistry` 与两个实现（立即 / 延时）已落地，`CaptureCoordinator.begin(sourceID:)` 从注册表取源、注册表可注入。当初属于这一阶段的另一半 —— `CaptureCanvas` 通用画布 —— **废弃**，因为它设想的三个需求方最终没有一个用它：
 
-- **滚动截图**（`App/ScrollCaptureController` + `Capture/ScrollStitcher`）完全绕开了覆盖层的快照机制：框选只借用覆盖层的简单模式（`finishOnConfirm`，松手即返回选区），之后定时采集屏幕区域、纯函数拼接、直接产出 CGImage 走 `ShotStore.save` 入库，不产生也不消费任何画布类型。
+- **滚动截图**（`App/ScrollCaptureController` + `Capture/ScrollStitcher`）完全绕开了覆盖层的快照机制：框选只借用覆盖层的简单模式（`finishOnConfirm`，松手即返回选区），之后用 SCStream 连续采集屏幕区域（画面静止时 SCK 不发帧）、纯函数拼接、直接产出 CGImage 走 `ShotStore.save` 入库，不产生也不消费任何画布类型。
 - **单窗口截图**（⌥+单击，`Capture/WindowCapturer`）是选区**之后**的事后重拍：覆盖层照常用 `[DisplaySnapshot]` 做悬停高亮和失败兜底，确认后用 `SCContentFilter(desktopIndependentWindow:)` 重新捕获不被遮挡的完整窗口。整窗像素从不进入选区层，「不绑定显示器的画布」对它无从谈起。
 - **延时截图**产出的本来就是整屏冻结画面。
 
