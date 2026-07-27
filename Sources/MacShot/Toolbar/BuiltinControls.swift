@@ -195,6 +195,35 @@ struct FrameControl: ToolbarControl {
     }
 }
 
+// MARK: - 捕获信息（底部元数据信息栏）
+
+/// 捕获信息开关。和美化一样是**输出选项**：点一下加/删一层 captureInfo，
+/// 导出成品底部接一条信息栏（App 名+版本 / 网址 / 日期时间）；画布预览不变。
+/// 元数据在开启那一刻烤入 —— 覆盖层激活前注入 confirmedWindow 的归因
+/// （见 `OverlayView.mouseDown`），钉图注入 shot；字段勾选在图库编辑器里。
+struct CaptureInfoControl: ToolbarControl {
+    let id = "captureInfo"
+    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var group: ToolbarGroup { .style }
+    /// 排在水印（320）之后。
+    var order: Int { 330 }
+
+    /// 恒可见：同美化 —— 输出选项不依赖任何工具。
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.hasCaptureInfo
+    }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("info.square", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        context.annotation.toggleCaptureInfo()
+    }
+}
+
 // MARK: - 撤销 / 重做
 
 struct UndoControl: ToolbarControl {
@@ -284,6 +313,7 @@ extension ToolbarRegistry {
         registry.register(BackdropControl())
         registry.register(FrameControl())
         registry.register(WatermarkControl())
+        registry.register(CaptureInfoControl())
         registry.register(UndoControl())
         registry.register(RedoControl())
     }

@@ -7,9 +7,10 @@ enum AnnotationRenderer {
     /// - Important: 传入的上下文必须**已经**是「左上原点、Y 向下」，
     ///   并且单位与图层坐标一致。调用方负责设好 CTM。
     ///
-    /// 美化层（backdrop）与外壳层（frame）在这里被整体跳过 —— 编辑时画布尺寸
-    /// 不变，背景垫底 / 圆角 / 阴影 / 窗口壳只在导出路径（`LayerRenderer.render`）
-    /// 生效。这是刻意的取舍：实时预览若要显示它们，画布要随开关变尺寸，
+    /// 美化层（backdrop）、外壳层（frame）与捕获信息层（captureInfo）在这里被
+    /// 整体跳过 —— 编辑时画布尺寸不变，背景垫底 / 圆角 / 阴影 / 窗口壳 / 底部
+    /// 信息栏只在导出路径（`LayerRenderer.render`）生效。这是刻意的取舍：
+    /// 实时预览若要显示它们，画布要随开关变尺寸，
     /// 选区/钉图窗口的几何都会被牵连；工具条开关的高亮已足够表达状态。
     static func draw<Space: LayerSpace>(
         _ layers: Layers<Space>,

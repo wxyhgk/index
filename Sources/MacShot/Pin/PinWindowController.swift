@@ -86,6 +86,12 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         view.annotation.frameScale = max(1, shot?.scale ?? 1)
         view.annotation.frameDefaultTitle = shot?.windowTitle
         view.annotation.frameDefaultURL = shot?.sourceURL
+        // 捕获信息层的元数据：App 名+版本、捕获时刻。没有 shot 时开信息栏
+        // 只排得出日期（当下）—— 有什么排什么，效果开关不因此不可用。
+        view.annotation.captureInfoDefaultApp = CaptureInfoSpec.appDescription(
+            name: shot?.appName, version: shot?.appVersion
+        )
+        view.annotation.captureInfoDefaultDate = shot?.capturedAt
         panel.contentView = view
 
         fitWindowToContent()

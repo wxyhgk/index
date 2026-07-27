@@ -304,11 +304,12 @@ final class AnnotationState {
 
     /// 命中测试（画布空间），从最上层往下找。
     /// 线段类按点到线段的距离判定，其余按外接矩形（都带一圈容差，方便点中细线）。
-    /// 美化 / 水印 / 外壳层没有画布上的形体，不参与命中，只能通过开关/菜单操作。
+    /// 美化 / 水印 / 外壳 / 捕获信息层没有画布上的形体，不参与命中，只能通过开关/菜单操作。
     func layer(at point: CGPoint) -> UUID? {
         let tolerance = 8 * strokeScale
         for layer in layers.elements.reversed()
-        where layer.kind != .backdrop && layer.kind != .watermark && layer.kind != .frame {
+        where layer.kind != .backdrop && layer.kind != .watermark && layer.kind != .frame
+            && layer.kind != .captureInfo {
             let hit: Bool
             switch layer.kind {
             case .line, .arrow:
@@ -757,6 +758,83 @@ final class AnnotationState {
         var spec = FrameSpec.parse(layers[index].text)
         guard spec.style != style else { return false }
         spec.style = style
+        let before = layers[index]
+        layers[index].text = spec.json
+        record(.style(id: before.id, before: before, after: layers[index]))
+        return true
+    }
+
+    // MARK: - 捕获信息层（captureInfo）
+
+    /// 开启效果时烤入参数 JSON 的真实元数据默认值。App 名+版本（如 "Safari 17.4"），
+    /// 与 frameDefaultTitle/URL 同一套注入机制、三处注入点同一时机补：
+    ///   · 覆盖层：激活工具条控件前从 confirmedWindow 取（URL 还没异步回填 → 留空）
+    ///   · 编辑器/钉图：shot.appName + shot.appVersion
+    /// 网址直接复用 `frameDefaultURL` —— 同一时机、同一来源，没必要存两份。
+    var captureInfoDefaultApp: String?
+
+    /// 捕获时刻。编辑器/钉图注入 shot.capturedAt；覆盖层不注入（nil）——
+    /// 截图那一刻就是当下，开启时取 `Date()`。
+    var captureInfoDefaultDate: Date?
+
+    /// 信息栏日期的固定排版（本地时区）。烤入后是纯文本，历史成品不随时区漂移。
+    private static let captureInfoDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
+
+    /// 当前是否已开启捕获信息。工具条开关的选中态看它。
+    var hasCaptureInfo: Bool {
+        layers.elements.contains { $0.kind == .captureInfo }
+    }
+
+    /// 当前勾选要显示的字段；未开启时为 nil。
+    var captureInfoFields: [CaptureInfoSpec.Field]? {
+        layers.elements.last { $0.kind == .captureInfo }
+            .map { CaptureInfoSpec.parse($0.text).fields }
+    }
+
+    /// 捕获信息开关。和 backdrop 同一套语义：只有加/删两种操作，同时只保留一层，
+    /// 都走 `record` 保持可撤销。元数据（App 名+版本 / 网址 / 日期）在这一刻
+    /// 从注入的默认值烤进参数 JSON —— 之后图层自带数据，导出不再回查。
+    @discardableResult
+    func toggleCaptureInfo(fields: [CaptureInfoSpec.Field] = CaptureInfoSpec.Field.allCases) -> Bool {
+        endTextEditing()
+        if hasCaptureInfo {
+            while let index = layers.elements.firstIndex(where: { $0.kind == .captureInfo }) {
+                let old = layers[index]
+                record(.remove(old, index: index, preview: nil))
+                layers.remove(id: old.id)
+                if selectedID == old.id { selectedID = nil }
+            }
+            return false
+        }
+        var layer = Layer(kind: .captureInfo, rect: LRect(x: 0, y: 0, w: 0, h: 0))
+        layer.lineWidth = frameScale    // 复用字段：信息栏结构尺寸倍率（语义同 frameScale）
+        var spec = CaptureInfoSpec()
+        spec.fields = fields
+        spec.app = captureInfoDefaultApp ?? ""
+        spec.url = frameDefaultURL ?? ""
+        spec.date = Self.captureInfoDateFormatter.string(
+            from: captureInfoDefaultDate ?? Date()
+        )
+        layer.text = spec.json
+        layers.append(layer)
+        record(.add(layer, preview: nil))
+        return true
+    }
+
+    /// 替换勾选字段，记一条 style 撤销记录。烤入的元数据值不动，只改显示哪些。
+    /// 未开启时不做事。
+    @discardableResult
+    func setCaptureInfoFields(_ fields: [CaptureInfoSpec.Field]) -> Bool {
+        guard let index = layers.elements.firstIndex(where: { $0.kind == .captureInfo }) else {
+            return false
+        }
+        var spec = CaptureInfoSpec.parse(layers[index].text)
+        guard spec.fields != fields else { return false }
+        spec.fields = fields
         let before = layers[index]
         layers[index].text = spec.json
         record(.style(id: before.id, before: before, after: layers[index]))
