@@ -8,6 +8,7 @@ enum OverlayRenderer {
         model: SelectionModel,
         annotation: AnnotationState,
         slots: [ToolbarSlot],
+        toolbarContext: ToolbarContext,
         hoveredControlID: String?,
         isPrimaryScreen: Bool,
         confirmHint: String? = nil,
@@ -62,16 +63,19 @@ enum OverlayRenderer {
             in: bounds
         )
 
-        // 有标注工具在手时隐藏控制点，避免和画布上的操作混淆。
-        if model.showsHandles && annotation.tool == nil {
+        // 有标注工具在手、或选字模式激活（选区被冻结）时隐藏控制点，
+        // 避免和画布上的操作混淆。
+        if model.showsHandles && annotation.tool == nil && !toolbarContext.isLiveTextActive() {
             drawHandles(in: local)
         }
 
         if model.phase == .confirmed {
+            // 用宿主传来的 context 绘制 —— 「选字」等控件的选中态取自宿主状态，
+            // 这里若自己拼一个 context 就永远画不出高亮。
             ToolbarRenderer.draw(
                 slots,
                 hovered: hoveredControlID,
-                context: ToolbarContext(annotation: annotation, scope: .capture, perform: { _ in })
+                context: toolbarContext
             )
             // plain 模式没有工具条，用一行提示告诉用户怎么确认。
             if let confirmHint {

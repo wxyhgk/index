@@ -21,6 +21,21 @@ extension PinImageView {
             return
         }
 
+        // 选字模式：⎋ 退出（Esc 链最前面加的一级）；⌘C 优先复制选中的文字；
+        // 切工具快捷键放行，下面的分支会先退出选字再拿起工具；
+        // ⌘Z 也放行 —— commitAnnotationChange 会把分析对齐到撤销后的画面。
+        if isLiveTextActive {
+            switch event.keyCode {
+            case KeyCode.escape:
+                exitLiveText()
+                return
+            case KeyCode.c where event.modifierFlags.contains(.command):
+                if copyLiveTextSelection() { return }
+            default:
+                break
+            }
+        }
+
         let cmd = event.modifierFlags.contains(.command)
 
         if cmd, event.keyCode == KeyCode.z {
@@ -34,6 +49,7 @@ extension PinImageView {
         }
 
         if let tool = AnnotationTool.shortcut(forKeyCode: event.keyCode), !cmd {
+            exitLiveText()
             annotation.endTextEditing()
             annotation.tool = tool
             needsDisplay = true

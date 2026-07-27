@@ -26,6 +26,23 @@ extension OverlayView {
             return
         }
 
+        // 选字模式：⎋ 退出（Esc 链最前面加的一级）；⌘C 优先复制选中的文字；
+        // 方向键吞掉（选区在选字期间被冻结，不微调）；
+        // 切工具的快捷键正常放行，由 selectTool 负责先退出选字。
+        if isLiveTextActive {
+            switch event.keyCode {
+            case KeyCode.escape:
+                exitLiveText()
+                return
+            case KeyCode.c where event.modifierFlags.contains(.command):
+                if copyLiveTextSelection() { return }
+            case let code where KeyCode.arrows.contains(code):
+                return
+            default:
+                break
+            }
+        }
+
         let cmd = event.modifierFlags.contains(.command)
 
         if cmd, event.keyCode == KeyCode.z {
@@ -97,6 +114,7 @@ extension OverlayView {
 
     private func selectTool(_ tool: AnnotationTool?) {
         guard model.phase == .confirmed else { return }
+        exitLiveText()
         annotation.endTextEditing()
         annotation.tool = tool
         redraw()
@@ -114,6 +132,10 @@ extension OverlayView {
         case KeyCode.up:    dy = step
         default: return
         }
-        redrawIfNeeded(model.nudge(dx: dx, dy: dy, resizing: modifiers.contains(.option)))
+        if model.nudge(dx: dx, dy: dy, resizing: modifiers.contains(.option)) {
+            // 选区变了，预跑的选字分析跟着重跑（幂等，没确认选区时是空操作）。
+            prepareLiveTextAnalysis()
+            redraw()
+        }
     }
 }

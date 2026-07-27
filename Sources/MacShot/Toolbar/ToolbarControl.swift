@@ -20,6 +20,25 @@ struct ToolbarContext {
     let scope: ActionScope
     /// 触发一个出口动作（见 `CaptureAction`）。
     let perform: (String) -> Void
+    /// 选字（Live Text）模式是否激活。
+    let isLiveTextActive: () -> Bool
+    /// 开关选字模式。设备不支持（Intel / 低版本）或宿主没接入时为 nil，
+    /// 「选字」控件据此整个不出现。
+    let toggleLiveText: (() -> Void)?
+
+    init(
+        annotation: AnnotationState,
+        scope: ActionScope,
+        perform: @escaping (String) -> Void,
+        isLiveTextActive: @escaping () -> Bool = { false },
+        toggleLiveText: (() -> Void)? = nil
+    ) {
+        self.annotation = annotation
+        self.scope = scope
+        self.perform = perform
+        self.isLiveTextActive = isLiveTextActive
+        self.toggleLiveText = toggleLiveText
+    }
 }
 
 /// 绘制时的高亮状态。底板和高亮由渲染器统一画，控件只画自己的内容。

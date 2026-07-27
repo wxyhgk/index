@@ -1,4 +1,5 @@
 import AppKit
+import VisionKit
 
 /// 单块显示器上的覆盖层视图。只做事件翻译 —— 选区逻辑在 `SelectionModel`，
 /// 标注状态在 `AnnotationState`，绘制在 `OverlayRenderer`，布局在 `ToolbarLayout`。
@@ -27,6 +28,14 @@ final class OverlayView: NSView {
     private let chrome = ChromeView()
 
     private var hoveredControlID: String?
+
+    /// 选字（Live Text）模式：系统 `ImageAnalysisOverlayView` 叠在选区上，
+    /// 拖选 / 复制全部原生。激活期间画标注与调整选区的手势暂停。
+    private(set) var isLiveTextActive = false
+    private var liveTextOverlay: ImageAnalysisOverlayView?
+    /// 选区确认后预跑的分析。键含选区矩形和马赛克图层 —— 任一变了都要重跑，
+    /// 马赛克参与是因为分析输入取打码后的画面（打了码的字不该还能选出来）。
+    private var liveTextAnalysis: (rect: CGRect, pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
 
     /// 光标位置（视图局部）与该处的像素采样。选区阶段才有意义。
     private var cursor: CGPoint?
@@ -60,7 +69,12 @@ final class OverlayView: NSView {
         ToolbarContext(
             annotation: annotation,
             scope: .capture,
-            perform: { [weak self] actionID in self?.emit(actionID) }
+            perform: { [weak self] actionID in self?.emit(actionID) },
+            isLiveTextActive: { [weak self] in self?.isLiveTextActive ?? false },
+            // 不支持的机型不传 toggle → 「选字」控件整个不出现。
+            toggleLiveText: LiveTextAnalyzer.isSupported
+                ? { [weak self] in self?.toggleLiveText() }
+                : nil
         )
     }
 
@@ -104,6 +118,7 @@ final class OverlayView: NSView {
                 model: self.model,
                 annotation: self.annotation,
                 slots: self.slots,
+                toolbarContext: self.toolbarContext,
                 hoveredControlID: self.hoveredControlID,
                 isPrimaryScreen: self.isPrimaryScreen,
                 confirmHint: self.mode == .plain ? "⏎ 开始录制 · 双击选区 · ⎋ 取消" : nil,
@@ -185,6 +200,12 @@ final class OverlayView: NSView {
             }
             if hit != nil {
                 NSCursor.arrow.set()
+            } else if isLiveTextActive {
+                // 选字模式：选区上的光标（I-beam）由系统 overlay 自己管，
+                // 这里不抢；选区外恢复箭头。
+                if model.confirmedRect?.contains(geometry.global(fromViewLocal: local)) != true {
+                    NSCursor.arrow.set()
+                }
             } else if annotation.tool != nil {
                 NSCursor.crosshair.set()
             } else if model.confirmedRect?.contains(geometry.global(fromViewLocal: local)) == true,
@@ -248,9 +269,18 @@ final class OverlayView: NSView {
             annotation.frameDefaultTitle = model.confirmedWindow?.title
             annotation.captureInfoDefaultApp = captureInfoApp(for: model.confirmedWindow)
             control.activate(toolbarContext)
+            // 选字模式下点了别的工具（画笔 / 指针）→ 自动退出选字。
+            if isLiveTextActive, control.group == .tools, control.id != LiveTextControl.controlID {
+                exitLiveText()
+            }
             redraw()
             return
         }
+
+        // 选字模式：选区上的事件归系统 overlay（它是子视图，命中优先）；
+        // 落到这里的点击一律忽略 —— 不调整选区、不画标注，
+        // 退出只走控件 / Esc / 切工具。
+        if isLiveTextActive { return }
 
         let global = geometry.global(fromViewLocal: local)
         hoveredControlID = nil
@@ -372,6 +402,7 @@ final class OverlayView: NSView {
         switch model.phase {
         case .adjusting:
             model.endAdjust()
+            prepareLiveTextAnalysis()
             hoveredControlID = nil
             NSCursor.arrow.set()
         default:
@@ -381,6 +412,7 @@ final class OverlayView: NSView {
                     emit(ActionID.finish)
                     return
                 }
+                prepareLiveTextAnalysis()
                 hoveredControlID = nil
                 NSCursor.arrow.set()
             }
@@ -399,9 +431,12 @@ final class OverlayView: NSView {
         ))
     }
 
-    /// 右键逐级退出：图层选中 → 文字输入 → 标注工具 → 选区 → 整个截图流程。
+    /// 右键逐级退出：选字模式 → 图层选中 → 文字输入 → 标注工具 → 选区 → 整个截图流程。
+    /// 选字模式下选区内的右键归系统 overlay（服务菜单），能落到这里的都在选区外。
     override func rightMouseDown(with event: NSEvent) {
-        if annotation.select(nil) {
+        if isLiveTextActive {
+            exitLiveText()
+        } else if annotation.select(nil) {
             redraw()
         } else if annotation.isEditingText {
             annotation.endTextEditing()
@@ -415,6 +450,78 @@ final class OverlayView: NSView {
         } else {
             onFinish?(nil)
         }
+    }
+
+    // MARK: - 选字（Live Text）
+
+    /// 选区确认 / 调整后立即后台预跑分析 —— 等用户点「选字」时结果多半已经就绪。
+    /// 幂等：键（选区矩形 + 马赛克图层）没变就直接复用在跑 / 跑完的任务。
+    /// 键盘扩展（方向键微调）也要调，所以不是 private。
+    func prepareLiveTextAnalysis() {
+        guard LiveTextAnalyzer.isSupported, mode == .capture, !finishOnConfirm,
+              model.phase == .confirmed, let rect = model.confirmedRect else { return }
+        let pixelates = annotation.exportLayers(
+            selection: geometry.annotationRect(fromGlobal: rect),
+            scale: model.snapshot.scale
+        ).filter { $0.kind == .pixelate }
+        if let cached = liveTextAnalysis, cached.rect == rect, cached.pixelates == pixelates {
+            return
+        }
+        guard let crop = model.makeCroppedImage() else { return }
+        liveTextAnalysis?.task.cancel()
+        // 分析输入取打码后的画面 —— 马赛克底下的字不该还能被拖选出来。
+        let image = pixelates.isEmpty ? crop : LayerRenderer.render(base: crop, layers: pixelates)
+        liveTextAnalysis = (rect, pixelates, Task { await LiveTextAnalyzer.analyze(image) })
+    }
+
+    private func toggleLiveText() {
+        isLiveTextActive ? exitLiveText() : enterLiveText()
+    }
+
+    private func enterLiveText() {
+        guard !isLiveTextActive, model.phase == .confirmed,
+              let rect = model.confirmedRect else { return }
+        annotation.endTextEditing()
+        annotation.select(nil)
+        annotation.tool = nil
+        isLiveTextActive = true
+
+        // 马赛克可能是确认选区之后才画的，进模式前把分析对齐到当前状态。
+        prepareLiveTextAnalysis()
+
+        // 系统层直接盖在选区上：分析的就是选区裁剪图，内容与 view bounds 一比一，
+        // 归一化坐标默认按 bounds 映射即对齐，无需 trackingImageView。
+        let overlay = ImageAnalysisOverlayView()
+        overlay.preferredInteractionTypes = [.textSelection]
+        overlay.frame = geometry.viewLocal(fromGlobal: rect)
+        addSubview(overlay)
+        liveTextOverlay = overlay
+
+        let task = liveTextAnalysis?.task
+        Task { [weak self, weak overlay] in
+            let analysis = await task?.value
+            guard let self, let overlay,
+                  self.isLiveTextActive, overlay === self.liveTextOverlay else { return }
+            overlay.analysis = analysis
+        }
+        redraw()
+    }
+
+    /// 退出选字：拆掉系统层，键盘焦点收回来。键盘扩展也要用，所以不是 private。
+    func exitLiveText() {
+        guard isLiveTextActive else { return }
+        isLiveTextActive = false
+        liveTextOverlay?.removeFromSuperview()
+        liveTextOverlay = nil
+        window?.makeFirstResponder(self)
+        redraw()
+    }
+
+    /// 选字模式下的 ⌘C：有选中文字就复制文字（而不是整张图）。返回是否已处理。
+    func copyLiveTextSelection() -> Bool {
+        guard let overlay = liveTextOverlay, overlay.hasActiveTextSelection else { return false }
+        Clipboard.copy(text: overlay.selectedText)
+        return true
     }
 
     // MARK: - 收尾

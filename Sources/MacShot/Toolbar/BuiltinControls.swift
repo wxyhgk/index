@@ -23,8 +23,9 @@ struct ToolControl: ToolbarControl {
         isPinnedToBar || context.annotation.tool == tool
     }
 
+    /// 选字模式激活时指针按钮不再高亮（两者都对应 annotation.tool == nil）。
     func isSelected(_ context: ToolbarContext) -> Bool {
-        context.annotation.tool == tool
+        context.annotation.tool == tool && !context.isLiveTextActive()
     }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
@@ -34,6 +35,34 @@ struct ToolControl: ToolbarControl {
     func activate(_ context: ToolbarContext) {
         context.annotation.endTextEditing()
         context.annotation.tool = tool
+    }
+}
+
+// MARK: - 选字（系统实况文本）
+
+/// 「选字」开关。激活后在画面上叠一层系统 `ImageAnalysisOverlayView` ——
+/// 拖选文字、词级命中、右键复制全部原生（就是系统「实况文本」）。
+/// 它不是画笔：激活时画标注 / 调整选区的手势暂停；
+/// 再点一次、Esc 或切到别的工具退出。设备不支持时宿主不传 toggle，控件不出现。
+struct LiveTextControl: ToolbarControl {
+    static let controlID = "liveText"
+
+    var id: String { Self.controlID }
+    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var group: ToolbarGroup { .tools }
+    /// 工具组尾部（画笔在 0 起的小序号，这里刻意拉开距离）。
+    var order: Int { 1000 }
+
+    /// "text.viewfinder" 已被「取字」动作占用，这里用 I-beam 光标的符号。
+    func isVisible(_ context: ToolbarContext) -> Bool { context.toggleLiveText != nil }
+    func isSelected(_ context: ToolbarContext) -> Bool { context.isLiveTextActive() }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("character.cursor.ibeam", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        context.toggleLiveText?()
     }
 }
 
@@ -308,6 +337,7 @@ extension ToolbarRegistry {
             ))
         }
 
+        registry.register(LiveTextControl())
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
         AnnotationState.widths.indices.forEach { registry.register(WidthControl(index: $0)) }
         registry.register(BackdropControl())
