@@ -23,9 +23,17 @@ struct ToolControl: ToolbarControl {
         isPinnedToBar || context.annotation.tool == tool
     }
 
-    /// 选字模式激活时指针按钮不再高亮（两者都对应 annotation.tool == nil）。
     func isSelected(_ context: ToolbarContext) -> Bool {
-        context.annotation.tool == tool && !context.isLiveTextActive()
+        guard context.annotation.tool == tool else { return false }
+        guard tool == nil else { return true }
+        switch context.scope {
+        case .capture:
+            // 截图有中性态：tool == nil 且未进入鼠标模式时谁都不高亮。
+            return context.annotation.pointerEngaged
+        case .pinned:
+            // 选字模式激活时指针按钮不再高亮（两者都对应 annotation.tool == nil）。
+            return !context.isLiveTextActive()
+        }
     }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
@@ -35,6 +43,9 @@ struct ToolControl: ToolbarControl {
     func activate(_ context: ToolbarContext) {
         context.annotation.endTextEditing()
         context.annotation.tool = tool
+        // 点指针 = 主动进入鼠标模式；拿起画笔 = 离开。
+        // 钉图/编辑器不读这个标记，行为不变（见 AnnotationState.pointerEngaged）。
+        context.annotation.pointerEngaged = tool == nil
     }
 }
 
@@ -44,11 +55,14 @@ struct ToolControl: ToolbarControl {
 /// 拖选文字、词级命中、右键复制全部原生（就是系统「实况文本」）。
 /// 它不是画笔：激活时画标注 / 调整选区的手势暂停；
 /// 再点一次、Esc 或切到别的工具退出。设备不支持时宿主不传 toggle，控件不出现。
+///
+/// 只在钉图上出现：截图工具条没有独立「选字」——
+/// 选字并进了鼠标（指针）模式（见 `OverlayView` 的 pointerEngaged）。
 struct LiveTextControl: ToolbarControl {
     static let controlID = "liveText"
 
     var id: String { Self.controlID }
-    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var scopes: Set<ActionScope> { [.pinned] }
     var group: ToolbarGroup { .tools }
     /// 工具组尾部（画笔在 0 起的小序号，这里刻意拉开距离）。
     var order: Int { 1000 }
@@ -141,7 +155,9 @@ struct WidthControl: ToolbarControl {
 /// 覆盖层/钉图只做开关（默认预设），预设切换在图库编辑器里。
 struct BackdropControl: ToolbarControl {
     let id = "backdrop"
-    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    /// 只在钉图上出现：截图工具条为保持精简撤掉了输出开关 ——
+    /// 截图阶段要美化的用户可以钉图后再开，或去图库编辑器调。
+    var scopes: Set<ActionScope> { [.pinned] }
     var group: ToolbarGroup { .style }
     /// 排在颜色（0..）和粗细（100..）之后。
     var order: Int { 300 }
@@ -169,7 +185,9 @@ struct BackdropControl: ToolbarControl {
 /// 和 backdrop 不同，水印会画进实时预览（见 `AnnotationRenderer`）—— 它影响构图判断。
 struct WatermarkControl: ToolbarControl {
     let id = "watermark"
-    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    /// 只在钉图上出现（同 BackdropControl）。「导出自动加水印」在协调器里，
+    /// 不走这个开关，截图阶段照常生效。
+    var scopes: Set<ActionScope> { [.pinned] }
     var group: ToolbarGroup { .style }
     /// 排在美化（300）之后。
     var order: Int { 320 }
@@ -203,7 +221,8 @@ struct WatermarkControl: ToolbarControl {
 /// 覆盖层/钉图只做开关（默认 macos 壳），样式切换在图库编辑器里。
 struct FrameControl: ToolbarControl {
     let id = "frame"
-    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    /// 只在钉图上出现（同 BackdropControl）。
+    var scopes: Set<ActionScope> { [.pinned] }
     var group: ToolbarGroup { .style }
     /// 排在美化（300）后面。
     var order: Int { 310 }
@@ -232,7 +251,8 @@ struct FrameControl: ToolbarControl {
 /// （见 `OverlayView.mouseDown`），钉图注入 shot；字段勾选在图库编辑器里。
 struct CaptureInfoControl: ToolbarControl {
     let id = "captureInfo"
-    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    /// 只在钉图上出现（同 BackdropControl）。
+    var scopes: Set<ActionScope> { [.pinned] }
     var group: ToolbarGroup { .style }
     /// 排在水印（320）之后。
     var order: Int { 330 }
@@ -318,13 +338,86 @@ struct ActionControl: ToolbarControl {
     }
 }
 
+/// 「更多」：截图工具条上收纳非主力动作（取字 / 报告 / 上传）的菜单控件。
+/// 点开一个 NSMenu 列出全部收纳项，选中即 perform —— 和平铺按钮走同一条出口。
+/// 由 `ToolbarRegistry.controls(for:)` 按描述符聚合生成，不在登记处出现。
+struct MoreActionsControl: ToolbarControl {
+    let descriptors: [ToolbarActionDescriptor]
+    let order: Int
+    let scope: ActionScope
+
+    var id: String { "action.more" }
+    var scopes: Set<ActionScope> { [scope] }
+    var group: ToolbarGroup { .actions }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("ellipsis.circle", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        // 控件只知道自己被点了，不知道自己画在哪 ——
+        // 按 AppKit 惯例在触发它的鼠标事件位置弹出（popUpContextMenu）。
+        guard let event = NSApp.currentEvent, let window = event.window,
+              let view = window.contentView else { return }
+
+        let target = MoreActionsMenuTarget(perform: context.perform)
+        // NSMenuItem.target 是弱引用；菜单存续期间由这里保活，下次弹出时替换。
+        Self.retainedTarget = target
+
+        let menu = NSMenu()
+        for descriptor in descriptors {
+            let item = NSMenuItem(
+                title: descriptor.title,
+                action: #selector(MoreActionsMenuTarget.run(_:)),
+                keyEquivalent: ""
+            )
+            item.target = target
+            item.representedObject = descriptor.id
+            // 用原生符号图（不走 ToolbarStyle 的白色填充）—— 菜单要适配浅色外观。
+            item.image = NSImage(
+                systemSymbolName: descriptor.symbolName,
+                accessibilityDescription: descriptor.title
+            )
+            menu.addItem(item)
+        }
+
+        // 截图覆盖窗在 .screenSaver 层，比菜单窗口（.popUpMenu = 101）还高 ——
+        // 不降级菜单会弹在覆盖层背后。跟踪期间临时降到 .popUpMenu（仍高于普通窗口，
+        // 冻结画面照旧盖住全屏），popUpContextMenu 同步阻塞到菜单收起，之后恢复。
+        let savedLevel = window.level
+        if savedLevel.rawValue > NSWindow.Level.popUpMenu.rawValue {
+            window.level = .popUpMenu
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
+        window.level = savedLevel
+    }
+
+    @MainActor private static var retainedTarget: MoreActionsMenuTarget?
+}
+
+/// NSMenuItem 的 target/action 落点。菜单项没有闭包 API，这里做一层最小转接。
+private final class MoreActionsMenuTarget: NSObject {
+    private let perform: (String) -> Void
+
+    init(perform: @escaping (String) -> Void) {
+        self.perform = perform
+        super.init()
+    }
+
+    @objc func run(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        perform(id)
+    }
+}
+
 // MARK: - 登记
 
 extension ToolbarRegistry {
 
-    /// 常驻工具条的工具。椭圆、高亮、聚光灯、测量只保留快捷键（O / H / S / M）——
-    /// 截图标注里「指出、框住、写字、打码、标步骤」是绝对主力。
-    static let pinnedTools: [AnnotationTool] = [.rect, .arrow, .text, .pixelate, .counter]
+    /// 常驻工具条的工具。椭圆、高亮、聚光灯、测量、序号只保留快捷键
+    /// （O / H / S / M / N）—— 截图标注里「指出、框住、写字、打码」是绝对主力，
+    /// 快捷键激活的非常驻工具会临时露面（见 `ToolControl.isVisible`）。
+    static let pinnedTools: [AnnotationTool] = [.rect, .arrow, .text, .pixelate]
 
     static func registerBuiltins(into registry: ToolbarRegistry) {
         registry.register(ToolControl(tool: nil, order: 0, isPinnedToBar: true))

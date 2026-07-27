@@ -79,6 +79,8 @@ struct BugReportAction: CaptureAction {
     let scopes: Set<ActionScope> = [.capture, .pinned]
     /// 用户要的是报告文本，别让全局自动复制用图片把它盖掉。
     let suppressesAutoCopy = true
+    /// 低频动作，收进截图工具条的「更多」菜单（钉图不折叠）。
+    let isPrimaryAction = false
 
     func perform(_ context: CaptureContext) async throws {
         Clipboard.copy(text: BugReport.markdown(

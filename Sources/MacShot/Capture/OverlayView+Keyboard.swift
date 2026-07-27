@@ -26,23 +26,6 @@ extension OverlayView {
             return
         }
 
-        // 选字模式：⎋ 退出（Esc 链最前面加的一级）；⌘C 优先复制选中的文字；
-        // 方向键吞掉（选区在选字期间被冻结，不微调）；
-        // 切工具的快捷键正常放行，由 selectTool 负责先退出选字。
-        if isLiveTextActive {
-            switch event.keyCode {
-            case KeyCode.escape:
-                exitLiveText()
-                return
-            case KeyCode.c where event.modifierFlags.contains(.command):
-                if copyLiveTextSelection() { return }
-            case let code where KeyCode.arrows.contains(code):
-                return
-            default:
-                break
-            }
-        }
-
         let cmd = event.modifierFlags.contains(.command)
 
         if cmd, event.keyCode == KeyCode.z {
@@ -62,8 +45,15 @@ extension OverlayView {
 
         switch event.keyCode {
         case KeyCode.escape:
-            // 逐级退出：先取消图层选中，再退出标注工具，最后才是整个流程。
-            if annotation.select(nil) {
+            // 逐级退出（和右键链一致）：选字层里选中的文字 → 图层选中 →
+            // 鼠标模式退回中性态 → 画笔退回中性态 → 取消整个截图流程。
+            if clearLiveTextSelection() {
+                // 已处理：只清文字选择，不再往下退。
+            } else if annotation.select(nil) {
+                redraw()
+            } else if annotation.pointerEngaged {
+                annotation.pointerEngaged = false
+                syncLiveTextOverlay()
                 redraw()
             } else if annotation.tool != nil {
                 annotation.tool = nil
@@ -80,7 +70,8 @@ extension OverlayView {
             // 而误触发复制最多覆盖剪贴板，误触发钉图却会凭空多出一个窗口。
             emit(AppSettings.shared.enterBehavior == .copyAndFinish ? ActionID.copy : ActionID.finish)
         case KeyCode.c where cmd:
-            emit(ActionID.copy)
+            // 鼠标模式下选中了文字 → 复制文字；否则照常复制整张图。
+            if !copyLiveTextSelection() { emit(ActionID.copy) }
         case KeyCode.c:
             copyPickedColor()
         case KeyCode.s where cmd:
@@ -114,9 +105,11 @@ extension OverlayView {
 
     private func selectTool(_ tool: AnnotationTool?) {
         guard model.phase == .confirmed else { return }
-        exitLiveText()
         annotation.endTextEditing()
         annotation.tool = tool
+        // V = 主动进入鼠标模式（选字层跟着挂上）；画笔快捷键 = 离开。
+        annotation.pointerEngaged = tool == nil
+        syncLiveTextOverlay()
         redraw()
     }
 
@@ -133,8 +126,10 @@ extension OverlayView {
         default: return
         }
         if model.nudge(dx: dx, dy: dy, resizing: modifiers.contains(.option)) {
-            // 选区变了，预跑的选字分析跟着重跑（幂等，没确认选区时是空操作）。
+            // 选区变了，预跑的选字分析跟着重跑（幂等，没确认选区时是空操作）；
+            // 鼠标模式下选字层也贴回新位置。
             prepareLiveTextAnalysis()
+            syncLiveTextOverlayFrame()
             redraw()
         }
     }

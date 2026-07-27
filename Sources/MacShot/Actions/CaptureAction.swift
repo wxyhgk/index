@@ -56,12 +56,17 @@ protocol CaptureAction {
     /// 「上传图床」会顺手覆盖剪贴板。
     var suppressesAutoCopy: Bool { get }
 
+    /// 是否是主力动作。截图工具条只平铺主力动作（钉图/复制/保存），
+    /// 其余收进「更多」菜单（见 `MoreActionsControl`）；钉图工具条不折叠。
+    var isPrimaryAction: Bool { get }
+
     /// 允许长耗时、可失败。上传和生成 GIF 这类动作用同步 Void 根本表达不了。
     func perform(_ context: CaptureContext) async throws
 }
 
 extension CaptureAction {
     var suppressesAutoCopy: Bool { false }
+    var isPrimaryAction: Bool { true }
 }
 
 /// 描述工具条上一个动作所需的最小信息。
@@ -70,4 +75,6 @@ struct ToolbarActionDescriptor: Equatable {
     let id: String
     let title: String
     let symbolName: String
+    /// 见 `CaptureAction.isPrimaryAction`：false 的在截图工具条上收进「更多」菜单。
+    let isPrimary: Bool
 }
