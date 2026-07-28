@@ -24,9 +24,8 @@ enum StorageJanitor {
         let candidates = ShotStore.shared.cleanupCandidates(olderThan: cutoff, limit: batchLimit)
         guard !candidates.isEmpty else { return }
 
-        for shot in candidates {
-            ShotStore.shared.delete(shot)
-        }
+        // 单事务批量删除：逐张删会在启动时打出最多 batchLimit 轮全量 reload。
+        ShotStore.shared.delete(candidates)
         NSLog("[MacShot] 存储清理：删除 \(candidates.count) 张（超过 \(days) 天、未收藏、无标签、未标注）")
     }
 }

@@ -16,7 +16,10 @@ final class ShotStore: ObservableObject {
 
     static let shared = ShotStore()
 
-    @Published private(set) var shots: [Shot] = []
+    /// 不是 @Published：和 `favoriteIDs` 在 `reload()` 里一起赋值，
+    /// 手动只发一次 objectWillChange —— 两个 @Published 各发一次会让
+    /// 订阅方（侧边栏聚合查询、详情栏、胶片条……）每轮 reload 级联重查两遍。
+    private(set) var shots: [Shot] = []
     @Published var searchText: String = ""
     /// 分类筛选。nil 表示「全部」。
     /// 图库侧边栏选中的筛选维度。
@@ -43,7 +46,8 @@ final class ShotStore: ObservableObject {
     }
 
     /// 收藏的截图 ID。随 reload() 一起刷新，UI 直接读集合，不逐卡片查库。
-    @Published private(set) var favoriteIDs: Set<Int64> = []
+    /// 不是 @Published，理由同 `shots`。
+    private(set) var favoriteIDs: Set<Int64> = []
 
     let rootDirectory: URL
     let originalsDirectory: URL
@@ -51,23 +55,31 @@ final class ShotStore: ObservableObject {
 
     private let dbQueue: DatabaseQueue
 
-    private init() {
-        let base = FileManager.default
+    /// - Parameters:
+    ///   - rootDirectory: 磁盘根目录。默认用真实的 Application Support；测试传临时目录。
+    ///   - database: 已迁移好的数据库。默认按根目录打开 index.sqlite；测试传内存库
+    ///     （调用方自己先跑 `AppDatabase.migrator`）。
+    init(rootDirectory: URL? = nil, database: DatabaseQueue? = nil) {
+        let base = rootDirectory ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MacShot", isDirectory: true)
 
-        rootDirectory = base
+        self.rootDirectory = base
         originalsDirectory = base.appendingPathComponent("originals", isDirectory: true)
         thumbnailsDirectory = base.appendingPathComponent("thumbnails", isDirectory: true)
 
-        for dir in [rootDirectory, originalsDirectory, thumbnailsDirectory] {
+        for dir in [base, originalsDirectory, thumbnailsDirectory] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
 
-        do {
-            dbQueue = try AppDatabase.makeWriter(at: base.appendingPathComponent("index.sqlite"))
-        } catch {
-            fatalError("无法打开数据库: \(error)")
+        if let database {
+            dbQueue = database
+        } else {
+            do {
+                dbQueue = try AppDatabase.makeWriter(at: base.appendingPathComponent("index.sqlite"))
+            } catch {
+                fatalError("无法打开数据库: \(error)")
+            }
         }
 
         reload()
@@ -139,7 +151,7 @@ final class ShotStore: ObservableObject {
             try initial.insert(db)
         }
 
-        reload()
+        setNeedsReload()
         return shot
     }
 
@@ -188,7 +200,7 @@ final class ShotStore: ObservableObject {
             NSLog("[MacShot] 写入属性 \(key) 失败: \(error)")
             return
         }
-        reload()
+        setNeedsReload()
     }
 
     /// 删除一条派生属性。取消收藏这类「有即为真」的标记需要真正删除记录，
@@ -204,7 +216,7 @@ final class ShotStore: ObservableObject {
             NSLog("[MacShot] 删除属性 \(key) 失败: \(error)")
             return
         }
-        reload()
+        setNeedsReload()
     }
 
     // MARK: - 收藏
@@ -265,7 +277,7 @@ final class ShotStore: ObservableObject {
             NSLog("[MacShot] 添加标签 \(name) 失败: \(error)")
             return
         }
-        reload()
+        setNeedsReload()
     }
 
     /// 移除截图上的一个标签：按 (shotID, key, text) 精确删行 ——
@@ -285,7 +297,7 @@ final class ShotStore: ObservableObject {
             NSLog("[MacShot] 移除标签 \(tag) 失败: \(error)")
             return
         }
-        reload()
+        setNeedsReload()
     }
 
     /// 一张截图的全部标签，按添加顺序。
@@ -335,7 +347,7 @@ final class ShotStore: ObservableObject {
             return
         }
         if filter == .tag(old) { filter = .tag(name) }
-        reload()
+        setNeedsReload()
     }
 
     /// 全局删除标签：只删标签行，截图本身不动。
@@ -352,23 +364,41 @@ final class ShotStore: ObservableObject {
             return
         }
         if filter == .tag(tag) { filter = .all }
-        reload()
+        setNeedsReload()
     }
 
     func delete(_ shot: Shot) {
-        guard let id = shot.id else { return }
-        _ = try? dbQueue.write { db in
-            try Shot.deleteOne(db, key: id)
+        delete([shot])
+    }
+
+    /// 批量删除：单个事务里删掉所有行并算好引用计数，事务外统一删文件，
+    /// 尾部只刷新一次 —— 逐张 delete 是「张数 × (写 + 读 + 全量 reload)」的主线程风暴。
+    ///
+    /// 引用计数语义与单张版一致：原图内容寻址，同 sha 的多条记录共享一份文件，
+    /// 只有事务提交后不再被任何剩余记录引用的 sha 才删文件。删行和查剩余引用
+    /// 在同一个事务里完成，比旧的跨事务 read-after-write 更严格。
+    func delete(_ shotsToDelete: [Shot]) {
+        let ids = shotsToDelete.compactMap(\.id)
+        guard !ids.isEmpty else { return }
+        let shas = Set(shotsToDelete.filter { $0.id != nil }.map(\.sha256))
+
+        let orphaned: Set<String> = (try? dbQueue.write { db -> Set<String> in
+            try Shot.filter(ids.contains(Column("id"))).deleteAll(db)
+            let stillReferenced = try Shot
+                .select(Column("sha256"), as: String.self)
+                .filter(shas.contains(Column("sha256")))
+                .distinct()
+                .fetchAll(db)
+            return shas.subtracting(stillReferenced)
+        }) ?? []
+
+        for sha in orphaned {
+            try? FileManager.default.removeItem(
+                at: originalsDirectory.appendingPathComponent("\(sha).png"))
+            try? FileManager.default.removeItem(
+                at: thumbnailsDirectory.appendingPathComponent("\(sha).jpg"))
         }
-        // 原图可能被其它记录共享（内容寻址），仅在没有引用时删除。
-        let stillReferenced = (try? dbQueue.read { db in
-            try Shot.filter(Column("sha256") == shot.sha256).fetchCount(db)
-        }) ?? 0
-        if stillReferenced == 0 {
-            try? FileManager.default.removeItem(at: originalURL(for: shot))
-            try? FileManager.default.removeItem(at: thumbnailURL(for: shot))
-        }
-        reload()
+        setNeedsReload()
     }
 
     // MARK: - 修订
@@ -423,12 +453,48 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    // MARK: - 刷新合并
+
+    /// 两次 reload 之间的最短间隔。写入风暴（启动回填、批量操作）坍缩成 ≤2Hz。
+    private static let reloadInterval: TimeInterval = 0.5
+    private var lastReloadAt: Date = .distantPast
+    private var pendingReload: Task<Void, Never>?
+
+    /// 写路径统一走这里，leading + trailing 节流：
+    /// 距上次 reload 超过 `reloadInterval` 就立即执行（用户单次操作零延迟），
+    /// 否则安排一次 trailing 合并执行 —— 密集写入合并成一轮全量刷新。
+    /// 需要立即语义的外部调用方（如 `GalleryWindowController.show`）继续用 `reload()`。
+    private func setNeedsReload() {
+        guard pendingReload == nil else { return }
+        let elapsed = Date().timeIntervalSince(lastReloadAt)
+        if elapsed >= Self.reloadInterval {
+            reload()
+            return
+        }
+        let delay = Self.reloadInterval - elapsed
+        // 一次性 Task 而非常驻 Timer：没有积压时不存在任何调度物。
+        pendingReload = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return // 被中途的立即 reload() 取消，那次已经刷过了。
+            }
+            guard let self else { return }
+            self.pendingReload = nil
+            self.reload()
+        }
+    }
+
     // MARK: - 查询
 
     func reload() {
+        pendingReload?.cancel()
+        pendingReload = nil
+        lastReloadAt = Date()
+
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let filter = filter
-        shots = (try? dbQueue.read { db -> [Shot] in
+        let newShots = (try? dbQueue.read { db -> [Shot] in
             // 侧边栏筛选是精确匹配的 AND 条件，和 FTS 搜索（子串匹配的 UNION）互不干扰：
             // 搜索决定候选集，筛选再收窄一次。
             let filterClause: String
@@ -490,11 +556,17 @@ final class ShotStore: ObservableObject {
                 """, arguments: StatementArguments(arguments))
         }) ?? []
 
-        favoriteIDs = Set((try? dbQueue.read { db in
+        let newFavoriteIDs = Set((try? dbQueue.read { db in
             try Int64.fetchAll(db, sql: """
                 SELECT shotID FROM shotAttribute WHERE key = 'favorite'
                 """)
         }) ?? [])
+
+        // 先算好再一起赋值，整轮 reload 只发一次 objectWillChange ——
+        // 此前 shots / favoriteIDs 两个 @Published 各发一次，订阅方级联重查两遍。
+        objectWillChange.send()
+        shots = newShots
+        favoriteIDs = newFavoriteIDs
     }
 
     var totalCount: Int {

@@ -612,7 +612,8 @@ private struct GalleryGrid: View {
             seen.insert(id)
             return true
         }
-        for shot in targets { store.delete(shot) }
+        // 单事务批量删除：逐张 delete 会打出「张数 × (写 + 读 + 全量 reload)」的主线程风暴。
+        store.delete(targets)
         let remaining = store.displayShots
         if let anchorIndex, !remaining.isEmpty {
             selection.select(only: remaining[min(anchorIndex, remaining.count - 1)].id)
