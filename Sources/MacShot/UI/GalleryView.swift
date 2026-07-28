@@ -17,10 +17,8 @@ final class GallerySelection: ObservableObject {
     /// 由 GalleryGrid 上唯一的 confirmationDialog 消费 —— 确认框只有一套。
     @Published var pendingDeleteIDs: [Int64]?
 
-    /// 正在编辑的截图 —— Snagit 的 Editor/Library 单窗口双模式：
-    /// 非 nil 时图库窗口整体切到编辑器视图，nil = 图库模式。
-    /// 整窗切换，不是 sheet；胶片条换图 = 换成目标 shot（EditorView 按 id 重建）。
-    @Published var editingShot: Shot?
+    // 「窗口处于图库还是编辑器模式」不在这里 —— 那不是选中状态，
+    // 见 `GalleryWindowMode`（存 ID 不存快照的单窗口双模式模型）。
 
     var isMultiple: Bool { selectedIDs.count > 1 }
 
@@ -88,6 +86,8 @@ struct GalleryView: View {
 
     @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
+    /// 窗口模式（图库 / 编辑器），整窗切换的依据。
+    @ObservedObject private var mode = GalleryWindowMode.shared
     // 语义模式切换只在「开关已开 + 模型已就绪」时出现，所以要订阅这两个。
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var modelStore = CLIPModelStore.shared
@@ -121,22 +121,25 @@ struct GalleryView: View {
     }
 
     var body: some View {
-        // 单窗口双模式（Snagit 的 Editor/Library）：editingShot 非 nil 时
-        // 整窗切到编辑器，返回按钮置回 nil 切回图库（选中状态原样保留）。
+        // 单窗口双模式（Snagit 的 Editor/Library）：编辑模式时整窗切到编辑器，
+        // 返回图库 = `mode.returnToGallery()`（选中状态原样保留）。
+        // Shot 值按 ID **现查** —— store 更新后编辑器拿到的永远是最新值。
         // .searchable / .inspector / .toolbar 只挂在图库分支 ——
         // 编辑器模式下窗口工具栏不该出现搜索框和详情开关。
-        if let shot = selection.editingShot {
-            EditorView(shot: shot)
-                // 换图 = 换 editingShot；靠 identity 变化整个重建编辑器
-                // （重新走 onAppear → load，清撤销栈，与重开行为一致）。
-                .id(shot.id)
-                .onReceive(store.objectWillChange) { _ in
-                    // objectWillChange 发在变更**之前**，转一拍再查库。
-                    // 正在编辑的 shot 被删（自动清理等）时退回图库。
-                    DispatchQueue.main.async { closeEditorIfShotDeleted() }
-                }
-        } else {
-            gallery
+        Group {
+            if let shot = mode.resolveEditingShot() {
+                EditorView(shot: shot)
+                    // 换图 = 换 editingShotID；靠 identity 变化整个重建编辑器
+                    // （重新走 onAppear → load，清撤销栈，与重开行为一致）。
+                    .id(shot.id)
+            } else {
+                gallery
+            }
+        }
+        .onReceive(store.objectWillChange) { _ in
+            // objectWillChange 发在变更**之前**，转一拍再查库。
+            // 正在编辑的 shot 被删（自动清理等）时退回图库。
+            DispatchQueue.main.async { closeEditorIfShotDeleted() }
         }
     }
 
@@ -220,10 +223,11 @@ struct GalleryView: View {
 
     /// 正在编辑的记录已不存在（图库外的删除 / 清理）→ 退回图库模式。
     /// 编辑一条已删除的记录没有意义，保存也无处可去。
+    /// 「不存在」的判定就是 `resolveEditingShot()` 按 ID 现查失败 ——
+    /// 与 body 的分支同一个口径，不会出现「模式在编辑、视图在图库」的错位。
     private func closeEditorIfShotDeleted() {
-        guard let id = selection.editingShot?.id,
-              !store.shotExists(id: id) else { return }
-        selection.editingShot = nil
+        guard mode.isEditing, mode.resolveEditingShot() == nil else { return }
+        mode.returnToGallery()
     }
 
     /// 把网格列的实际宽度报给键盘导航（上下键 = ±列数，列数从宽度反推）。
@@ -738,7 +742,7 @@ private struct GalleryGrid: View {
             TapGesture(count: 2).onEnded {
                 // 带修饰键的双击只是两次修饰点击（toggle / 范围），不进编辑器。
                 guard currentModifiers().isEmpty else { return }
-                selection.editingShot = shot
+                GalleryWindowMode.shared.openEditor(shotID: shot.id)
             }
         )
         .draggable(dragFile(for: shot))
@@ -888,7 +892,7 @@ private struct GalleryGrid: View {
         Button(shot.id.map(store.isFavorite) ?? false ? "取消收藏" : "收藏") {
             store.toggleFavorite(shot)
         }
-        Button("编辑标注") { selection.editingShot = shot }
+        Button("编辑标注") { GalleryWindowMode.shared.openEditor(shotID: shot.id) }
         Button("钉在桌面") { pin(shot) }
         Button("复制图片") { copy(shot) }
         Divider()
@@ -965,14 +969,17 @@ private struct GalleryGrid: View {
         ShotDragFile(shot: shot)
     }
 
+    /// 钉在桌面：走注册表的 pin 动作（界面层不直接建窗口），材料从图库记录重建。
     private func pin(_ shot: Shot) {
         guard let base = store.originalImage(for: shot) else { return }
-        PinWindowController.pin(
+        let context = CaptureContext(
             base: base,
             layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
             shot: shot,
-            at: .zero
+            region: nil,
+            host: nil
         )
+        Task { try? await CaptureActionRegistry.shared.action(id: ActionID.pin)?.perform(context) }
     }
 
     private func copy(_ shot: Shot) {
@@ -1031,20 +1038,16 @@ private enum GalleryBatch {
         let name: String
     }
 
-    /// 批量导出：NSOpenPanel 选目录，逐张渲染成品（含最新标注）按文件名模板写入，
+    /// 批量导出：选目录（面板收敛在 SystemNavigator，视图里不裸跑 runModal），
+    /// 逐张渲染成品（含最新标注）按文件名模板写入，
     /// 重名由 ImageExporter.writePNG 自动加 -2 / -3 … 序号。返回成功张数（取消 = 0）。
     static func exportAll(_ shots: [Shot]) async -> Int {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.prompt = "导出到此处"
-        panel.message = "选择 \(shots.count) 张截图的导出目录"
-        panel.directoryURL = FileManager.default
-            .urls(for: .desktopDirectory, in: .userDomainMask).first
-
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let directory = panel.url else { return 0 }
+        guard let directory = SystemNavigator.chooseDirectory(
+            message: "选择 \(shots.count) 张截图的导出目录",
+            prompt: "导出到此处",
+            defaultDirectory: FileManager.default
+                .urls(for: .desktopDirectory, in: .userDomainMask).first
+        ) else { return 0 }
 
         let store = ShotStore.shared
         let jobs = shots.map { shot in
@@ -1472,8 +1475,8 @@ private struct ShotDetailPane: View {
         // 指纹由后台分析异步补上：store 每次刷新（属性落库会触发 reload）都重查一次。
         // 属性写入不一定改变 shots 数组本身，所以订阅 objectWillChange 而不是 onChange。
         // 单行 LIMIT 1 查询，代价可忽略。
-        // 修订列表同理：编辑器已是独立窗口（非模态），保存时机不再有
-        // 「sheet 收起」这样的锚点 —— appendRevision 落库会发布变更，这里重查。
+        // 修订列表同理：编辑器是同一窗口内的模式分支（非模态 sheet），保存时机
+        // 不再有「sheet 收起」这样的锚点 —— appendRevision 落库会发布变更，这里重查。
         .onReceive(store.objectWillChange) { _ in
             refreshFeaturePrint()
             refreshSensitiveRegions()
@@ -1620,7 +1623,7 @@ private struct ShotDetailPane: View {
     private var actions: some View {
         HStack(spacing: DS.s2) {
             Button {
-                GallerySelection.shared.editingShot = shot
+                GalleryWindowMode.shared.openEditor(shotID: shot.id)
             } label: {
                 Label("编辑", systemImage: "pencil.tip.crop.circle")
             }
@@ -1713,14 +1716,17 @@ private struct ShotDetailPane: View {
         .help("更多动作：出处 / 相似 / 时间线 / Bug 报告 / 上传")
     }
 
+    /// 钉在桌面：走注册表的 pin 动作（界面层不直接建窗口），材料从图库记录重建。
     private func pin() {
         guard let base = store.originalImage(for: shot) else { return }
-        PinWindowController.pin(
+        let context = CaptureContext(
             base: base,
             layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
             shot: shot,
-            at: .zero
+            region: nil,
+            host: nil
         )
+        Task { try? await CaptureActionRegistry.shared.action(id: ActionID.pin)?.perform(context) }
     }
 
     /// 上传图床：复用截图工具条的 UploadAction，材料从图库记录重建。
@@ -1737,14 +1743,11 @@ private struct ShotDetailPane: View {
             do {
                 try await UploadAction().perform(context)
             } catch {
-                let alert = NSAlert()
-                alert.messageText = "上传失败"
-                alert.informativeText = error.localizedDescription
-                if let window = GalleryWindowController.shared.window {
-                    alert.beginSheetModal(for: window) { _ in }
-                } else {
-                    alert.runModal()
-                }
+                AppAlert.error(
+                    "上传失败",
+                    error: error,
+                    host: GalleryWindowController.shared.window
+                )
             }
         }
     }

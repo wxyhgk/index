@@ -270,26 +270,20 @@ final class CaptureCoordinator {
         // 这一步会触发系统的授权弹窗（首次）。
         ScreenRecordingPermission.request()
 
-        let alert = NSAlert()
-        alert.messageText = "需要「屏幕录制」权限"
-        alert.informativeText = """
-        请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 MacShot。
-        授权后需要重新启动 MacShot 才能生效。
-        """
-        alert.addButton(withTitle: "打开系统设置")
-        alert.addButton(withTitle: "稍后")
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
+        let choice = AppAlert.confirm(
+            "需要「屏幕录制」权限",
+            message: """
+            请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 MacShot。
+            授权后需要重新启动 MacShot 才能生效。
+            """,
+            buttons: ["打开系统设置", "稍后"]
+        )
+        if choice == 0 {
             SystemNavigator.openScreenRecordingSettings()
         }
     }
 
     private func presentError(_ error: Error) {
-        let alert = NSAlert()
-        alert.messageText = "截图失败"
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .warning
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        AppAlert.error("截图失败", error: error)
     }
 }

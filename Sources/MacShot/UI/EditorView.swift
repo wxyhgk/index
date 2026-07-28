@@ -5,9 +5,10 @@ import AppKit
 /// 画布上的一切都是图层；保存时只是往 revision 表追加一条记录，原图字节永远不变。
 ///
 /// 活在**图库窗口内**（Snagit 的 Editor/Library 单窗口双模式）：
-/// `GallerySelection.editingShot` 非 nil 时 GalleryView 整窗切到本视图，
-/// 返回图库 = 置回 nil；换图 = 换成目标 shot（宿主用 `.id(shot.id)` 保证重建，
-/// `shot` 因此得以保持 `let`，重新走一遍 onAppear → load）。
+/// `GalleryWindowMode.editingShotID` 非 nil 时 GalleryView 按 ID 现查 Shot
+/// 并整窗切到本视图，返回图库 = `returnToGallery()`；换图 = 换成目标 ID
+/// （宿主用 `.id(shot.id)` 保证重建，`shot` 因此得以保持 `let`，
+/// 重新走一遍 onAppear → load）。
 ///
 /// 状态机是和截图覆盖层 / 钉图窗口**同一个** `AnnotationState` ——
 /// 工具、固定 4 色 3 档粗细、选中 / 拖动 / 删除、全量撤销重做因此完全一致。
@@ -1116,17 +1117,17 @@ struct EditorView: View {
         annotationTick += 1
     }
 
-    /// 胶片条点击换图。未保存守卫通过后直接换 `editingShot` ——
+    /// 胶片条点击换图。未保存守卫通过后直接换 `editingShotID` ——
     /// 宿主（GalleryView）挂了 `.id(shot.id)`，identity 变化即重建本视图完成切换。
     private func requestSwitch(to target: Shot) {
         guard target.id != shot.id, resolveUnsavedChanges() else { return }
-        GallerySelection.shared.editingShot = target
+        GalleryWindowMode.shared.openEditor(shotID: target.id)
     }
 
     /// 左上「‹ 图库」/ 底部「返回图库」/ Esc：守卫通过后整窗切回图库模式。
     private func requestReturnToGallery() {
         guard resolveUnsavedChanges() else { return }
-        GallerySelection.shared.editingShot = nil
+        GalleryWindowMode.shared.returnToGallery()
     }
 
     /// 未保存守卫（返回图库和换图共用）。有未保存的标注时先问一声
@@ -1135,20 +1136,17 @@ struct EditorView: View {
         annotation.endTextEditing()
         guard exportedLayers.persisted != baselineLayers else { return true }
 
-        let alert = NSAlert()
-        alert.messageText = "有未保存的标注，仍要离开吗？"
-        alert.informativeText = "当前画布上的改动还没有保存为新版本，离开后会丢失。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "保存并继续")
-        alert.addButton(withTitle: "不保存继续")
-        alert.addButton(withTitle: "取消")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
+        switch AppAlert.confirm(
+            "有未保存的标注，仍要离开吗？",
+            message: "当前画布上的改动还没有保存为新版本，离开后会丢失。",
+            buttons: ["保存并继续", "不保存继续", "取消"]
+        ) {
+        case 0:
             saveRevision()
             // 保存可能被并发修订确认（confirmSaveOverNewerRevision）取消 ——
             // 那样基线不会更新，改动仍未保存，不能走。
             return exportedLayers.persisted == baselineLayers
-        case .alertSecondButtonReturn:
+        case 1:
             return true
         default:
             return false
@@ -1163,15 +1161,13 @@ struct EditorView: View {
     private func confirmSaveOverNewerRevision() -> Bool {
         guard store.latestRevision(for: shot)?.id != revisions.last?.id else { return true }
 
-        let alert = NSAlert()
-        alert.messageText = "图库中已有更新的修订，仍要保存吗？"
-        alert.informativeText = "这张截图在别处（钉图或自动脱敏）"
-            + "已保存了更新的版本。继续保存会把当前画布内容追加为最新修订，"
-            + "历史版本都还在，不会丢失。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "仍要保存")
-        alert.addButton(withTitle: "取消")
-        return alert.runModal() == .alertFirstButtonReturn
+        return AppAlert.confirm(
+            "图库中已有更新的修订，仍要保存吗？",
+            message: "这张截图在别处（钉图或自动脱敏）"
+                + "已保存了更新的版本。继续保存会把当前画布内容追加为最新修订，"
+                + "历史版本都还在，不会丢失。",
+            buttons: ["仍要保存", "取消"]
+        ) == 0
     }
 
     private func copyRendered() {
