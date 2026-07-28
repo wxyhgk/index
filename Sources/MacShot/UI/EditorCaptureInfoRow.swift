@@ -7,13 +7,13 @@ import SwiftUI
 /// caption.semibold 组题，同 `TagSection`）。
 ///
 /// **自包含**：不依赖 EditorView 的任何内部状态 ——
-///   · 开启前自己把 shot 的元数据注入 `AnnotationState`（App 名+版本 /
-///     网址 / 捕获时刻），烤入时机与覆盖层 / 钉图一致
-///   · 所有改动经 `toggleCaptureInfo` / `setCaptureInfoFields` 走撤销栈，
+///   · 元数据（App 名+版本 / 网址 / 捕获时刻）在 `toggleEffect` 那一刻从
+///     `AnnotationState.effectContext` 烤入（编辑器在装载时注入 shot 的归因，
+///     见 `EditorView.load`），时机与覆盖层 / 钉图一致
+///   · 所有改动经 `toggleEffect` / `setCaptureInfoFields` 走撤销栈，
 ///     然后回调 `onChange` 让宿主自增 tick 驱动重绘
 struct EditorCaptureInfoRow: View {
     let annotation: AnnotationState
-    let shot: Shot
     /// 每次状态机变更后调用；宿主在这里 tick（编辑器的 `annotationTick += 1`）。
     let onChange: () -> Void
 
@@ -30,7 +30,7 @@ struct EditorCaptureInfoRow: View {
                     .labelsHidden()
             }
 
-            if annotation.hasCaptureInfo {
+            if annotation.hasEffect(.captureInfo) {
                 HStack(spacing: DS.s3) {
                     ForEach(CaptureInfoSpec.Field.allCases, id: \.rawValue) { field in
                         Toggle(field.displayName, isOn: fieldBinding(field))
@@ -48,14 +48,13 @@ struct EditorCaptureInfoRow: View {
 
     // MARK: 绑定
 
-    /// 总开关。开启前先注入元数据默认值 —— 值在 `toggleCaptureInfo` 那一刻
-    /// 烤进参数 JSON，之后图层自带数据，关掉再开会重新烤（取舍同 frame）。
+    /// 总开关。元数据值在 `toggleEffect` 那一刻从注入上下文烤进参数 JSON，
+    /// 之后图层自带数据，关掉再开会重新烤（取舍同 frame）。
     private var enabledBinding: Binding<Bool> {
         Binding(
-            get: { annotation.hasCaptureInfo },
+            get: { annotation.hasEffect(.captureInfo) },
             set: { _ in
-                injectDefaults()
-                annotation.toggleCaptureInfo()
+                annotation.toggleEffect(.captureInfo)
                 onChange()
             }
         )
@@ -74,16 +73,5 @@ struct EditorCaptureInfoRow: View {
                 if annotation.setCaptureInfoFields(ordered) { onChange() }
             }
         )
-    }
-
-    /// 编辑器这一处注入点：与覆盖层（confirmedWindow）、钉图
-    /// （PinWindowController）同一套机制，来源是 shot 落库的真实归因。
-    /// 网址复用 frame 的 `frameDefaultURL` 注入属性（同一时机、同一来源）。
-    private func injectDefaults() {
-        annotation.captureInfoDefaultApp = CaptureInfoSpec.appDescription(
-            name: shot.appName, version: shot.appVersion
-        )
-        annotation.frameDefaultURL = shot.sourceURL
-        annotation.captureInfoDefaultDate = shot.capturedAt
     }
 }

@@ -61,14 +61,14 @@ struct Layer: Codable, Identifiable, Equatable {
         /// 美化：把成品垫在渐变/纯色背景上，内容圆角 + 投影 + 四周留白。
         /// 复用现有字段避免动 Codable：`lineWidth` = 留白 padding（像素）、
         /// `fontSize` = 内容圆角半径、`text` = 背景预设名、`color` = solid 预设的颜色。
-        /// 同时只保留一层（见 `AnnotationState.toggleBackdrop`），只影响导出，不参与画布预览。
+        /// 同时只保留一层（见 `AnnotationState.toggleEffect`），只影响导出，不参与画布预览。
         case backdrop
         /// 水印：文字盖在成品上（白字 + 细黑描边，深浅底都可见），非破坏、进修订链。
         /// 复用现有字段避免动 Codable：`text` = `WatermarkSpec` 的 JSON
         /// （`{"mode":"corner","text":"@user"}`）、`color.a` = 透明度、
         /// `fontSize` = 字号（创建时按图宽 3% 烤入，min 14px）、
         /// `lineWidth` = 描边宽（创建时 = 1/pixelScale，投影后恰为 1 像素）。
-        /// 同时只保留一层（见 `AnnotationState.toggleWatermark`）；在裁剪之后、
+        /// 同时只保留一层（见 `AnnotationState.toggleEffect`）；在裁剪之后、
         /// 美化之前套用，预览**会**画 —— 它影响构图判断，和 backdrop 不同。
         case watermark
         /// 外壳（带壳截图）：把内容套进 macOS 窗口壳 / 浏览器壳 ——
@@ -76,7 +76,7 @@ struct Layer: Codable, Identifiable, Equatable {
         /// 复用现有字段避免动 Codable：`text` = 参数 JSON（见 `FrameSpec`：
         /// style / title / url）、`lineWidth` = 创建时烤入的像素倍率（壳的所有
         /// 结构尺寸按它缩放，Retina 下不发虚）。
-        /// 同时只保留一层（见 `AnnotationState.toggleFrame`），只影响导出，不参与画布预览。
+        /// 同时只保留一层（见 `AnnotationState.toggleEffect`），只影响导出，不参与画布预览。
         case frame
         /// 捕获信息：成品底部接一条深色信息栏，排真实的捕获元数据 ——
         /// App 名+版本 / 来源网址 / 日期时间（竞品只能标 App 名+系统版本，网址是独家）。
@@ -85,8 +85,19 @@ struct Layer: Codable, Identifiable, Equatable {
         /// 与 frame 的元数据填充同一时机、同一来源）、`lineWidth` = 创建时烤入的
         /// 像素倍率（信息栏的结构尺寸按它缩放，语义同 frame —— 「每视觉点的画布
         /// 单位」，投影乘 scale 后恰好是成品像素倍率，不会平方放大）。
-        /// 同时只保留一层（见 `AnnotationState.toggleCaptureInfo`），只影响导出，不参与画布预览。
+        /// 同时只保留一层（见 `AnnotationState.toggleEffect`），只影响导出，不参与画布预览。
         case captureInfo
+
+        /// 效果层：没有画布上的形体，只作用于导出成品的单例图层
+        /// （水印 / 捕获信息 / 外壳 / 美化）。命中测试、缩放控制点、
+        /// 矢量绘制、编辑器图层列表的排除全部由它派生 ——
+        /// 新增效果 kind 只需在这里补一项，不再各处手维护黑名单。
+        var isEffect: Bool {
+            switch self {
+            case .watermark, .captureInfo, .frame, .backdrop: return true
+            default: return false
+            }
+        }
 
         var displayName: String {
             switch self {

@@ -101,10 +101,17 @@ final class OverlayView: NSView {
         // 截图从中性态开始：确认选区后没有任何工具高亮，拖拽只调整选区；
         // 点「鼠标」按钮（或按 V）才进入指针模式（图层可选 + 选字）。
         annotation.pointerEngaged = false
-        // 水印字号按「成品图宽 3%」烤入；成品宽 = 选区宽（点）× 缩放倍率。
-        // 闭包按需取值 —— 开关水印的那一刻选区是多大就按多大算。
-        annotation.imagePixelWidthProvider = { [model] in
-            Double((model.confirmedRect?.width ?? 0) * model.snapshot.scale)
+        // 效果层的注入上下文（覆盖层这一处，与钉图/编辑器同一契约）。
+        // 闭包按开关那一刻取值：成品宽 = 选区宽（点）× 缩放倍率；
+        // 元数据从确认选区时的窗口归因取（浏览器 URL 是落库后异步回填的，
+        // 此刻还没有 → 留空）；捕获时刻不注入 —— 截图那一刻就是当下。
+        annotation.effectContext = { [model] in
+            var context = EffectContext()
+            context.imagePixelWidth =
+                Double((model.confirmedRect?.width ?? 0) * model.snapshot.scale)
+            context.windowTitle = model.confirmedWindow?.title
+            context.appDescription = Self.captureInfoApp(for: model.confirmedWindow)
+            return context
         }
 
         wantsLayer = true
@@ -247,8 +254,8 @@ final class OverlayView: NSView {
 
     /// 捕获信息层的「App 名+版本」：按窗口归因的 pid 查在跑的 App，版本从其
     /// bundle 读（和 `MetadataCollector.collect` 同一取法）；查不到退回
-    /// CGWindowList 的 ownerName。只在激活工具条控件时取一次，都是内存操作。
-    private func captureInfoApp(for window: WindowInfo?) -> String? {
+    /// CGWindowList 的 ownerName。只在开启效果时取一次，都是内存操作。
+    private static func captureInfoApp(for window: WindowInfo?) -> String? {
         guard let window else { return nil }
         let runningApp = NSRunningApplication(processIdentifier: window.pid)
         let version = runningApp?.bundleURL
@@ -265,11 +272,8 @@ final class OverlayView: NSView {
         // 工具条命中优先
         if model.phase == .confirmed,
            let control = slots.first(where: { $0.control != nil && $0.frame.contains(local) })?.control {
-            // 套壳（frame）/ 捕获信息要用的真实元数据：窗口归因在确认选区时已定，
-            // 激活前取一次最新值；浏览器 URL 是落库后异步回填的，截图这一刻还没有
-            // → 留空，浏览器壳的地址栏画成空胶囊、信息栏不排网址那一段。
-            annotation.frameDefaultTitle = model.confirmedWindow?.title
-            annotation.captureInfoDefaultApp = captureInfoApp(for: model.confirmedWindow)
+            // 效果层要用的真实元数据不在这里注入 —— init 里设的
+            // `annotation.effectContext` 闭包会在开关那一刻现取窗口归因。
             control.activate(toolbarContext)
             // 控件可能切换了工具 / 进出了鼠标模式，选字层跟着对齐。
             syncLiveTextOverlay()

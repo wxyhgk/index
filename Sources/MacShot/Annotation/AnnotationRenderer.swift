@@ -25,13 +25,16 @@ enum AnnotationRenderer {
         }
         LayerRenderer.drawVectors(layers.elements, in: ctx)
 
-        // 水印和 backdrop 不同，预览**必须**画 —— 它盖在画面上，影响构图判断。
-        // 位置相对「成品范围」：这里取当前裁剪盒（覆盖层是选区，钉图/编辑器是整张图），
-        // 与导出时相对裁剪后整图的定位一致；绘制代码就是导出用的那一份。
-        // 和 `LayerRenderer.render` 一样只认最后一层 —— 钉图把截图时的水印
-        // 和新开的水印叠在一个列表里时，预览和导出取的是同一层。
-        if let watermark = layers.elements.last(where: { $0.kind == .watermark }) {
-            LayerRenderer.drawWatermark(watermark, in: ctx, canvas: ctx.boundingBoxOfClipPath)
+        // 参与预览的效果层（描述符带 `previewDraw` 的，目前只有水印 ——
+        // 它盖在画面上，影响构图判断）。位置相对「成品范围」：这里取当前裁剪盒
+        // （覆盖层是选区，钉图/编辑器是整张图），与导出时相对裁剪后整图的定位一致；
+        // 绘制代码就是导出用的那一份。和 `LayerRenderer.render` 一样只认最后一层 ——
+        // 钉图把截图时的水印和新开的水印叠在一个列表里时，预览和导出取的是同一层。
+        for descriptor in EffectRegistry.ordered {
+            guard let previewDraw = descriptor.previewDraw,
+                  let layer = layers.elements.last(where: { $0.kind == descriptor.kind })
+            else { continue }
+            previewDraw(layer, ctx, ctx.boundingBoxOfClipPath)
         }
     }
 

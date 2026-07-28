@@ -148,128 +148,39 @@ struct WidthControl: ToolbarControl {
     }
 }
 
-// MARK: - 美化（背景垫底 / 圆角 / 阴影）
+// MARK: - 效果开关（美化 / 带壳 / 水印 / 捕获信息）
 
-/// 美化开关。它不是画笔而是**输出选项** —— 点一下加/删一层 backdrop，
-/// 导出/复制的成品垫上渐变背景 + 圆角 + 投影；画布预览不变。
-/// 覆盖层/钉图只做开关（默认预设），预设切换在图库编辑器里。
-struct BackdropControl: ToolbarControl {
-    let id = "backdrop"
+/// 效果层的开关控件。效果不是画笔而是**输出选项** —— 点一下经
+/// `AnnotationState.toggleEffect` 加/删一层对应的效果层（单例语义、可撤销），
+/// 参数与元数据由描述符（`EffectRegistry`）在开关那一刻烤入。
+/// 四个效果只差 id / 次序 / 图标 / kind，这里参数化成一个控件、登记处注册四次；
+/// 样式子选项（预设 / 模式 / 壳样式 / 字段勾选）在图库编辑器的效果面板里。
+struct EffectToggleControl: ToolbarControl {
+    let id: String
+    /// 排在颜色（0..）和粗细（100..）之后（300..）。
+    let order: Int
+    let symbolName: String
+    let kind: Layer.Kind
+
     /// 只在钉图上出现：截图工具条为保持精简撤掉了输出开关 ——
-    /// 截图阶段要美化的用户可以钉图后再开，或去图库编辑器调。
+    /// 截图阶段要效果的用户可以钉图后再开，或去图库编辑器调。
+    /// 「导出自动加水印」在协调器里，不走这个开关，截图阶段照常生效。
     var scopes: Set<ActionScope> { [.pinned] }
     var group: ToolbarGroup { .style }
-    /// 排在颜色（0..）和粗细（100..）之后。
-    var order: Int { 300 }
 
-    /// 恒可见：指针模式下也能开关 —— 它是输出选项，不依赖任何工具。
+    /// 恒可见：指针模式下也能开关 —— 输出选项不依赖任何工具。
     func isVisible(_ context: ToolbarContext) -> Bool { true }
 
     func isSelected(_ context: ToolbarContext) -> Bool {
-        context.annotation.hasBackdrop
+        context.annotation.hasEffect(kind)
     }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
-        ToolbarStyle.drawCenteredSymbol("sparkles", in: frame)
+        ToolbarStyle.drawCenteredSymbol(symbolName, in: frame)
     }
 
     func activate(_ context: ToolbarContext) {
-        context.annotation.toggleBackdrop()
-    }
-}
-
-// MARK: - 水印
-
-/// 水印开关。和美化一样是**输出选项**：点一下按设置里的参数加/删一层 watermark，
-/// 单例语义、不可选中拖动。设置没配文案时用 "MacShot" 兜底 —— 开关必须永远可用。
-/// 和 backdrop 不同，水印会画进实时预览（见 `AnnotationRenderer`）—— 它影响构图判断。
-struct WatermarkControl: ToolbarControl {
-    let id = "watermark"
-    /// 只在钉图上出现（同 BackdropControl）。「导出自动加水印」在协调器里，
-    /// 不走这个开关，截图阶段照常生效。
-    var scopes: Set<ActionScope> { [.pinned] }
-    var group: ToolbarGroup { .style }
-    /// 排在美化（300）之后。
-    var order: Int { 320 }
-
-    /// 恒可见：指针模式下也能开关 —— 它是输出选项，不依赖任何工具。
-    func isVisible(_ context: ToolbarContext) -> Bool { true }
-
-    func isSelected(_ context: ToolbarContext) -> Bool {
-        context.annotation.hasWatermark
-    }
-
-    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
-        ToolbarStyle.drawCenteredSymbol("signature", in: frame)
-    }
-
-    func activate(_ context: ToolbarContext) {
-        let settings = AppSettings.shared
-        let text = settings.trimmedWatermarkText
-        context.annotation.toggleWatermark(
-            text: text.isEmpty ? "MacShot" : text,
-            mode: settings.watermarkMode,
-            alpha: settings.watermarkAlpha
-        )
-    }
-}
-
-// MARK: - 带壳（macOS 窗口壳 / 浏览器壳）
-
-/// 套壳开关。和美化一样是**输出选项**：点一下加/删一层 frame，
-/// 导出成品把内容接上标题栏（红绿灯 + 真实窗口标题）；画布预览不变。
-/// 覆盖层/钉图只做开关（默认 macos 壳），样式切换在图库编辑器里。
-struct FrameControl: ToolbarControl {
-    let id = "frame"
-    /// 只在钉图上出现（同 BackdropControl）。
-    var scopes: Set<ActionScope> { [.pinned] }
-    var group: ToolbarGroup { .style }
-    /// 排在美化（300）后面。
-    var order: Int { 310 }
-
-    /// 恒可见：同美化 —— 输出选项不依赖任何工具。
-    func isVisible(_ context: ToolbarContext) -> Bool { true }
-
-    func isSelected(_ context: ToolbarContext) -> Bool {
-        context.annotation.hasFrame
-    }
-
-    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
-        ToolbarStyle.drawCenteredSymbol("macwindow", in: frame)
-    }
-
-    func activate(_ context: ToolbarContext) {
-        context.annotation.toggleFrame()
-    }
-}
-
-// MARK: - 捕获信息（底部元数据信息栏）
-
-/// 捕获信息开关。和美化一样是**输出选项**：点一下加/删一层 captureInfo，
-/// 导出成品底部接一条信息栏（App 名+版本 / 网址 / 日期时间）；画布预览不变。
-/// 元数据在开启那一刻烤入 —— 覆盖层激活前注入 confirmedWindow 的归因
-/// （见 `OverlayView.mouseDown`），钉图注入 shot；字段勾选在图库编辑器里。
-struct CaptureInfoControl: ToolbarControl {
-    let id = "captureInfo"
-    /// 只在钉图上出现（同 BackdropControl）。
-    var scopes: Set<ActionScope> { [.pinned] }
-    var group: ToolbarGroup { .style }
-    /// 排在水印（320）之后。
-    var order: Int { 330 }
-
-    /// 恒可见：同美化 —— 输出选项不依赖任何工具。
-    func isVisible(_ context: ToolbarContext) -> Bool { true }
-
-    func isSelected(_ context: ToolbarContext) -> Bool {
-        context.annotation.hasCaptureInfo
-    }
-
-    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
-        ToolbarStyle.drawCenteredSymbol("info.square", in: frame)
-    }
-
-    func activate(_ context: ToolbarContext) {
-        context.annotation.toggleCaptureInfo()
+        context.annotation.toggleEffect(kind)
     }
 }
 
@@ -433,10 +344,18 @@ extension ToolbarRegistry {
         registry.register(LiveTextControl())
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
         AnnotationState.widths.indices.forEach { registry.register(WidthControl(index: $0)) }
-        registry.register(BackdropControl())
-        registry.register(FrameControl())
-        registry.register(WatermarkControl())
-        registry.register(CaptureInfoControl())
+        registry.register(EffectToggleControl(
+            id: "backdrop", order: 300, symbolName: "sparkles", kind: .backdrop
+        ))
+        registry.register(EffectToggleControl(
+            id: "frame", order: 310, symbolName: "macwindow", kind: .frame
+        ))
+        registry.register(EffectToggleControl(
+            id: "watermark", order: 320, symbolName: "signature", kind: .watermark
+        ))
+        registry.register(EffectToggleControl(
+            id: "captureInfo", order: 330, symbolName: "info.square", kind: .captureInfo
+        ))
         registry.register(UndoControl())
         registry.register(RedoControl())
     }
