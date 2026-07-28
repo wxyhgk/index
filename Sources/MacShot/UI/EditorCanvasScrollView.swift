@@ -141,9 +141,9 @@ final class CanvasScrollNSView: NSScrollView {
 
 /// 按住空格临时抓手（Photoshop / Figma 惯例）的按键监视器。
 /// SwiftUI 的 keyboardShortcut 只有「按下」没有「松开」，按住语义只能走
-/// NSEvent local monitor（keyDown/keyUp，keyCode 49）。让位逻辑对齐
-/// GalleryKeyboard：图库窗口不是 key / 有 sheet / 不在编辑模式一概放行；
-/// 文本输入中（NSTextView 是首响应者，含右侧文字框）一个键都不抢。
+/// NSEvent local monitor（keyDown/keyUp，keyCode 49）。让位判定与
+/// GalleryKeyboard **共用** `GalleryKeyContext`：图库窗口不是 key /
+/// 有 sheet 或模态 / 文本输入焦点（含右侧文字框）/ 不在编辑模式一概放行。
 @MainActor
 final class EditorSpaceHandMonitor: ObservableObject {
 
@@ -152,6 +152,9 @@ final class EditorSpaceHandMonitor: ObservableObject {
     @Published private(set) var spaceHeld = false
 
     private var monitor: Any?
+    /// 窗口失去 key 的观察者：⌘Tab 切走时 keyUp 会发给别的 App，
+    /// 只靠 keyUp 复位会让 spaceHeld 卡在按住态。
+    private var resignKeyObserver: NSObjectProtocol?
 
     /// 由 EditorView 在 onAppear 装、onDisappear 拆（换图重建视图时
     /// 新旧实例各管各的 monitor，互不干扰）。重复调用无害。
@@ -170,11 +173,28 @@ final class EditorSpaceHandMonitor: ObservableObject {
             }
             return handled ? nil : event
         }
+        // 按住空格时 ⌘Tab 切走（或任何原因失去 key）：keyUp 收不到，主动复位。
+        // EditorView 订阅着 spaceHeld，复位会顺带清掉平移中的抓手状态与光标。
+        resignKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.spaceHeld,
+                      GalleryKeyContext.current() != .editor else { return }
+                self.spaceHeld = false
+            }
+        }
     }
 
     func remove() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver(resignKeyObserver)
+        }
+        resignKeyObserver = nil
         spaceHeld = false
     }
 
@@ -183,12 +203,7 @@ final class EditorSpaceHandMonitor: ObservableObject {
     ) -> Bool {
         guard keyCode == KeyCode.space else { return false }
 
-        guard let window = GalleryWindowController.shared.window,
-              NSApp.keyWindow === window,
-              window.attachedSheet == nil,
-              GallerySelection.shared.editingShot != nil,
-              !(window.firstResponder is NSTextView)
-        else {
+        guard GalleryKeyContext.current() == .editor else {
             // 按住途中条件变了（焦点进了文字框 / 弹了 sheet）：松手复位，
             // 但事件本身放行，别把别处的空格吞了。
             if !isDown, spaceHeld { spaceHeld = false }

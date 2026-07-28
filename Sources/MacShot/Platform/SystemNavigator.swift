@@ -28,14 +28,22 @@ enum SystemNavigator {
     /// 弹目录选择面板，用户取消返回 nil。
     /// 模态面板收敛在平台层 —— 与 `ImageExporter.exportWithPanel` 同一套纪律，
     /// SwiftUI 视图里不裸跑 runModal。
-    static func chooseDirectory(message: String = "选择文件夹") -> URL? {
+    /// - Parameter defaultDirectory: 面板初始定位的目录；nil = 系统记住的上次位置。
+    static func chooseDirectory(
+        message: String = "选择文件夹",
+        prompt: String = "选择",
+        defaultDirectory: URL? = nil
+    ) -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.message = message
-        panel.prompt = "选择"
+        panel.prompt = prompt
+        if let defaultDirectory {
+            panel.directoryURL = defaultDirectory
+        }
 
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK else { return nil }

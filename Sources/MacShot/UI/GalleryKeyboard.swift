@@ -5,9 +5,9 @@ import AppKit
 ///
 /// 用 NSEvent local monitor 而不是 SwiftUI 的 .focusable/.onKeyPress ——
 /// NavigationSplitView 里焦点会被侧边栏 List 和搜索框来回抢，网格自身拿不稳焦点。
-/// monitor 只在「key window 是图库 + 没有 sheet」时接手，并给两类首响应者让路：
-/// 文本输入（NSTextView，搜索框的字段编辑器）全部放行；
-/// 侧边栏列表（NSTableView 系）只放行方向键，保留原生的筛选项键盘导航。
+/// monitor 只在 `GalleryKeyContext` 判定「按键归图库模式」时接手（窗口是 key、
+/// 无 sheet / 模态、非文本输入焦点 —— 与编辑器的空格抓手 monitor 共用同一份判定），
+/// 另外给侧边栏列表（NSTableView 系）只放行方向键，保留原生的筛选项键盘导航。
 @MainActor
 final class GalleryKeyboard {
 
@@ -37,18 +37,12 @@ final class GalleryKeyboard {
     // MARK: - 事件分发
 
     private func handle(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
-        guard let window = GalleryWindowController.shared.window,
-              NSApp.keyWindow === window,
-              window.attachedSheet == nil
-        else { return false }
+        // 编辑器模式（单窗口双模式）下方向键/空格/回车/⌘⌫ 全放行 ——
+        // 编辑器有自己的快捷键体系（SwiftUI keyboardShortcut + 空格抓手 monitor），
+        // 这里一个键都不抢。判定与 EditorSpaceHandMonitor 共用 GalleryKeyContext。
+        guard GalleryKeyContext.current() == .library else { return false }
 
-        // 编辑器模式（单窗口双模式）：方向键/空格/回车/⌘⌫ 全放行 ——
-        // 编辑器有自己的快捷键体系（SwiftUI keyboardShortcut），这里一个键都不抢。
-        guard GallerySelection.shared.editingShot == nil else { return false }
-
-        let responder = window.firstResponder
-        // 搜索框输入中（字段编辑器是 NSTextView）：一个键都不抢。
-        if responder is NSTextView { return false }
+        let responder = GalleryWindowController.shared.window?.firstResponder
 
         switch keyCode {
         case KeyCode.space where flags.isEmpty:
@@ -57,8 +51,8 @@ final class GalleryKeyboard {
 
         case KeyCode.returnKey where flags.isEmpty,
              KeyCode.keypadEnter where flags.isEmpty:
-            guard let shot = selectedShot() else { return false }
-            GallerySelection.shared.editingShot = shot
+            guard let id = selectedShot()?.id else { return false }
+            GalleryWindowMode.shared.openEditor(shotID: id)
             return true
 
         case KeyCode.a where flags == .command:

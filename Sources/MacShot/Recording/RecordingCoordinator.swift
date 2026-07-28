@@ -210,17 +210,14 @@ final class RecordingCoordinator {
     // MARK: - 结果
 
     private func presentResult(_ url: URL) {
-        let alert = NSAlert()
-        alert.messageText = "录屏完成"
-        alert.informativeText = url.lastPathComponent
-        alert.addButton(withTitle: "在访达中显示")
-        alert.addButton(withTitle: "转为 GIF")
-        alert.addButton(withTitle: "关闭")
-        NSApp.activate(ignoringOtherApps: true)
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
+        switch AppAlert.confirm(
+            "录屏完成",
+            message: url.lastPathComponent,
+            buttons: ["在访达中显示", "转为 GIF", "关闭"]
+        ) {
+        case 0:
             SystemNavigator.revealInFinder(url)
-        case .alertSecondButtonReturn:
+        case 1:
             convertToGIF(url)
         default:
             break
@@ -242,20 +239,11 @@ final class RecordingCoordinator {
     // MARK: - 弹窗
 
     private func presentInfo(_ title: String, _ message: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        AppAlert.info(title, message: message)
     }
 
     private func presentError(_ title: String, _ error: Error) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .warning
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        AppAlert.error(title, error: error)
     }
 }
 
