@@ -6,6 +6,9 @@
 
 判断一个改动是否符合规范，只需要问：**它有没有修改已经写好的分支逻辑？** 如果有，说明缺一个扩展点。
 
+> 2026-07 全面对账更新：v0.0.5 首次审计定下的三个契约全部落地并经受了二十余批功能的检验；
+> 本次新增第四、五个扩展点（工具条控件、效果层），销账了全部已修缺陷，重写了违例表。
+
 ---
 
 ## 1. 依赖方向
@@ -14,42 +17,49 @@
 
 ```
                       ┌──────────────┐
-                      │     App      │  编排、生命周期、装配
+                      │     App      │  编排、生命周期、装配（Recording 协调同级）
                       └──────┬───────┘
-        ┌────────────┬───────┴────────┬─────────────┐
-        ▼            ▼                ▼             ▼
-   ┌────────┐  ┌──────────┐    ┌──────────┐  ┌──────────┐
-   │Capture │  │   Pin    │    │    UI    │  │ Settings │   界面与交互
-   └───┬────┘  └────┬─────┘    └────┬─────┘  └────┬─────┘
-       └────────────┴───────┬───────┴─────────────┘
+        ┌──────────┬─────────┼──────────┬──────────┐
+        ▼          ▼         ▼          ▼          ▼
+   ┌────────┐ ┌────────┐ ┌────────┐ ┌──────────┐ ┌────────┐
+   │Capture │ │  Pin   │ │   UI   │ │ Settings │ │ Shelf  │   界面与交互
+   └───┬────┘ └───┬────┘ └───┬────┘ └────┬─────┘ └───┬────┘
+       └──────────┴────┬─────┴───────────┴───────────┘
+                       ▼
+    ┌─────────────────────────────────────────────────┐
+    │ Actions · Pipeline    （契约实现集合，见 §1 注）  │
+    ├─────────────────────────────────────────────────┤
+    │ Annotation · Toolbar · Render    共享领域逻辑     │
+    └───────────────────────┬─────────────────────────┘
                             ▼
             ┌───────────────────────────────┐
-            │  Annotation · Toolbar · Render │  共享领域逻辑
-            └───────────────┬───────────────┘
-                            ▼
-            ┌───────────────────────────────┐
-            │      Core（模型 · 几何）        │  纯值类型，不 import AppKit
+            │  Storage 模型（纯值类型）        │
             └───────────────────────────────┘
 
-        Storage / Intelligence / Platform 挂在侧面，
-        只通过 App 层注入，不被界面层直接引用。
+   Storage / Intelligence / Platform 挂在侧面。
 ```
 
-### 硬性禁止
+**注（记录现实，不是许可新增）**：
 
-| 禁止 | 现存违例 |
+- `Actions` 的动作实现允许回调 `Pin`/`Platform` —— 动作的职责就是把结果送到某个出口（钉图窗口、剪贴板、磁盘），这是契约设计内的单向调用，不算违例。
+- 图上「侧挂层只通过 App 注入」对 `ShotStore.shared` 从未成立：它被界面/编排层十余个文件直接引用。这是**已接受的现状**，收敛属于阶段 6 的门面拆分，而不是逐处修补的对象。
+
+### 硬性禁止与现存违例
+
+| 禁止 | 现存违例（2026-07 对账） |
 |---|---|
-| 下层引用上层 | `Storage/ImageCodec.copyToPasteboard` 写 `NSPasteboard`（剪贴板是 UI 副作用） |
-| 领域层引用 App 配置 | `Annotation/AnnotationState.init` 读 `AppSettings.shared` |
-| 采集/智能层引用存储 | `Intelligence/OCRService` 和 `Capture/BrowserURLResolver` 直接调 `ShotStore.shared` |
-| 同层互相引用 | `App/CaptureActionPerformer` ↔ `Pin/PinWindowController` 双向依赖 |
-| 界面层直接建窗口/跑模态 | `UI/GalleryView` 里 `PinWindowController.pin` 和 `NSSavePanel().runModal()` |
+| 领域层引用 App 配置 | `Annotation/AnnotationState.init` 读 `AppSettings.shared`（取默认颜色）；效果层水印描述符读 `AppSettings`（开关语义，`CapturePostProcessor.isEnabled` 同款先例，可辩护但记录在案） |
+| 各层散读 `AppSettings` | `Storage/StorageJanitor`、`Platform/ImageExporter`、`Capture/OverlayView` 等 5 处（轻，逐步随重构下沉为注入参数） |
+| 界面层绕过注册表 | `UI/GalleryView` 直接 `UploadAction().perform(…)`（轻；pin 直调已于 2026-07 迁回注册表） |
+| 平台副作用散落 | `NSCursor` 5 个文件各自 set；`NSWorkspace` 2 处（取图标 / 开系统设置）。低优先级，暂不收敛 |
+
+**已修销账**（原违例表五行，全部修复）：剪贴板 → `Platform/Clipboard`（v0.0.9）；`OCRService`/`BrowserURLResolver` 直调 ShotStore → 流水线 + attribute writer（v0.0.7）；`CaptureActionPerformer` ↔ Pin 双向依赖 → 双方走 `CaptureActionRegistry`（v0.0.6）；GalleryView 内联存盘/目录面板与裸 `NSAlert` → `ImageExporter` / `SystemNavigator.chooseDirectory` / `Platform/AppAlert`（2026-07）。
 
 ---
 
-## 2. 三个契约
+## 2. 扩展点契约
 
-整个系统只需要三个扩展点。**功能一律挂在这三个之一上，不改中间的编排代码。**
+系统现有**五个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
 
 ### 2.1 入口：`CaptureSource` —— 像素怎么进来
 
@@ -64,147 +74,141 @@ protocol CaptureSource {
 
 **规范**：新增捕获方式 = 新增一个 `CaptureSource` 实现并注册。不改 `CaptureCoordinator`。
 
-现状：协议 + `CaptureSourceRegistry` 已落地（`Capture/CaptureSource.swift`），协调器按 id 取源、注册表可注入。这一契约**已完成**。
+已完成（`Capture/CaptureSource.swift` + 注册表），立即 / 延时两个实现。
 
-> **废弃的设想：`CaptureCanvas` 通用画布。** 这份文档曾计划把 `makeSnapshots()` 的产物换成「不绑定显示器的通用画布」，理由是延时、单窗口、滚动拼接都会需要它。三个功能全部落地之后，没有一个用上：延时截图产出的仍是整屏冻结画面；滚动截图完全绕开了快照机制（见阶段 4 注）；单窗口截图（⌥+单击）发生在**选区之后** —— 覆盖层照常用整屏冻结画面做悬停与兜底，确认后由 `WindowCapturer` 用 SCK 重拍不被遮挡的完整窗口。它的本质是「事后重拍」，一块预先冻结的画布根本表达不了它。选区层的画布事实上就是「一块显示器」，`DisplaySnapshot` 绑定 `DisplayInfo` 不是类型缺陷而是如实建模。结论：注册表已经兑现了「加捕获方式 = 加一个文件」，画布重构没有需求方，废弃。
+> **废弃的设想：`CaptureCanvas` 通用画布。** 曾计划把 `makeSnapshots()` 的产物换成「不绑定显示器的通用画布」，理由是延时、单窗口、滚动拼接都会需要它。三个功能全部落地之后，没有一个用上（详见 §6 阶段 4 结论）。教训：为「假想需求」预留的抽象，等真需求落地时往往长得完全不一样。
 
-### 2.2 中间：`CapturePostProcessor` —— 功能怎么挂上去
+### 2.2 中间：`CapturePostProcessor` —— 派生能力怎么挂上去
+
+已落地（v0.0.7），真实签名以 `Pipeline/CapturePostProcessor.swift` 为准：
 
 ```swift
-/// 一次捕获落库之后运行的派生处理。互相独立，可并发，失败不影响主流程。
-protocol CapturePostProcessor: Sendable {
+protocol CapturePostProcessor {
     var id: String { get }
-    var isEnabled: @MainActor () -> Bool { get }
-    func process(_ context: CaptureContext, writer: ShotAttributeWriter) async
+    @MainActor var isEnabled: Bool { get }        // 通常读设置开关
+    func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async
 }
-
-/// 通用属性回填通道。取代「一个派生属性 = 一个数据库列 + 一个 updateXXX 方法」。
-protocol ShotAttributeWriter: Sendable {
-    func write(shotID: ShotID, key: String, value: AttributeValue) async
+protocol ShotAttributeWriter {
+    func write(shotID: Int64, key: String, value: AttributeValue) async
 }
 ```
 
-**规范**：新增派生能力（OCR、CLIP 向量、自动打标签、水印、上传、通知）= 新增一个 `CapturePostProcessor` 并注册。不改 `CaptureCoordinator.handle`，不改数据库 schema。
+`PostProcessInput` 刻意不复用 `CaptureContext` —— 流水线不该认识 UI 概念。
 
-现状差距：`handle()` 是一条 57 行的硬编码直线，OCR 和浏览器地址各自手写了一份「detached → 算 → MainActor.run → ShotStore.shared.updateXXX」—— **同一段代码的两份拷贝**，这是抽象缺失的实证，不是假想需求。
+**实测成绩单**（git 可考）：Upload、取字、报告、分类、敏感检测、CLIP 每次都守约。
+诚实记录实际改动面：一个派生能力 = 新处理器文件 + **两处注册**（`CapturePipeline` + `AttributeBackfill.jobs()` 回填表）+ `AttributeKey` 常量 + 设置开关 + 消费侧 UI。约束住的是 schema 与协调器零改动。
 
 ### 2.3 出口：`CaptureAction` —— 结果怎么出去
 
+已落地（v0.0.6），真实签名以 `Actions/CaptureAction.swift` 为准：
+
 ```swift
-/// 用户在工具条上选择的动作。
 protocol CaptureAction {
     var id: String { get }
     var title: String { get }
     var symbolName: String { get }
-    /// 在哪些场景出现：截图选区确认后 / 钉图窗口上
     var scopes: Set<ActionScope> { get }
-    /// 这个动作是否会自己处理剪贴板（决定要不要叠加全局自动复制）
-    var handlesClipboard: Bool { get }
-
+    var suppressesAutoCopy: Bool { get }     // 动作自己管剪贴板时抑制全局自动复制
+    var isPrimaryAction: Bool { get }        // 截图工具条上是否直接露出（默认实现 false）
     func perform(_ context: CaptureContext) async throws
 }
 ```
 
-**规范**：新增动作（上传图床、生成 GIF、OCR 后复制文字、发到 Slack）= 新增一个 `CaptureAction` 并注册。不改工具条、不改协调器、不改钉图窗口。
+`CaptureContext` 自 v0.0.6 至今**零膨胀**（base / layers / shot / region / host，唯一变化是 `[Layer]` → `Layers<ImageSpace>`）。契约演进（如加 `isPrimaryAction`）必须带默认实现，一次性完成，不许逐动作散弹。
 
-现状差距：`ToolbarAction` 是封闭枚举，串起 **4 个 switch**（`CaptureActionPerformer.perform`、`PinWindowController.perform`、`CaptureCoordinator.shouldAutoCopy`、以及两个静态数组）。加一个动作至少改 8 处。更糟的是 `shouldAutoCopy` 的 `default:` 分支会让新动作**默认吃到自动复制** —— 「上传图床」会顺手覆盖剪贴板。
+### 2.4 工具条：`ToolbarControl` —— 按钮怎么上条
 
-签名必须是 `async throws`：上传和 GIF 生成都是长耗时可失败操作，当前的 `@MainActor` 同步 `-> Void` 根本表达不了。
+事实上的第四个扩展点（`Toolbar/ToolbarControl.swift`），控件数量已超过动作数量：
+`group / order / isVisible / view(context:)`，`ToolbarRegistry.controls(for:)` 聚合注册控件与动作控件。counter / spotlight / 效果开关的接入都验证了「加控件 = 注册一行」。
+
+**记录在案的膨胀风险**：Live Text 往 `ToolbarContext` 加了 `isLiveTextActive` / `toggleLiveText` 一对宿主回调 —— 「每个要宿主配合的控件加一对闭包」是注册制的经典逃生门。**第二个**同类控件出现之前，必须把它们收敛成一个 `hostCapabilities` 结构。`MoreActionsControl` 的折叠策略目前写在注册表的 `.capture` 分支里，同属待收敛项。
+
+### 2.5 效果层：`EffectDescriptor` —— 整图效果怎么加（2026-07 新增）
+
+水印 / 美化 / 外壳 / 捕获信息四个「单例语义、不参与命中、导出期套用」的效果层曾靠四段同构 API + 四份手维护黑名单镜像维持，并产生过一次真实漂移（`ResizeHandle` 漏排除 captureInfo）。现收敛为契约（`Annotation/EffectLayer.swift`）：
+
+```swift
+struct EffectDescriptor {
+    let kind: Layer.Kind
+    let renderOrder: Int                     // EffectRegistry.ordered 是导出套用次序的唯一定义
+    let makeLayer: @MainActor (EffectContext) -> Layer
+    let previewDraw: (…)?                    // nil = 不参与画布预览
+}
+```
+
+**规范**：新增效果 = 一个描述符 + 注册一行 + `Layer.Kind` 一个 case（`isEffect` 返回 true）。
+排除逻辑（命中测试、控制点、矢量绘制、图层面板列表）一律从 `kind.isEffect` 派生，**不许再写按 kind 枚举的黑名单**。元数据注入统一走 `EffectContext` 值对象，三宿主各一处赋值。Spec 序列化类型住在 `Annotation/EffectSpecs.swift`，与渲染分离。
 
 ---
 
-## 3. 类型层面的约定
+## 3. 类型层面的约定（已全部落地，v0.0.8）
 
-### 3.1 坐标系必须由类型保证，不能靠注释
+### 3.1 坐标系由类型保证
 
-系统里同时存在四套坐标系：
+`Layers<CanvasSpace>` / `Layers<ImageSpace>` phantom type，唯一的桥是 `projected(onto:scale:)`，`LayerRenderer` 公共入口只收 `ImageSpace`。裸 `[Layer]` 仅存于三处合法边界：持久化编解码（`Storage/Models.swift`）、`LayerSpace.persisted` 逃生门、渲染器内部私有函数。
+已知渗漏（可接受）：`EditorView.baselineLayers` 用持久化形态做未保存比对。
 
-| 空间 | 原点 | 单位 | 使用者 |
-|---|---|---|---|
-| AppKit 全局 | 主屏左下 | 点 | 选区、窗口 frame |
-| CoreGraphics 全局 | 主屏左上 | 点 | `CGWindowListCopyWindowInfo` |
-| 画布空间 | 画布左上 | 点或像素 | 标注图层 |
-| 图像像素 | 图像左上 | 像素 | 渲染与导出 |
-
-**现状是整个代码库最脆的地方**：同一个 `[Layer]` 类型承载三种互不兼容的语义（显示器点 / 图片像素 / 已换算的裁剪图像素），转换只发生在 `OverlayView.emit()` 一个点。忘调用或调用两次，编译器一声不吭，用户看到标注错位。
-
-**规范**：用 phantom type 区分。
-
-```swift
-struct Layers<Space: CoordinateSpace> { … }
-enum CanvasSpace: CoordinateSpace {}   // 画布点
-enum ImageSpace: CoordinateSpace {}    // 图像像素
-
-// 唯一的桥
-extension Layers where Space == CanvasSpace {
-    func projected(onto selection: CGRect, scale: CGFloat) -> Layers<ImageSpace>
-}
-// 渲染器只接受 ImageSpace
-```
-
-收益：把一整类静默 bug 变成编译错误。
+标度语义约定：`pixelScale` / `chromeScale` 一类属性表示「每**视觉点**的画布单位」—— 投影时不得再乘一次比例（历史上 frame 线宽双重缩放的教训）。
 
 ### 3.2 一种图层，一份绘制实现
 
-现在有**三套**：`LayerRenderer.drawVectors`（导出）、`AnnotationRenderer`（覆盖层预览，已复用前者）、`EditorView.drawPreview`（SwiftUI 手写近似）。第三套是「所见非所得」投诉的直接来源。
-
-**规范**：`LayerRenderer` 是唯一真相。任何预览都必须走它，只允许调用方设置 CTM。
+`LayerRenderer` 是唯一真相：覆盖层预览（`AnnotationRenderer` 委托）、编辑器画布（`LayerCanvas` → `AnnotationRenderer`）、钉图、导出全部走它，调用方只设置 CTM。效果预览也经描述符 `previewDraw` 分发回同一份绘制代码。
 
 ### 3.3 一份快捷键表
 
-现在覆盖层和钉图窗口各有一份 `toolShortcuts`，而且**已经漂移**（钉图那份缺方向键）。设置页里的按键说明是第三份手写文本，和实际映射无代码关联。
-
-**规范**：`AnnotationTool` 持有唯一的快捷键定义，设置页的帮助文本从这份表生成。
+工具键唯一真相是 `AnnotationTool.shortcuts`：覆盖层 / 钉图 / 编辑器（bareKey 派生）/ 设置页帮助文本全部消费这张表。
+边界：非工具键（图库导航、Quick Look、空格抓手、钉图专属键）按面分治、各自持有；图库/编辑器的按键**让位判定**统一走 `GalleryKeyContext`（2026-07），禁止再写镜像 guard。设置页对非工具键的说明仍是手写文本，改键时人工同步。
 
 ---
 
-## 4. 平台副作用的收敛
+## 4. 平台副作用的收敛（表内全部完成）
 
-「与系统交互」是副作用，必须收敛，否则会出现同一件事三种行为。
-
-| 副作用 | 现状 | 规范 |
+| 副作用 | 收敛点 | 状态 |
 |---|---|---|
-| 存盘面板 | 3 份独立实现，行为已不一致（只有一份带默认目录和 `NSApp.activate`） | 单一 `ImageExporter` |
-| 剪贴板 | 实现在 `Storage/ImageCodec`（层级倒置），5 个调用点 | 移到 `Platform/Clipboard` |
-| 激活策略 | 3 份重复，其中 `GalleryWindowController` 无守卫（真 bug） | `ActivationPolicyManager` 引用计数 |
-| 窗口生命周期 | 4 套机制：单例 / `static var living` ×2 / 实例数组 | 统一 `WindowRegistry` |
-| 访达 / 系统设置 | 4 处散落 | `Platform/SystemNavigator` |
+| 存盘/导出 | `Platform/ImageExporter`（文件名模板唯一实现） | ✅ v0.0.9 |
+| 目录选择 | `Platform/SystemNavigator.chooseDirectory`（带默认目录参数） | ✅ 2026-07 |
+| 剪贴板 | `Platform/Clipboard` | ✅ v0.0.9 |
+| 激活策略 + 窗口生命周期 | `Platform/WindowRegistry`（显式 dock 图标引用计数；原设想的独立 `ActivationPolicyManager` 被它吸收，未单独成型） | ✅ v0.0.9 |
+| 访达 / 系统设置 | `Platform/SystemNavigator` | ✅ v0.0.9 |
+| 弹窗 | `Platform/AppAlert`（confirm / info / error，sheet 优先 modal 兜底） | ✅ 2026-07 |
+
+尚未收敛（低优先级，记录在 §1 违例表）：`NSCursor`、`NSWorkspace` 零星散落。
+纪律：SwiftUI 视图里不许出现 `NSAlert()` / `NSOpenPanel()` / `runModal()` 字样 —— 2026-07 审计曾抓到「三份存盘面板」模式在批量导出上复发，收敛不是一次性动作而是需要巡检的纪律。
 
 ---
 
-## 5. 已确认的缺陷
+## 5. 已确认缺陷（全部修复，存档备查）
 
-审计中发现的、与架构无关但真实存在的问题：
-
-1. **钉图修订按图层数量判重** —— 撤销一层再画一层，改动被静默丢弃。应比较内容（`Layer` 已是 `Equatable`）。
-2. **`GalleryWindowController.windowWillClose` 无守卫** —— 设置窗口开着时关图库，App 掉回 `.accessory`，菜单栏消失。
-3. **`appendRevision` 是跨事务的 read-then-write** —— 父指针可能重复，产生非预期分叉；而下游全部假设修订链是线性的。
-4. **`BrowserURLResolver` 忙等** —— `while process.isRunning { usleep(50_000) }` 最长阻塞一条协作线程池线程 3 秒。
-5. **`EditorWindowController` 是死代码** —— 零调用点。
-6. **FTS5 虚表在加列后不会自动跟进** —— `synchronize(withTable:)` 生成的触发器绑定建表时的列集合，新字段要可搜必须重建虚表。
+1. 钉图修订按数量判重 → 已改内容比较（`PinWindowController.saveRevisionIfNeeded`）。
+2. `windowWillClose` 激活策略无守卫 → `WindowRegistry` 引用计数接管（顺带修了覆盖层被计为正经窗口的第二个 bug）。
+3. `appendRevision` 跨事务 read-then-write → 已收进单个 `dbQueue.write` 事务。
+4. `BrowserURLResolver` 忙等 → terminationHandler + continuation。
+5. `EditorWindowController` 死代码 → v0.0.6 删除；曾于编辑器独立窗口方案中复活，编辑器并回图库窗口后二次删除，现为零引用。
+6. FTS5 加列陷阱 → 属性走独立 `attributeFts` 虚表；v4 迁移的重建策略有注释与**迁移测试**（2026-07 起）双重看守。
 
 ---
 
-## 6. 落地顺序
+## 6. 落地顺序与现状
 
-每一阶段独立可交付、可回滚，不要求一次做完。
-
-| 阶段 | 内容 | 解锁什么 |
+| 阶段 | 内容 | 状态 |
 |---|---|---|
-| **0** | 修复第 5 节的确认缺陷；删死代码 | 无风险清场 |
-| **1** | 出口契约：`CaptureAction` 协议 + 注册表 | 加动作 = 加一个文件 |
-| **2** | 中间契约：`CapturePostProcessor` + `ShotAttributeWriter` + `shotAttribute` 表 | 加派生能力 = 加一个文件，不动 schema |
-| **3** | 平台副作用收敛：`ImageExporter` / `Clipboard` / `WindowRegistry` / `ActivationPolicyManager` | 消除三份存盘面板与激活策略 bug |
-| **4** ✅ 完成 | 入口契约：`CaptureSource` + 注册表（`CaptureCanvas` 设想废弃） | 延时、单窗口、滚动截图 |
-| **5** | 坐标系 phantom type；三套绘制合一；单一快捷键表 | 消除静默错位与所见非所得 |
-| **6** | 拆 `ShotStore`；DB 读写移出主线程 | 存储可测、可替换 |
+| 0 | 缺陷清场、删死代码 | ✅ v0.0.6 |
+| 1 | 出口契约 `CaptureAction` | ✅ v0.0.6 |
+| 2 | 中间契约 `CapturePostProcessor` | ✅ v0.0.7 |
+| 3 | 平台副作用收敛 | ✅ v0.0.9（弹窗/目录面板补于 2026-07） |
+| 4 | 入口契约 `CaptureSource`（`CaptureCanvas` 废弃） | ✅ |
+| 5 | phantom type / 绘制合一 / 快捷键表 | ✅ v0.0.8 |
+| 6 | 拆 `ShotStore`；DB 读写移出主线程 | **进行中**（见下） |
 
-阶段 1 和 2 优先：它们直接消除已经存在的重复，而不是为假想需求做准备。
+**阶段 6 现状（2026-07）**：止血已完成 —— 测试安全网（迁移链 / 清理豁免 / 引用计数删文件，项目首批测试）、写路径 reload 节流合并（leading+trailing 0.5s，回填/批删风暴坍缩为 ≤2Hz）、批量删除单事务。
+剩余（按序独立交付）：`ShotDatabase` 非 MainActor 仓库类型承接全部 SQL、`DatabasePool` + WAL、async 读接口逐点迁移（顺手修 `relatedShots` 全表拉取与 `attributePayloads` 主线程拉 blob）、按职责拆门面、`ValueObservation` 替代手动通知。UI 状态（searchText / filter / semantic）届时迁出 ShotStore 成为 GalleryViewModel。
 
-阶段 4 结论（完成）：`CaptureSource` 协议、`CaptureSourceRegistry` 与两个实现（立即 / 延时）已落地，`CaptureCoordinator.begin(sourceID:)` 从注册表取源、注册表可注入。当初属于这一阶段的另一半 —— `CaptureCanvas` 通用画布 —— **废弃**，因为它设想的三个需求方最终没有一个用它：
+**下一批已规划**：拆巨文件 —— `GalleryView`（2000+ 行 / 17 类型）按 Selection / Sidebar / Grid / Card / Batch / DetailPane / SimilarSheet 切 8 件，`maskSensitiveRegions` 业务逻辑下沉；`EditorView` 切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。
 
-- **滚动截图**（`App/ScrollCaptureController` + `Capture/ScrollStitcher`）完全绕开了覆盖层的快照机制：框选只借用覆盖层的简单模式（`finishOnConfirm`，松手即返回选区），之后用 SCStream 连续采集屏幕区域（画面静止时 SCK 不发帧）、纯函数拼接、直接产出 CGImage 走 `ShotStore.save` 入库，不产生也不消费任何画布类型。
-- **单窗口截图**（⌥+单击，`Capture/WindowCapturer`）是选区**之后**的事后重拍：覆盖层照常用 `[DisplaySnapshot]` 做悬停高亮和失败兜底，确认后用 `SCContentFilter(desktopIndependentWindow:)` 重新捕获不被遮挡的完整窗口。整窗像素从不进入选区层，「不绑定显示器的画布」对它无从谈起。
+阶段 4 结论（存档）：`CaptureCanvas` 通用画布废弃，因为它设想的三个需求方最终没有一个用它 ——
+
+- **滚动截图**（`App/ScrollCaptureController` + `Capture/ScrollStitcher`）完全绕开快照机制：框选借用覆盖层简单模式，之后 SCStream 连续采集、纯函数拼接、直接产出 CGImage 入库，不产生也不消费任何画布类型。
+- **单窗口截图**（⌥+单击，`Capture/WindowCapturer`）是选区**之后**的事后重拍：确认后用 `SCContentFilter(desktopIndependentWindow:)` 重新捕获完整窗口，整窗像素从不进入选区层。
 - **延时截图**产出的本来就是整屏冻结画面。
 
-教训被如实记下：为「假想需求」预留的抽象，等真需求落地时往往长得完全不一样。注册表（加捕获方式 = 加一个文件）是这一阶段真正兑现的价值；画布重构是过度设计。
+注册表（加捕获方式 = 加一个文件）是这一阶段真正兑现的价值；画布重构是过度设计。
