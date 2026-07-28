@@ -81,17 +81,22 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
             guard let self else { return }
             self.setPassthrough(!self.isPassthrough)
         }
-        // 套壳（frame）的倍率与元数据：钉图画布就是图像像素，壳的尺寸按 shot.scale
-        // 缩放。从图库钉出时元数据已齐；截图直钉时 URL 可能还没回填（同覆盖层）。
-        view.annotation.frameScale = max(1, shot?.scale ?? 1)
-        view.annotation.frameDefaultTitle = shot?.windowTitle
-        view.annotation.frameDefaultURL = shot?.sourceURL
-        // 捕获信息层的元数据：App 名+版本、捕获时刻。没有 shot 时开信息栏
-        // 只排得出日期（当下）—— 有什么排什么，效果开关不因此不可用。
-        view.annotation.captureInfoDefaultApp = CaptureInfoSpec.appDescription(
-            name: shot?.appName, version: shot?.appVersion
-        )
-        view.annotation.captureInfoDefaultDate = shot?.capturedAt
+        // 效果层的注入上下文（钉图这一处，与覆盖层/编辑器同一契约）：
+        // 钉图画布就是图像像素 —— 水印按底图宽烤字号、壳/信息栏按 shot.scale 缩放。
+        // 从图库钉出时元数据已齐；截图直钉时 URL 可能还没回填（同覆盖层）；
+        // 没有 shot 时开信息栏只排得出日期（当下）—— 有什么排什么，开关不因此不可用。
+        view.annotation.effectContext = { [base] in
+            var context = EffectContext()
+            context.imagePixelWidth = Double(base.width)
+            context.chromeScale = max(1, shot?.scale ?? 1)
+            context.windowTitle = shot?.windowTitle
+            context.sourceURL = shot?.sourceURL
+            context.appDescription = CaptureInfoSpec.appDescription(
+                name: shot?.appName, version: shot?.appVersion
+            )
+            context.capturedAt = shot?.capturedAt
+            return context
+        }
         panel.contentView = view
 
         fitWindowToContent()

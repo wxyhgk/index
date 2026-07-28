@@ -59,9 +59,7 @@ final class PinImageView: NSView {
 
         super.init(frame: .zero)
         wantsLayer = true
-
-        // 钉图画布就是图像像素；水印字号按图宽 3% 烤入时直接取底图宽。
-        annotation.imagePixelWidthProvider = { Double(base.width) }
+        // 效果层的注入上下文由 PinWindowController 统一设置（它有 shot 元数据）。
     }
 
     required init?(coder: NSCoder) { fatalError() }

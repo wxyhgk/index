@@ -3,213 +3,9 @@ import CoreGraphics
 import CoreImage
 import CoreText
 
-/// 美化层（backdrop）的背景预设。`Layer.text` 存 rawValue。
-enum BackdropPreset: String, CaseIterable {
-    case gradientBlue = "gradient-blue"
-    case gradientSunset = "gradient-sunset"
-    case gradientMono = "gradient-mono"
-    case solid = "solid"
-
-    static let `default`: BackdropPreset = .gradientBlue
-
-    var displayName: String {
-        switch self {
-        case .gradientBlue: return "蓝紫渐变"
-        case .gradientSunset: return "日落渐变"
-        case .gradientMono: return "灰黑渐变"
-        case .solid: return "纯色"
-        }
-    }
-
-    /// 渐变两端的颜色；solid 返回 nil（用图层自身的 `color`）。
-    var gradientColors: (CGColor, CGColor)? {
-        switch self {
-        case .gradientBlue:
-            return (
-                CGColor(srgbRed: 0.31, green: 0.46, blue: 0.98, alpha: 1),
-                CGColor(srgbRed: 0.55, green: 0.29, blue: 0.94, alpha: 1)
-            )
-        case .gradientSunset:
-            return (
-                CGColor(srgbRed: 0.99, green: 0.56, blue: 0.30, alpha: 1),
-                CGColor(srgbRed: 0.94, green: 0.31, blue: 0.60, alpha: 1)
-            )
-        case .gradientMono:
-            return (
-                CGColor(srgbRed: 0.24, green: 0.25, blue: 0.28, alpha: 1),
-                CGColor(srgbRed: 0.08, green: 0.08, blue: 0.10, alpha: 1)
-            )
-        case .solid:
-            return nil
-        }
-    }
-}
-
-/// 水印的摆放模式。`WatermarkSpec.mode` 存 rawValue。
-enum WatermarkMode: String, Codable, CaseIterable, Identifiable {
-    /// 右下角一行，边距 = 字号。
-    case corner
-    /// 居中斜排，字号 ×1.6。
-    case center
-    /// 斜向平铺，盖满全图。
-    case tile
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .corner: return "右下角"
-        case .center: return "居中"
-        case .tile: return "平铺"
-        }
-    }
-}
-
-/// 水印层的参数。整体序列化成 JSON 存进 `Layer.text`：
-/// `{"mode":"corner","text":"@user"}` —— 复用现有字段，不动 Codable。
-struct WatermarkSpec: Codable, Equatable {
-    var text: String
-    var mode: WatermarkMode
-
-    /// 存进 `Layer.text` 的 JSON。键排序固定，同参数编码结果一致（Layer 是 Equatable）。
-    var encoded: String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(self) else { return "" }
-        return String(data: data, encoding: .utf8) ?? ""
-    }
-
-    static func decode(_ json: String) -> WatermarkSpec? {
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(WatermarkSpec.self, from: data)
-    }
-
-    /// 造一层**图像像素空间**的水印层：字号 = 图宽 3%（不小于 14px）、描边 1 像素、
-    /// 白字（透明度 = `alpha`）。画布空间创建时由 `AnnotationState.toggleWatermark`
-    /// 把 fontSize / lineWidth 反除 pixelScale 换到画布单位。
-    static func makeLayer(
-        text: String, mode: WatermarkMode, alpha: Double, imagePixelWidth: Double
-    ) -> Layer {
-        var layer = Layer(kind: .watermark, rect: LRect(x: 0, y: 0, w: 0, h: 0))
-        layer.text = WatermarkSpec(text: text, mode: mode).encoded
-        layer.color = LColor(r: 1, g: 1, b: 1, a: alpha)
-        layer.fontSize = max(14, imagePixelWidth * 0.03)
-        layer.lineWidth = 1
-        return layer
-    }
-}
-
-/// 外壳层（frame）的参数。`Layer.text` 存 JSON：
-/// `{"style":"macos"|"browser","title":"…","url":"…"}`。
-/// backdrop 只有一个预设名所以存 rawValue 字符串就够；壳有三个字段，用 JSON。
-/// 字段全部可缺省，逐字段容错：解析失败退回 macos 空壳，老数据/坏数据都不至于炸。
-struct FrameSpec: Codable, Equatable {
-    enum Style: String, Codable, CaseIterable {
-        case macos
-        case browser
-
-        var displayName: String {
-            switch self {
-            case .macos: return "macOS 窗口"
-            case .browser: return "浏览器"
-            }
-        }
-    }
-
-    var style: Style = .macos
-    var title: String = ""
-    var url: String = ""
-
-    init() {}
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        style = (try? container.decode(Style.self, forKey: .style)) ?? .macos
-        title = (try? container.decode(String.self, forKey: .title)) ?? ""
-        url = (try? container.decode(String.self, forKey: .url)) ?? ""
-    }
-
-    /// 解析 `Layer.text`。任何失败（空串、坏 JSON、未知 style）都退回 macos 空壳。
-    static func parse(_ json: String) -> FrameSpec {
-        guard let data = json.data(using: .utf8),
-              let spec = try? JSONDecoder().decode(FrameSpec.self, from: data)
-        else { return FrameSpec() }
-        return spec
-    }
-
-    var json: String {
-        guard let data = try? JSONEncoder().encode(self),
-              let string = String(data: data, encoding: .utf8)
-        else { return "{}" }
-        return string
-    }
-}
-
-/// 捕获信息层（captureInfo）的参数。`Layer.text` 存 JSON：
-/// `{"fields":["app","url","date"],"app":"Safari 17.4","url":"https://…","date":"2026-07-27 14:30"}`。
-/// `fields` 是用户勾选要显示的字段；具体值在**开启效果时烤入**（编辑器/钉图从
-/// shot 取，覆盖层从 confirmedWindow 取、URL 留空）—— 和 frame 的元数据填充
-/// 同一时机、同一来源。照 `FrameSpec` 的模式逐字段容错：解析失败退回全勾空值，
-/// 老数据/坏数据都不至于炸；`fields` 里出现未来版本的未知字段名时逐个丢弃。
-struct CaptureInfoSpec: Codable, Equatable {
-    enum Field: String, Codable, CaseIterable {
-        case app
-        case url
-        case date
-
-        var displayName: String {
-            switch self {
-            case .app: return "App"
-            case .url: return "网址"
-            case .date: return "时间"
-            }
-        }
-    }
-
-    var fields: [Field] = Field.allCases
-    var app: String = ""
-    var url: String = ""
-    var date: String = ""
-
-    init() {}
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        // fields 按裸字符串解，未知字段名逐个丢弃而不是让整个数组失败。
-        if let raw = try? container.decode([String].self, forKey: .fields) {
-            fields = raw.compactMap(Field.init(rawValue:))
-        }
-        app = (try? container.decode(String.self, forKey: .app)) ?? ""
-        url = (try? container.decode(String.self, forKey: .url)) ?? ""
-        date = (try? container.decode(String.self, forKey: .date)) ?? ""
-    }
-
-    /// 解析 `Layer.text`。任何失败（空串、坏 JSON）都退回全勾空值的缺省参数。
-    static func parse(_ json: String) -> CaptureInfoSpec {
-        guard let data = json.data(using: .utf8),
-              let spec = try? JSONDecoder().decode(CaptureInfoSpec.self, from: data)
-        else { return CaptureInfoSpec() }
-        return spec
-    }
-
-    /// 键排序固定，同参数编码结果一致（Layer 是 Equatable，style 撤销记录靠它判等）。
-    var json: String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(self),
-              let string = String(data: data, encoding: .utf8)
-        else { return "{}" }
-        return string
-    }
-
-    /// 「App 名 + 版本」的一行式描述（如 "Safari 17.4"）。三处注入点共用，
-    /// 保证同一份元数据在哪儿开效果都排出同样的字。
-    static func appDescription(name: String?, version: String?) -> String? {
-        guard let name, !name.isEmpty else { return nil }
-        guard let version, !version.isEmpty else { return name }
-        return "\(name) \(version)"
-    }
-}
+// 效果层的参数模型（BackdropPreset / WatermarkSpec / FrameSpec / CaptureInfoSpec）
+// 在 `Annotation/EffectSpecs.swift` —— 它们是 `Layer.text` 的序列化格式，
+// 和 Layer 同层；这里只留绘制。
 
 /// 把「原图 + 图层数组」渲染成一张图。
 /// 原图始终只读；这里产出的是临时结果，只在预览和导出时使用。
@@ -262,34 +58,33 @@ enum LayerRenderer {
             }
         }
 
-        // 3. 水印在裁剪之后、美化之前盖上：位置相对裁剪后的成品，
-        //    且美化的留白/背景不带水印。预览也画（见 `AnnotationRenderer`）。
-        if let watermark = layers.last(where: { $0.kind == .watermark }) {
-            result = applyWatermark(to: result, layer: watermark) ?? result
-        }
-
-        // 4. 捕获信息在水印之后、带壳之前：成品底部接一条元数据信息栏。
-        //    信息栏属于内容的一部分（在壳之内）—— 套壳时它和截图一起被
-        //    标题栏 + 圆角包住，backdrop 再连壳一起垫底。它同样只存在于导出路径。
-        if let info = layers.last(where: { $0.kind == .captureInfo }) {
-            result = applyCaptureInfo(to: result, layer: info) ?? result
-        }
-
-        // 5. 带壳在捕获信息之后套上：内容上方接标题栏（浏览器壳再加地址栏）。
-        //    壳属于内容的一部分，所以排在美化之前 —— 叠加时壳在内、背景在外，
-        //    backdrop 连壳一起垫底。它同样只存在于导出路径。
-        if let frame = layers.last(where: { $0.kind == .frame }) {
-            result = applyFrame(to: result, layer: frame) ?? result
-        }
-
-        // 6. 美化最后套上：先裁出内容（可能已带壳），再把内容垫到背景上。
-        //    它只存在于导出路径 —— 预览（AnnotationRenderer / LayerCanvas）跳过
-        //    backdrop，编辑时画布尺寸不变。
-        if let backdrop = layers.last(where: { $0.kind == .backdrop }) {
-            result = applyBackdrop(to: result, layer: backdrop) ?? result
+        // 3. 效果层在裁剪之后按注册表次序套上（水印 → 捕获信息 → 外壳 → 美化）：
+        //    水印位置相对裁剪后的成品、且美化的留白不带水印；信息栏和壳属于
+        //    内容的一部分（在壳/背景之内）；美化最后连壳一起垫底。
+        //    次序的唯一定义在 `EffectRegistry.ordered`。每种效果和
+        //    `AnnotationState.toggleEffect` 一样只认最后一层（单例语义）。
+        for descriptor in EffectRegistry.ordered {
+            if let layer = layers.last(where: { $0.kind == descriptor.kind }) {
+                result = applyEffect(descriptor.kind, to: result, layer: layer) ?? result
+            }
         }
 
         return result
+    }
+
+    /// 效果层的绘制分发。除水印外只存在于导出路径 —— 预览
+    /// （`AnnotationRenderer` / LayerCanvas）按描述符的 `previewDraw` 决定画不画，
+    /// 编辑时画布尺寸不变。
+    private static func applyEffect(
+        _ kind: Layer.Kind, to image: CGImage, layer: Layer
+    ) -> CGImage? {
+        switch kind {
+        case .watermark: return applyWatermark(to: image, layer: layer)
+        case .captureInfo: return applyCaptureInfo(to: image, layer: layer)
+        case .frame: return applyFrame(to: image, layer: layer)
+        case .backdrop: return applyBackdrop(to: image, layer: layer)
+        default: return nil
+        }
     }
 
     // MARK: - 水印
@@ -494,7 +289,7 @@ enum LayerRenderer {
     /// 一项居中、两项靠两端、三项左/中/右。输出画布宽度不变，高度 = 内容 + 信息栏。
     ///
     /// 结构尺寸（栏高 28、字号 11、边距 12）全部乘 `layer.lineWidth` ——
-    /// 创建时烤进去的像素倍率（见 `AnnotationState.toggleCaptureInfo`），
+    /// 创建时烤进去的像素倍率（见 `EffectRegistry.captureInfo`），
     /// 语义同 frame，2x 图上的信息栏和 1x 图视觉大小一致。
     private static func applyCaptureInfo(to image: CGImage, layer: Layer) -> CGImage? {
         let scale = layer.lineWidth > 0 ? layer.lineWidth : 1
@@ -627,7 +422,7 @@ enum LayerRenderer {
     /// 输出画布宽度不变，高度 = 内容 + 壳。
     ///
     /// 壳的所有结构尺寸乘 `layer.lineWidth` —— 创建时烤进去的像素倍率
-    /// （见 `AnnotationState.toggleFrame`），2x 图上的壳和 1x 图视觉大小一致，
+    /// （见 `EffectRegistry.frame`），2x 图上的壳和 1x 图视觉大小一致，
     /// 线条落在整像素上，Retina 下不发虚。纯矢量绘制，零素材文件；只做浅色外观。
     private static func applyFrame(to image: CGImage, layer: Layer) -> CGImage? {
         let scale = layer.lineWidth > 0 ? layer.lineWidth : 1
@@ -874,10 +669,10 @@ enum LayerRenderer {
         if !spotlights.isEmpty {
             drawSpotlightMask(spotlights, in: ctx)
         }
+        // 效果层（kind.isEffect）没有画布形体，不走矢量绘制 ——
+        // 它们在 `render` 的效果编排里按注册表次序套用。
         for layer in layers where layer.kind != .pixelate && layer.kind != .crop
-            && layer.kind != .spotlight && layer.kind != .backdrop
-            && layer.kind != .watermark && layer.kind != .frame
-            && layer.kind != .captureInfo {
+            && layer.kind != .spotlight && !layer.kind.isEffect {
             draw(layer, in: ctx)
         }
     }
@@ -903,6 +698,8 @@ enum LayerRenderer {
     // MARK: - 单个图层
 
     private static func draw(_ layer: Layer, in ctx: CGContext) {
+        // 效果层不经过矢量绘制（drawVectors 已按 kind.isEffect 过滤，这里兜底）。
+        guard !layer.kind.isEffect else { return }
         let rect = layer.rect.cg
 
         switch layer.kind {
@@ -943,8 +740,8 @@ enum LayerRenderer {
         case .dimension:
             drawDimension(layer, in: ctx)
 
-        case .pixelate, .crop, .spotlight, .backdrop, .watermark, .frame, .captureInfo:
-            break   // 已在别处处理
+        default:
+            break   // 马赛克 / 裁剪 / 聚光灯在别处处理；效果层已被上面的 guard 拦下
         }
     }
 

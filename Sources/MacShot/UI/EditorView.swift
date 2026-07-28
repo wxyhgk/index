@@ -126,13 +126,21 @@ struct EditorView: View {
     private func load() {
         guard let base = store.originalImage(for: shot) else { return }
         baseImage = base
-        // 编辑器画布就是图像像素；水印字号按图宽 3% 烤入时直接取原图宽。
-        annotation.imagePixelWidthProvider = { Double(base.width) }
-        // 套壳（frame）的倍率与元数据：编辑器画布就是图像像素，壳的尺寸按 shot.scale
-        // 缩放；标题/网址来自采集时的真实归因 —— 竞品的壳是空的，这里是真的。
-        annotation.frameScale = max(1, shot.scale)
-        annotation.frameDefaultTitle = shot.windowTitle
-        annotation.frameDefaultURL = shot.sourceURL
+        // 效果层的注入上下文（编辑器这一处，与覆盖层/钉图同一契约）：
+        // 画布就是图像像素 —— 水印按原图宽烤字号、壳/信息栏按 shot.scale 缩放；
+        // 元数据来自采集时落库的真实归因 —— 竞品的壳是空的，这里是真的。
+        annotation.effectContext = { [shot] in
+            var context = EffectContext()
+            context.imagePixelWidth = Double(base.width)
+            context.chromeScale = max(1, shot.scale)
+            context.windowTitle = shot.windowTitle
+            context.sourceURL = shot.sourceURL
+            context.appDescription = CaptureInfoSpec.appDescription(
+                name: shot.appName, version: shot.appVersion
+            )
+            context.capturedAt = shot.capturedAt
+            return context
+        }
         revisions = store.revisions(for: shot)
         loadRevision(layers: revisions.last?.layers ?? [], index: max(0, revisions.count - 1))
     }
@@ -366,7 +374,7 @@ struct EditorView: View {
                 backdropCard
                 watermarkCard
                 frameCard
-                EditorCaptureInfoRow(annotation: annotation, shot: shot) {
+                EditorCaptureInfoRow(annotation: annotation) {
                     annotationTick += 1
                 }
             }
@@ -406,8 +414,8 @@ struct EditorView: View {
     /// 画布预览刻意不变（见 `AnnotationRenderer` 的说明），开关表达状态。
     /// 预设色块点选即换（`setBackdropPreset`），作为一条可撤销的 style 记录。
     private var backdropCard: some View {
-        effectCard("美化", isOn: annotation.hasBackdrop, toggle: {
-            annotation.toggleBackdrop()
+        effectCard("美化", isOn: annotation.hasEffect(.backdrop), toggle: {
+            annotation.toggleEffect(.backdrop)
             annotationTick += 1
         }) {
             HStack(spacing: DS.s2) {
@@ -454,18 +462,13 @@ struct EditorView: View {
         )
     }
 
-    /// 水印行。按设置里的参数造层（没配文案时用 "MacShot" 兜底）。
+    /// 水印行。参数（设置里的文案/模式/透明度，没配文案时的 "MacShot" 兜底）
+    /// 都在描述符 `EffectRegistry.watermark` 里 —— 工具条开关、自动水印共用同一份。
     /// 和美化不同，水印会画进画布预览 —— 它影响构图判断。
     /// 位置三选走 `setWatermarkMode`，作为一条可撤销的 style 记录。
     private var watermarkCard: some View {
-        effectCard("水印", isOn: annotation.hasWatermark, toggle: {
-            let settings = AppSettings.shared
-            let text = settings.trimmedWatermarkText
-            annotation.toggleWatermark(
-                text: text.isEmpty ? "MacShot" : text,
-                mode: settings.watermarkMode,
-                alpha: settings.watermarkAlpha
-            )
+        effectCard("水印", isOn: annotation.hasEffect(.watermark), toggle: {
+            annotation.toggleEffect(.watermark)
             annotationTick += 1
         }) {
             Picker("水印位置", selection: Binding(
@@ -485,11 +488,11 @@ struct EditorView: View {
     }
 
     /// 外壳行。frame 只影响导出/复制/保存的成品，画布预览刻意不变（同美化的取舍）。
-    /// 开壳时把 shot 的真实窗口标题 / 网址烤进壳的参数 JSON（见 `load`）；
+    /// 开壳时把 shot 的真实窗口标题 / 网址烤进壳的参数 JSON（见 `load` 的注入上下文）；
     /// 样式二选走 `setFrameStyle`，作为一条可撤销的 style 记录。
     private var frameCard: some View {
-        effectCard("外壳", isOn: annotation.hasFrame, toggle: {
-            annotation.toggleFrame()
+        effectCard("外壳", isOn: annotation.hasEffect(.frame), toggle: {
+            annotation.toggleEffect(.frame)
             annotationTick += 1
         }) {
             Picker("壳样式", selection: Binding(
@@ -893,16 +896,22 @@ struct EditorView: View {
         }
     }
 
+    /// 图层列表只列画布上有形体的标注层。效果层（`kind.isEffect`）不在这里 ——
+    /// 它们没有可选中/可拖拽的形体，开关和样式都在「效果」tab。
+    private var listedLayers: [Layer] {
+        annotation.layers.elements.filter { !$0.kind.isEffect }
+    }
+
     private var layersPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("图层（\(annotation.layers.count)）")
+            Text("图层（\(listedLayers.count)）")
                 .font(.headline)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             Divider()
 
             List(selection: selectionBinding) {
-                ForEach(annotation.layers.elements) { layer in
+                ForEach(listedLayers) { layer in
                     HStack(spacing: 8) {
                         Image(systemName: layer.kind.symbolName)
                             .foregroundStyle(Color(

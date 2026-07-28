@@ -149,19 +149,20 @@ final class CaptureCoordinator {
             let shot = try ShotStore.shared.save(image: image, metadata: metadata)
 
             // 「导出自动加水印」只挂在截图路径这一处：设置开着、配了文案、
-            // 截图时没手动开过水印，就按设置参数追加一层 —— 它和手画的标注一样
-            // 进修订链，图库里能看到、能删。编辑器/钉图的手动开关不受这里影响。
+            // 截图时没手动开过水印（单例语义的查重），就追加一层 —— 造层走
+            // 描述符 `EffectRegistry.watermark`，参数（设置里的文案/模式/透明度）
+            // 和工具条/编辑器的手动开关是同一份。图层是图像像素空间
+            // （pixelScale 保持 1），它和手画的标注一样进修订链，
+            // 图库里能看到、能删。编辑器/钉图的手动开关不受这里影响。
             var layers = result.layers
             let settings = AppSettings.shared
             if settings.autoWatermark,
                !settings.trimmedWatermarkText.isEmpty,
-               !layers.elements.contains(where: { $0.kind == .watermark }) {
-                layers.append(WatermarkSpec.makeLayer(
-                    text: settings.trimmedWatermarkText,
-                    mode: settings.watermarkMode,
-                    alpha: settings.watermarkAlpha,
-                    imagePixelWidth: Double(image.width)
-                ))
+               !layers.elements.contains(where: { $0.kind == .watermark }),
+               let watermark = EffectRegistry.descriptor(for: .watermark) {
+                var context = EffectContext()
+                context.imagePixelWidth = Double(image.width)
+                layers.append(watermark.makeLayer(context))
             }
 
             if !layers.isEmpty {

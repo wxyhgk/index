@@ -40,10 +40,11 @@ final class AnnotationState {
     /// 数值在生成图层时烤进 `text`，投影导出后不再重算 —— 预览和成品显示同一个数。
     var pixelScale: Double = 1
 
-    /// 成品图**像素宽**的提供者，水印字号按「图宽 3%」烤入时用：
-    /// 覆盖层 = 选区宽 × pixelScale，钉图/编辑器 = 图像像素宽。
-    /// nil 时字号只按 14px 下限走。
-    var imagePixelWidthProvider: (() -> Double)?
+    /// 开启效果那一刻的注入上下文提供者（见 `EffectContext`）：成品图像素宽、
+    /// 壳/信息栏结构倍率、真实元数据。三宿主在构造/装载时各设一次，
+    /// 值在 `toggleEffect` 那一刻现取（烤入语义）——
+    /// 覆盖层的选区宽度、窗口归因都以开关瞬间为准。
+    var effectContext: () -> EffectContext = { EffectContext() }
 
     private(set) var layers = Layers<CanvasSpace>()
     private(set) var editingTextID: UUID?
@@ -312,12 +313,10 @@ final class AnnotationState {
 
     /// 命中测试（画布空间），从最上层往下找。
     /// 线段类按点到线段的距离判定，其余按外接矩形（都带一圈容差，方便点中细线）。
-    /// 美化 / 水印 / 外壳 / 捕获信息层没有画布上的形体，不参与命中，只能通过开关/菜单操作。
+    /// 效果层（`kind.isEffect`）没有画布上的形体，不参与命中，只能通过开关/菜单操作。
     func layer(at point: CGPoint) -> UUID? {
         let tolerance = 8 * strokeScale
-        for layer in layers.elements.reversed()
-        where layer.kind != .backdrop && layer.kind != .watermark && layer.kind != .frame
-            && layer.kind != .captureInfo {
+        for layer in layers.elements.reversed() where !layer.kind.isEffect {
             let hit: Bool
             switch layer.kind {
             case .line, .arrow:
@@ -601,26 +600,23 @@ final class AnnotationState {
         return true
     }
 
-    // MARK: - 美化层（backdrop）
+    // MARK: - 效果层（watermark / captureInfo / frame / backdrop）
 
-    /// 当前是否已开启美化。工具条开关的选中态看它。
-    var hasBackdrop: Bool {
-        layers.elements.contains { $0.kind == .backdrop }
+    /// 某效果当前是否开启。工具条开关 / 效果面板的选中态看它。
+    func hasEffect(_ kind: Layer.Kind) -> Bool {
+        layers.elements.contains { $0.kind == kind }
     }
 
-    /// 当前美化层的背景预设名；未开启时为 nil。
-    var backdropPresetID: String? {
-        layers.elements.last { $0.kind == .backdrop }?.text
-    }
-
-    /// 美化开关。backdrop 不是拖出来的图层，只有加/删两种操作：
-    /// 没有则加一层默认预设，有则全部删掉。都走 `record` 保持可撤销。
+    /// 效果开关。效果层不是拖出来的图层，只有加/删两种操作：
+    /// 没有则按描述符（`EffectRegistry`）造一层，参数与元数据在这一刻从
+    /// `effectContext` 烤入；有则全部删掉。都走 `record` 保持可撤销；
     /// 同时只保留一层 —— 加之前先清干净（正常情况下最多一层）。
     @discardableResult
-    func toggleBackdrop() -> Bool {
+    func toggleEffect(_ kind: Layer.Kind) -> Bool {
+        guard let descriptor = EffectRegistry.descriptor(for: kind) else { return false }
         endTextEditing()
-        if hasBackdrop {
-            while let index = layers.elements.firstIndex(where: { $0.kind == .backdrop }) {
+        if hasEffect(kind) {
+            while let index = layers.elements.firstIndex(where: { $0.kind == kind }) {
                 let old = layers[index]
                 record(.remove(old, index: index, preview: nil))
                 layers.remove(id: old.id)
@@ -628,225 +624,88 @@ final class AnnotationState {
             }
             return false
         }
-        var layer = Layer(kind: .backdrop, rect: LRect(x: 0, y: 0, w: 0, h: 0))
-        layer.lineWidth = 48            // 复用字段：四周留白 padding
-        layer.fontSize = 12             // 复用字段：内容圆角半径
-        layer.text = BackdropPreset.default.rawValue
+        var context = effectContext()
+        context.pixelScale = pixelScale   // 渲染标度由状态机补充，宿主不用管。
+        let layer = descriptor.makeLayer(context)
         layers.append(layer)
         record(.add(layer, preview: nil))
         return true
     }
 
-    /// 替换美化层的背景预设，记一条 style 撤销记录。未开启时不做事。
-    @discardableResult
-    func setBackdropPreset(_ presetID: String) -> Bool {
-        guard let index = layers.elements.firstIndex(where: { $0.kind == .backdrop }),
-              layers[index].text != presetID else { return false }
+    /// 某效果层当前的参数串（`Layer.text`）；未开启时 nil。
+    private func effectText(_ kind: Layer.Kind) -> String? {
+        layers.elements.last { $0.kind == kind }?.text
+    }
+
+    /// 替换某效果层的参数串，记一条 style 撤销记录。
+    /// `transform` 拿旧参数串返回新的；返回 nil 表示无变化，不入栈。
+    /// 未开启该效果时不做事。
+    private func updateEffect(_ kind: Layer.Kind, transform: (String) -> String?) -> Bool {
+        guard let index = layers.elements.firstIndex(where: { $0.kind == kind }),
+              let newText = transform(layers[index].text),
+              newText != layers[index].text else { return false }
         let before = layers[index]
-        layers[index].text = presetID
+        layers[index].text = newText
         record(.style(id: before.id, before: before, after: layers[index]))
         return true
     }
 
-    // MARK: - 水印（watermark）
+    // MARK: 效果参数的类型化读写（都是 effectText / updateEffect 的一行封装）
 
-    /// 当前是否已有水印。工具条开关的选中态看它。
-    var hasWatermark: Bool {
-        layers.elements.contains { $0.kind == .watermark }
-    }
+    /// 当前美化层的背景预设名；未开启时为 nil。
+    var backdropPresetID: String? { effectText(.backdrop) }
 
     /// 当前水印的摆放模式；未开启时为 nil。
     var watermarkMode: WatermarkMode? {
-        layers.elements.last { $0.kind == .watermark }
-            .flatMap { WatermarkSpec.decode($0.text)?.mode }
-    }
-
-    /// 水印开关。和 backdrop 一样只有加/删两种操作，都走 `record` 保持可撤销；
-    /// 同时只保留一层 —— 加之前先清干净。
-    ///
-    /// 字号按成品图宽 3%（不小于 14px）烤成图像像素，再反除 `pixelScale`
-    /// 换到画布单位；描边同理（1 像素 → 1/pixelScale 画布单位）。
-    /// 投影（×pixelScale）后恰好回到烤定的像素值 —— 预览画的和导出画的
-    /// 因此是同一个大小，思路与测量标注把数值烤进 `text` 一致。
-    @discardableResult
-    func toggleWatermark(text: String, mode: WatermarkMode, alpha: Double) -> Bool {
-        endTextEditing()
-        if hasWatermark {
-            while let index = layers.elements.firstIndex(where: { $0.kind == .watermark }) {
-                let old = layers[index]
-                record(.remove(old, index: index, preview: nil))
-                layers.remove(id: old.id)
-                if selectedID == old.id { selectedID = nil }
-            }
-            return false
-        }
-        var layer = WatermarkSpec.makeLayer(
-            text: text,
-            mode: mode,
-            alpha: alpha,
-            imagePixelWidth: imagePixelWidthProvider?() ?? 0
-        )
-        layer.fontSize /= pixelScale
-        layer.lineWidth /= pixelScale
-        layers.append(layer)
-        record(.add(layer, preview: nil))
-        return true
-    }
-
-    /// 替换水印的摆放模式，记一条 style 撤销记录。未开启时不做事。
-    @discardableResult
-    func setWatermarkMode(_ mode: WatermarkMode) -> Bool {
-        guard let index = layers.elements.firstIndex(where: { $0.kind == .watermark }),
-              var spec = WatermarkSpec.decode(layers[index].text),
-              spec.mode != mode else { return false }
-        let before = layers[index]
-        spec.mode = mode
-        layers[index].text = spec.encoded
-        record(.style(id: before.id, before: before, after: layers[index]))
-        return true
-    }
-
-    // MARK: - 外壳层（frame，带壳截图）
-
-    /// 壳结构尺寸（标题栏高、红绿灯直径、圆角）的倍率，开壳时烤进 `lineWidth`。
-    /// 语义是「每**视觉点**对应多少画布单位」，投影到图像像素时随 scale 一起放大：
-    ///   · 覆盖层画布是显示器的点 —— 保持 1，投影乘 snapshot.scale 后正好是 Retina 倍率
-    ///   · 编辑器/钉图画布已是图像像素（投影恒等）—— 注入 shot.scale，
-    ///     2x 图上的壳和 1x 图视觉大小一致，线条落在整像素上不发虚
-    var frameScale: Double = 1
-
-    /// 开壳时自动烤进参数 JSON 的真实元数据。竞品的带壳都是空壳 ——
-    /// 「标题栏是真实窗口标题、地址栏是真实网址」是元数据库独有的卖点。
-    ///   · 覆盖层：确认选区时的窗口归因（URL 是落库后异步回填的，此刻还没有 → 留空）
-    ///   · 编辑器/钉图：shot.windowTitle / shot.sourceURL
-    var frameDefaultTitle: String?
-    var frameDefaultURL: String?
-
-    /// 当前是否已套壳。工具条开关的选中态看它。
-    var hasFrame: Bool {
-        layers.elements.contains { $0.kind == .frame }
+        effectText(.watermark).flatMap { WatermarkSpec.decode($0)?.mode }
     }
 
     /// 当前壳的样式；未开启时为 nil。
     var frameStyle: FrameSpec.Style? {
-        layers.elements.last { $0.kind == .frame }.map { FrameSpec.parse($0.text).style }
-    }
-
-    /// 套壳开关。和 backdrop 同一套语义：只有加/删两种操作，同时只保留一层，
-    /// 都走 `record` 保持可撤销。默认 macos 壳，标题/网址从元数据自动填。
-    @discardableResult
-    func toggleFrame() -> Bool {
-        endTextEditing()
-        if hasFrame {
-            while let index = layers.elements.firstIndex(where: { $0.kind == .frame }) {
-                let old = layers[index]
-                record(.remove(old, index: index, preview: nil))
-                layers.remove(id: old.id)
-                if selectedID == old.id { selectedID = nil }
-            }
-            return false
-        }
-        var layer = Layer(kind: .frame, rect: LRect(x: 0, y: 0, w: 0, h: 0))
-        layer.lineWidth = frameScale    // 复用字段：壳的结构尺寸倍率（见 frameScale）
-        var spec = FrameSpec()
-        spec.title = frameDefaultTitle ?? ""
-        spec.url = frameDefaultURL ?? ""
-        layer.text = spec.json
-        layers.append(layer)
-        record(.add(layer, preview: nil))
-        return true
-    }
-
-    /// 切换壳样式（macOS 窗口 / 浏览器），记一条 style 撤销记录。未开壳时不做事。
-    @discardableResult
-    func setFrameStyle(_ style: FrameSpec.Style) -> Bool {
-        guard let index = layers.elements.firstIndex(where: { $0.kind == .frame }) else {
-            return false
-        }
-        var spec = FrameSpec.parse(layers[index].text)
-        guard spec.style != style else { return false }
-        spec.style = style
-        let before = layers[index]
-        layers[index].text = spec.json
-        record(.style(id: before.id, before: before, after: layers[index]))
-        return true
-    }
-
-    // MARK: - 捕获信息层（captureInfo）
-
-    /// 开启效果时烤入参数 JSON 的真实元数据默认值。App 名+版本（如 "Safari 17.4"），
-    /// 与 frameDefaultTitle/URL 同一套注入机制、三处注入点同一时机补：
-    ///   · 覆盖层：激活工具条控件前从 confirmedWindow 取（URL 还没异步回填 → 留空）
-    ///   · 编辑器/钉图：shot.appName + shot.appVersion
-    /// 网址直接复用 `frameDefaultURL` —— 同一时机、同一来源，没必要存两份。
-    var captureInfoDefaultApp: String?
-
-    /// 捕获时刻。编辑器/钉图注入 shot.capturedAt；覆盖层不注入（nil）——
-    /// 截图那一刻就是当下，开启时取 `Date()`。
-    var captureInfoDefaultDate: Date?
-
-    /// 信息栏日期的固定排版（本地时区）。烤入后是纯文本，历史成品不随时区漂移。
-    private static let captureInfoDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter
-    }()
-
-    /// 当前是否已开启捕获信息。工具条开关的选中态看它。
-    var hasCaptureInfo: Bool {
-        layers.elements.contains { $0.kind == .captureInfo }
+        effectText(.frame).map { FrameSpec.parse($0).style }
     }
 
     /// 当前勾选要显示的字段；未开启时为 nil。
     var captureInfoFields: [CaptureInfoSpec.Field]? {
-        layers.elements.last { $0.kind == .captureInfo }
-            .map { CaptureInfoSpec.parse($0.text).fields }
+        effectText(.captureInfo).map { CaptureInfoSpec.parse($0).fields }
     }
 
-    /// 捕获信息开关。和 backdrop 同一套语义：只有加/删两种操作，同时只保留一层，
-    /// 都走 `record` 保持可撤销。元数据（App 名+版本 / 网址 / 日期）在这一刻
-    /// 从注入的默认值烤进参数 JSON —— 之后图层自带数据，导出不再回查。
+    /// 替换美化层的背景预设。
     @discardableResult
-    func toggleCaptureInfo(fields: [CaptureInfoSpec.Field] = CaptureInfoSpec.Field.allCases) -> Bool {
-        endTextEditing()
-        if hasCaptureInfo {
-            while let index = layers.elements.firstIndex(where: { $0.kind == .captureInfo }) {
-                let old = layers[index]
-                record(.remove(old, index: index, preview: nil))
-                layers.remove(id: old.id)
-                if selectedID == old.id { selectedID = nil }
-            }
-            return false
-        }
-        var layer = Layer(kind: .captureInfo, rect: LRect(x: 0, y: 0, w: 0, h: 0))
-        layer.lineWidth = frameScale    // 复用字段：信息栏结构尺寸倍率（语义同 frameScale）
-        var spec = CaptureInfoSpec()
-        spec.fields = fields
-        spec.app = captureInfoDefaultApp ?? ""
-        spec.url = frameDefaultURL ?? ""
-        spec.date = Self.captureInfoDateFormatter.string(
-            from: captureInfoDefaultDate ?? Date()
-        )
-        layer.text = spec.json
-        layers.append(layer)
-        record(.add(layer, preview: nil))
-        return true
+    func setBackdropPreset(_ presetID: String) -> Bool {
+        updateEffect(.backdrop) { $0 == presetID ? nil : presetID }
     }
 
-    /// 替换勾选字段，记一条 style 撤销记录。烤入的元数据值不动，只改显示哪些。
-    /// 未开启时不做事。
+    /// 替换水印的摆放模式。
+    @discardableResult
+    func setWatermarkMode(_ mode: WatermarkMode) -> Bool {
+        updateEffect(.watermark) { text in
+            guard var spec = WatermarkSpec.decode(text), spec.mode != mode else { return nil }
+            spec.mode = mode
+            return spec.encoded
+        }
+    }
+
+    /// 切换壳样式（macOS 窗口 / 浏览器）。
+    @discardableResult
+    func setFrameStyle(_ style: FrameSpec.Style) -> Bool {
+        updateEffect(.frame) { text in
+            var spec = FrameSpec.parse(text)
+            guard spec.style != style else { return nil }
+            spec.style = style
+            return spec.json
+        }
+    }
+
+    /// 替换勾选字段。烤入的元数据值不动，只改显示哪些。
     @discardableResult
     func setCaptureInfoFields(_ fields: [CaptureInfoSpec.Field]) -> Bool {
-        guard let index = layers.elements.firstIndex(where: { $0.kind == .captureInfo }) else {
-            return false
+        updateEffect(.captureInfo) { text in
+            var spec = CaptureInfoSpec.parse(text)
+            guard spec.fields != fields else { return nil }
+            spec.fields = fields
+            return spec.json
         }
-        var spec = CaptureInfoSpec.parse(layers[index].text)
-        guard spec.fields != fields else { return false }
-        spec.fields = fields
-        let before = layers[index]
-        layers[index].text = spec.json
-        record(.style(id: before.id, before: before, after: layers[index]))
-        return true
     }
 
     private nonisolated static func distance(
