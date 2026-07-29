@@ -9,6 +9,11 @@ import SwiftUI
 /// TextField，回车提交；输入时按前缀匹配给最多 5 条建议（按使用量降序），
 /// 点击即选。数据挂 task(id: shot.id)，切换截图时查一次，不挂 body ——
 /// 和文件里其它派生数据的惯例一致；增删之后就地刷新本地状态。
+///
+/// 材质纪律：这块卡片已经是「inspector 材质 → quaternary 信息卡」两层了，
+/// 胶囊上原来的 `.thinMaterial` 是第三层，属于典型的玻璃叠玻璃 ——
+/// 三层半透明互相采样只会越叠越浑，反而看不清底下的东西。
+/// 现在胶囊一律用 `.quaternary` 半透明填充 + 一圈发丝描边，深度交给边缘去说。
 struct TagSection: View {
     let shot: Shot
 
@@ -20,6 +25,7 @@ struct TagSection: View {
     @State private var isAdding = false
     @State private var input = ""
     @FocusState private var inputFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.s2) {
@@ -40,7 +46,13 @@ struct TagSection: View {
         }
         .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: DS.radiusCard))
+        // 和 ShotDetailPane.card 完全一致：quaternary 底、radiusCard、.continuous。
+        .background(
+            .quaternary.opacity(0.5),
+            in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
+        )
+        // 「+ 标签」按钮 ↔ 输入框的互换、以及建议行的出没，都是小件出没 → micro。
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: isAdding)
         .task(id: shot.id) {
             refresh()
             cancelInput()
@@ -59,7 +71,11 @@ struct TagSection: View {
                 .frame(width: 96)
                 .padding(.horizontal, DS.s2)
                 .padding(.vertical, 3)
-                .background(.thinMaterial, in: Capsule())
+                // 材质换成 quaternary 填充（详见类型注释）。胶囊圆角 = 高度/2，
+                // 这一档不走圆角阶梯，Capsule 本身就是公式的答案。
+                .background(.quaternary, in: Capsule())
+                // 这圈 accent 是**焦点指示**，是 accent 在本视图里唯一合法的归属；
+                // 正因为它占着，下面的建议胶囊就不能再上强调色了。
                 .overlay(
                     Capsule().strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 1)
                 )
@@ -79,7 +95,9 @@ struct TagSection: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, DS.s2)
                     .padding(.vertical, 3)
-                    .background(.thinMaterial, in: Capsule())
+                    // 这里**不填底**：虚线空胶囊读起来是「还没有的一个位置」，
+                    // 一旦填上底就和真标签长得一样了。原来的 .thinMaterial
+                    // 既是第三层玻璃，也让它冒充成了一个已存在的标签。
                     .overlay(
                         Capsule().strokeBorder(
                             Color.primary.opacity(0.15),
@@ -110,12 +128,21 @@ struct TagSection: View {
                 Button {
                     add(name)
                 } label: {
+                    // 建议胶囊卸掉强调色：accent 在这套设计里只归选中/焦点态，
+                    // 而此刻焦点正戴在上面那个输入框上（同屏最多一个控件加色）。
+                    // 「还没打上」的区别改用虚线边表达 —— 和「+ 标签」同一套语言。
                     Text(name)
                         .font(.caption)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, DS.s2)
                         .padding(.vertical, 3)
-                        .background(Color.accentColor.opacity(0.12), in: Capsule())
+                        .background(.quaternary, in: Capsule())
+                        .overlay(
+                            Capsule().strokeBorder(
+                                Color.primary.opacity(0.15),
+                                style: StrokeStyle(lineWidth: 1, dash: [3, 2])
+                            )
+                        )
                 }
                 .buttonStyle(.plain)
                 .help("添加「\(name)」")
@@ -137,7 +164,9 @@ struct TagSection: View {
     private func add(_ name: String) {
         guard let id = shot.id else { return }
         ShotStore.shared.addTag(shotID: id, name)
-        refresh()
+        // 胶囊的增删是小件出没 → micro（§6）。没有动画时新胶囊会「跳」进流式布局，
+        // 用户会丢失「刚才那一下发生在哪」的线索。
+        withAnimation(DS.Motion.micro(reduced: reduceMotion)) { refresh() }
         // 新名字立刻可被后续建议匹配；清空输入、保持焦点，方便连续打标签。
         allTagNames = ShotStore.shared.allTags().map(\.name)
         input = ""
@@ -147,7 +176,7 @@ struct TagSection: View {
     private func remove(_ name: String) {
         guard let id = shot.id else { return }
         ShotStore.shared.removeTag(shotID: id, name)
-        refresh()
+        withAnimation(DS.Motion.micro(reduced: reduceMotion)) { refresh() }
     }
 
     private func refresh() {
@@ -168,6 +197,7 @@ private struct TagChip: View {
     let onRemove: () -> Void
 
     @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 3) {
@@ -186,11 +216,16 @@ private struct TagChip: View {
         }
         .padding(.horizontal, DS.s2)
         .padding(.vertical, 3)
-        .background(.thinMaterial, in: Capsule())
+        // quaternary 填充 + 一圈发丝描边取代原来的 .thinMaterial：
+        // 卡片已在 inspector 材质之上，胶囊再上材质就是第三层玻璃。
+        // 「边缘比表面重要」—— 这圈线比任何背景模糊都更能把胶囊托起来。
+        .background(.quaternary, in: Capsule())
         .overlay(
             Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
         )
         .onHover { isHovering = $0 }
+        // ✕ 的显形是最小的一档微交互 → micro。
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
     }
 }
 

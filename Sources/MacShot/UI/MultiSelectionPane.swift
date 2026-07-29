@@ -7,6 +7,9 @@ import SwiftUI
 
 /// 选中 N>1 张时替换 ShotDetailPane 的批量面板：
 /// 「已选 N 张」+ 2×2 缩略图拼贴 + 批量动作（收藏 / 导出 / 删除）。
+///
+/// 和 ShotDetailPane 一样：这栏站在 `.inspector` 自动给的材质上，
+/// 面板本身和拼贴格子都**不加任何 Material**，格子底只用 `.quaternary`。
 struct MultiSelectionPane: View {
     /// 展示顺序的选中截图，由 GalleryView 解析好传入。
     let shots: [Shot]
@@ -14,6 +17,7 @@ struct MultiSelectionPane: View {
     // 订阅 store 是为了收藏态实时刷新（批量收藏后按钮文案要翻转）。
     @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 最近一次批量导出的结果提示，几秒后自动消失。
     @State private var exportSummary: String?
@@ -50,16 +54,18 @@ struct MultiSelectionPane: View {
             spacing: DS.s2
         ) {
             ForEach(previews) { shot in
+                // 三层（底、图、+N 罩）都用同一个圆角：它们零内缩、完全重叠，
+                // 同心公式下内层 = 外层 − 0 = 外层。全部补 .continuous。
                 ZStack {
-                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
                         .fill(.quaternary.opacity(0.5))
                     CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
-                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
                 }
                 .frame(height: 76)
                 .overlay {
                     if shot.id == previews.last?.id, shots.count > 4 {
-                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
                             .fill(.black.opacity(0.45))
                         Text("+\(shots.count - 4)")
                             .font(.title3.weight(.bold))
@@ -106,13 +112,14 @@ struct MultiSelectionPane: View {
         Task {
             let exported = await GalleryBatch.exportAll(targets)
             guard exported > 0 else { return }
-            withAnimation {
+            // 结果提示是一个小件的出没，走 micro（§6）：出得快才像「刚刚完成」。
+            withAnimation(DS.Motion.micro(reduced: reduceMotion)) {
                 exportSummary = exported < targets.count
                     ? "已导出 \(exported)/\(targets.count) 张"
                     : "已导出 \(exported) 张"
             }
             try? await Task.sleep(for: .seconds(4))
-            withAnimation { exportSummary = nil }
+            withAnimation(DS.Motion.micro(reduced: reduceMotion)) { exportSummary = nil }
         }
     }
 }

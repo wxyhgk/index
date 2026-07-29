@@ -15,12 +15,17 @@ private struct RevisionSummary: Identifiable {
     let createdAt: Date
 }
 
+// 关于材质：整栏**故意不加任何材质**。`.inspector` 已经自动套好了详情栏材质，
+// 这里再叠一层就是「材质叠材质」；同理栏内的信息卡只能用 `.quaternary` 这类
+// 半透明填充，绝不能放 Material（§4.2 末行）。
 struct ShotDetailPane: View {
     let shot: Shot
 
     // 订阅 store 是为了收藏态实时刷新；重查询都挂在 task(id:) 上，不受影响。
     @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
+    /// 阴影要按外观分流：深色下 L1 的阴影是 `.none`（黑底上的黑阴影只是糊一层脏）。
+    @Environment(\.colorScheme) private var scheme
 
     /// 修订历史只在切换截图 / 关闭编辑器时查一次数据库，不再挂在 body 上。
     @State private var revisions: [RevisionSummary] = []
@@ -167,12 +172,14 @@ struct ShotDetailPane: View {
         }
         .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // 警示色（黄）是状态语义，不是强调色也不参与深度表达 —— 保持。
+        // 圆角统一补 .continuous。
         .background(
-            RoundedRectangle(cornerRadius: DS.radiusCard)
+            RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
                 .fill(Color.yellow.opacity(0.18))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusCard)
+            RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
                 .strokeBorder(Color.yellow.opacity(0.5), lineWidth: 1)
         )
     }
@@ -209,9 +216,13 @@ struct ShotDetailPane: View {
     }
 
     private var preview: some View {
-        CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard))
-            .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+        // 预览图是详情栏里的 L1 内容层：单层阴影，数值走 DS.shadow 统一出数
+        // （浅色 black .07/r3/y1，深色 .none）—— 旧的 0.12/r4/y2 是魔法数，
+        // 且在深色下会在材质上糊出一圈黑。
+        let sh = DS.shadow(.content, scheme)
+        return CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
+            .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
+            .shadow(color: sh.color, radius: sh.radius, y: sh.y)
             .contentShape(Rectangle())
             .onTapGesture { QuickLookController.shared.present() }
             .help("点击（或按空格）用 Quick Look 预览原图")
@@ -363,6 +374,12 @@ struct ShotDetailPane: View {
     // MARK: - 信息分组卡片
 
     /// 分组卡片：quaternary 底 + 卡片圆角 + caption.semibold 组题。
+    ///
+    /// 底色**只能是 `.quaternary`，不能换成 Material**：详情栏本身已经站在
+    /// inspector 材质上了，卡片再上材质就是玻璃叠玻璃，两层模糊互相采样，
+    /// 结果是浑浊而不是更透。
+    /// 同心圆角：外 10、内缩 s3(12) → 内层 = −2 → 归零，所以卡内元素一律直角
+    /// （见 RevisionRow）。这正是公式该给出的答案，不是偷懒。
     private func card(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: DS.s2) {
             Text(title)
@@ -372,7 +389,10 @@ struct ShotDetailPane: View {
         }
         .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: DS.radiusCard))
+        .background(
+            .quaternary.opacity(0.5),
+            in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
+        )
     }
 
     private var sourceCard: some View {
@@ -474,6 +494,7 @@ private struct RevisionRow: View {
     let isLast: Bool
 
     @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -502,12 +523,20 @@ private struct RevisionRow: View {
             .padding(.leading, DS.s4)
             .padding(.vertical, DS.s1)
         }
+        // 同心圆角：外层信息卡 10，内缩 s3(12) → 内层 = −2 → 归零。
+        // 所以这条 hover 提亮底是**直角**，不是「忘了给圆角」——
+        // 在只剩 12pt 呼吸位的地方硬套 6pt 圆角，拐角处的间隙会被掐细。
         .background(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(Color.primary.opacity(isHovering ? 0.06 : 0))
+            RoundedRectangle(
+                cornerRadius: DS.radiusInner(outer: DS.radiusCard, inset: DS.s3),
+                style: .continuous
+            )
+            .fill(Color.primary.opacity(isHovering ? 0.06 : 0))
         )
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
+        // 悬停提亮是微交互，走 micro（0.22 是「立刻发生」的感知阈）。
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
     }
 
     private var connector: some View {

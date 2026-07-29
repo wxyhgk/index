@@ -6,9 +6,13 @@ import AppKit
 // 图库左栏：资料库 / 分类 / 标签 / 应用四组筛选入口（带计数与真实 App 图标），
 // 标签的重命名与删除也在这里。附带侧边栏专用的 App 图标视图与其缓存。
 
+// 关于材质：这里**故意什么都不加**。侧边栏的 sidebar 材质 + vibrancy 由
+// NavigationSplitView 自动提供（见 GalleryView.gallery），手加 Material 就是
+// 「材质叠材质」，结果是浑浊而不是更透 —— 那是这套设计里最常见的一个坑。
 struct GallerySidebar: View {
 
     @ObservedObject private var store = ShotStore.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var categories: [(name: String, count: Int)] = []
     @State private var tags: [(name: String, count: Int)] = []
@@ -92,7 +96,11 @@ struct GallerySidebar: View {
                     }
                     if appsCollapsible {
                         Button {
-                            withAnimation { appsExpanded.toggle() }
+                            // 展开/收起是一次列表布局切换（一次进出好几行），
+                            // 按 §6 归 standard 档；micro 太快会让新行「闪」出来。
+                            withAnimation(DS.Motion.standard(reduced: reduceMotion)) {
+                                appsExpanded.toggle()
+                            }
                         } label: {
                             Label(
                                 appsExpanded ? "收起" : "显示全部（\(apps.count) 个）",
