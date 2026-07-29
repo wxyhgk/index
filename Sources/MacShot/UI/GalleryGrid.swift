@@ -53,6 +53,9 @@ struct GalleryGrid: View {
 
     @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
+    /// 只为一个开关订阅：逐卡滚动深度（`galleryScrollDepth`）。
+    /// 设置项的变更频率是「用户偶尔点一下」，用它换「关掉开关立刻生效」是划算的。
+    @ObservedObject private var settings = AppSettings.shared
 
     /// 缩略图基准宽度，底部滑杆控制，跨启动记住。
     /// 瀑布模式下同一个值语义变成「列宽基准」，滑杆行为自然成立。
@@ -106,10 +109,18 @@ struct GalleryGrid: View {
                 grid
             }
 
-            Divider()
+            // 网格 ↔ 底栏之间不画 Divider()：底栏的材质边界本身就是分界，
+            // 再叠一条 1px 实线是第二条边，两条线互相削弱（见底栏的 hairline: .top）。
             bottomBar
         }
-        .background(.background)
+        // L0 画布：**不透明**。几百张缩略图铺在桌面模糊上是纯粹的视觉噪音，
+        // 而且白付一份 behind-window 采样成本 —— 那份成本是「每窗口」的，
+        // 花在内容层上完全没有回报。Apple 自家 Photos 的网格同样是纯不透明底。
+        //
+        // 铺在 VStack 这一层是为了让空态（ContentUnavailableView）也有同一块底 ——
+        // 否则筛不到结果时中栏会露出窗口底色，和有内容时不是一个灰。
+        // ScrollView 自己那份见 `grid`：两者的帧不同，工具栏底下那 52pt 只有它盖得住。
+        .background(Color(nsColor: .underPageBackgroundColor))
         .task(id: GridKey(semanticMode: store.semanticMode, shots: store.displayShots)) {
             // 语义结果本身就是排序（相似度降序），按时间分组会打乱它 —— 单段平铺。
             if store.semanticMode, let results = store.semanticResults {
@@ -206,6 +217,29 @@ struct GalleryGrid: View {
                     .padding(.bottom, DS.s3)
                 }
             }
+            // ScrollView 在 macOS 上自带一层不透明底（windowBackgroundColor）。
+            // 不关掉的话它会盖住上面那层 underPageBackgroundColor 画布，
+            // 两种灰打架，且侧边栏 / 底栏的材质会显得对不上底色。
+            .scrollContentBackground(.hidden)
+            // 画布色再铺一份到 ScrollView 自己身上：它的帧一直伸到窗口顶（工具栏底下），
+            // 而外层 VStack 的帧是从工具栏下沿才开始的。少了这一份，
+            // unified 工具栏的材质采样到的是窗口底色而不是画布色，工具栏会和网格差一档灰。
+            .background(Color(nsColor: .underPageBackgroundColor))
+            //
+            // ⚠️ 这里**故意不挂** `.scrollEdgeMask(topInset:)`，原因是实测出来的，不是取舍：
+            //
+            // 本窗口是 fullSizeContentView + unified 工具栏，SwiftUI 给这个 ScrollView
+            // 的 NSScrollView 设了 contentInsets.top = 52（工具栏高度），于是
+            //   · 内容**不会**露在工具栏底下（52pt 那条带子里只有画布色，没有可「化开」的东西）；
+            //   · 吸顶分组头 pin 的位置 = SwiftUI 侧 ScrollView 帧的顶边 y = 52，
+            //     和 mask 渐变带的起点**完全重合**。
+            // 结果就是渐变带整条压在吸顶头上，把分组头本身淡成半透明（实测：
+            // 28pt 渐变让 .title3 的分组头顶部 2/3 透出底下的画布色）。
+            // 规格要的是「卡片滑进标题时化开」，不是「标题自己化没」。
+            //
+            // 冻结的 `ScrollEdgeMask` 只有 topInset、没有「渐变带起点下移」的参数，
+            // 在有 pinnedViews 的容器上无解 —— 这条已写进交付报告，等底座补 API。
+            // 顶部边缘的「化开」当前由逐卡 `scrollDepth()` 承担（见 card(for:)）。
             .onChange(of: keyboardColumns, initial: true) { _, count in
                 GalleryKeyboard.shared.columnCountOverride = count
             }
@@ -250,14 +284,20 @@ struct GalleryGrid: View {
         .padding(.bottom, DS.s3)
     }
 
-    /// 瀑布卡片的缩略图高度 = 列宽 / 图片长宽比。
+    /// 瀑布卡片的缩略图高度 = **可用图宽** / 图片长宽比。
     /// 尺寸元数据（pixelWidth/Height）建库时就有，不用解码图片。
     /// 缩略图生成是等比缩放（ImageCodec.resized），CachedImage 的 .fit
     /// 在这个高度下正好铺满，不裁切也不留边。
+    ///
+    /// 可用图宽 = 列宽 − 2×`DS.s1`：卡片的缩略图在卡面内左右各内缩 4pt
+    ///（同心圆角要求：内圆角 = 10 − 4 = 6）。按整个列宽算高会多算 4~5pt，
+    /// `.fit` 之下就变成上下各留一条空边 —— 瀑布模式「等宽不裁切、完整贴合」的
+    /// 全部意义就在于没有这条边。
     private func waterfallHeight(for shot: Shot, columnWidth: CGFloat) -> CGFloat {
         let pixelWidth = CGFloat(max(1, shot.pixelWidth))
         let pixelHeight = CGFloat(max(1, shot.pixelHeight))
-        return columnWidth * pixelHeight / pixelWidth
+        let imageWidth = max(1, columnWidth - 2 * DS.s1)
+        return imageWidth * pixelHeight / pixelWidth
     }
 
     /// 吸顶分组标题：「今天 · 12」，垫 .bar 材质盖住滚过的卡片。
@@ -275,7 +315,25 @@ struct GalleryGrid: View {
         .background(.bar)
     }
 
+    /// 逐卡滚动深度。规格里它是**次选**（首选是成本恒定的容器级 `scrollEdgeMask`），
+    /// 但那条在本窗口的「工具栏 + 吸顶头」结构下会把分组头本身淡掉（理由见 `grid`），
+    /// 所以这里是当前唯一的滚动边缘表达 —— 也正因如此它才必须配一个开关：
+    /// 代价 ∝ 可见卡片数，几千张的库要能关掉。
+    /// 这一层只用 opacity / scale / offset —— 绝不碰 blur：
+    /// blur 在 scrollTransition 里是「逐帧离屏渲染 × 可见卡片数」，
+    /// SwiftUI 的 .blur 动画实测能吃掉 50% CPU（等价效果走 CALayer 是 0%）。
+    /// 开关关掉时走 else 分支，效果连同 scrollTransition 一起消失（不是设成 identity 空转）。
+    /// 代价是切换开关那一下卡片会因 `_ConditionalContent` 换分支重建一次 —— 一次性的，可接受。
+    @ViewBuilder
     private func card(for shot: Shot, height: CGFloat) -> some View {
+        if settings.galleryScrollDepth {
+            cardBody(for: shot, height: height).scrollDepth()
+        } else {
+            cardBody(for: shot, height: height)
+        }
+    }
+
+    private func cardBody(for shot: Shot, height: CGFloat) -> some View {
         ShotCard(
             shot: shot,
             height: height,
@@ -410,7 +468,14 @@ struct GalleryGrid: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Picker("显示模式", selection: $layoutMode) {
+            // 布局切换是「整片内容重排」，用 standard（0.35 / 0.85）：
+            // 比系统默认的 0.55 利落，又不像 micro 那样快到读不出内容是怎么挪的。
+            // 动画包在 setter 的事务里而不是给网格挂常驻 .animation(value:) ——
+            // 后者会让网格里任何一次尺寸变化（比如缩放滑杆）都被顺带动画掉。
+            Picker("显示模式", selection: Binding(
+                get: { layoutMode },
+                set: { newValue in withAnimation(DS.Motion.standard) { layoutMode = newValue } }
+            )) {
                 Image(systemName: "square.grid.2x2")
                     .tag(GalleryLayoutMode.grid)
                 Image(systemName: "square.grid.3x1.below.line.grid.1x2")
@@ -433,7 +498,12 @@ struct GalleryGrid: View {
         }
         .padding(.horizontal, DS.s3)
         .padding(.vertical, DS.s2)
-        .background(.bar)
+        // L2 chrome：材质边界代替 Divider()。发丝线只画顶边一条 ——
+        // 深色 white 0.10 是「顶边接光」，浅色 black 0.09 是「底边自遮挡」，
+        // 方向和卡片描边渐变同源（全 App 只有一个光源方向）。
+        // .withinWindow 而不是 .behindWindow：底栏下面是自家的不透明画布，
+        // 没有桌面可借，而 behindWindow 的成本是每窗口的，一份要留给侧边栏。
+        .glassPanel(.headerView, blending: .withinWindow, hairline: .top)
     }
 
     @ViewBuilder

@@ -20,6 +20,17 @@ final class GalleryWindowController: NSWindowController {
         let window = NSWindow(contentViewController: hosting)
         window.title = "MacShot 图库"
         window.setContentSize(NSSize(width: 1240, height: 760))
+        // fullSizeContentView + .unified：内容伸到标题栏底下，工具栏和标题同一条。
+        // **不要换成 .hiddenTitleBar** —— 搜索框是靠上面那行 sceneBridgingOptions
+        // 桥进窗口工具栏的，藏掉标题栏会把它踢回内容区。
+        //
+        // 也**没有**设 `isOpaque = false` + `backgroundColor = .clear`。
+        // 那对组合是「让侧边栏真的透出桌面」的开关，代价是：窗口里任何一块没人上色的
+        // 区域都会直接透出壁纸。中栏画布已经不透明了（GalleryGrid 的
+        // underPageBackgroundColor），但详情栏 / sheet / 空态那几块的底不归本文件管，
+        // 而这台机器上无法把图库窗口截到（窗口不在可捕获的 Space 上），
+        // 「实测确认没有透壁纸」这一步做不了。没验证过就不开 —— 透壁纸是整窗级事故，
+        // 不是局部瑕疵。要开的前提写在交付报告里。
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.toolbarStyle = .unified
         // 记住窗口位置与大小；首次启动没有记录时才居中。
