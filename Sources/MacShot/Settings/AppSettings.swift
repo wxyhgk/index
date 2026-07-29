@@ -87,6 +87,7 @@ final class AppSettings: ObservableObject {
         static let recordSystemAudio = "recordSystemAudio"
         static let recordMicrophone = "recordMicrophone"
         static let recordingSaveToLibrary = "recordingSaveToLibrary"
+        static let galleryScrollDepth = "galleryScrollDepth"
     }
 
     private let defaults = UserDefaults.standard
@@ -175,6 +176,17 @@ final class AppSettings: ObservableObject {
     /// 保留天数。只有早于这个天数、未收藏且从未标注过的截图才会被清理。
     @Published var autoCleanupDays: Int {
         didSet { defaults.set(autoCleanupDays, forKey: Keys.autoCleanupDays) }
+    }
+
+    // MARK: - 图库
+
+    /// 图库网格的逐卡滚动深度（滑近边缘时轻微淡出 + 缩小 + 位移）。默认开。
+    /// 关掉只影响这一层「逐卡」效果，容器级的滚动边缘渐变（成本恒定，与卡片数无关）始终在。
+    /// 给开关的理由是成本：逐卡 scrollTransition 的代价 ∝ 可见卡片数，
+    /// 而 macOS 15 的 SwiftUI 滚动本身已有性能回归（trackpad 滚动时
+    /// `_hitTestForEvent` 吃掉约 85% 执行时间），几千张的库应当把这一层关掉。
+    @Published var galleryScrollDepth: Bool {
+        didSet { defaults.set(galleryScrollDepth, forKey: Keys.galleryScrollDepth) }
     }
 
     // MARK: - 标注默认值
@@ -336,7 +348,8 @@ final class AppSettings: ObservableObject {
             Keys.autoCleanupDays: 30,
             Keys.recordSystemAudio: true,
             Keys.recordMicrophone: false,
-            Keys.recordingSaveToLibrary: false
+            Keys.recordingSaveToLibrary: false,
+            Keys.galleryScrollDepth: true
         ])
 
         copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
@@ -372,6 +385,7 @@ final class AppSettings: ObservableObject {
         recordSystemAudio = defaults.bool(forKey: Keys.recordSystemAudio)
         recordMicrophone = defaults.bool(forKey: Keys.recordMicrophone)
         recordingSaveToLibrary = defaults.bool(forKey: Keys.recordingSaveToLibrary)
+        galleryScrollDepth = defaults.bool(forKey: Keys.galleryScrollDepth)
         captureShortcut = Self.load(Keys.captureShortcut, from: defaults) ?? .captureDefault
         galleryShortcut = Self.load(Keys.galleryShortcut, from: defaults) ?? .galleryDefault
         delayedCaptureShortcut = Self.load(Keys.delayedCaptureShortcut, from: defaults)
