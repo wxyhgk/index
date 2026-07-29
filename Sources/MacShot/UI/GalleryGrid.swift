@@ -352,6 +352,10 @@ struct GalleryGrid: View {
                 GalleryWindowMode.shared.openEditor(shotID: shot.id)
             }
         )
+        // 不给 preview 闭包：默认预览就是这张卡自己的快照，多选时也照样跟手，
+        // 语义上也诚实 —— 拖出到外部本来就只导出这一张（见 ShotDragFile 的取舍注释），
+        // 现在去做 Finder 那种「叠张 + 数字角标」反而会承诺一个不存在的行为。
+        // 何况自定义 preview 的 ViewBuilder 和载荷一样在 body 里逐卡片求值，是要还的。
         .draggable(dragFile(for: shot))
         .contextMenu {
             // ⚠️ 这个 ViewBuilder 会在**普通渲染时**被 SwiftUI 求值，不是右键才跑 ——
@@ -585,7 +589,18 @@ struct GalleryGrid: View {
     /// 逐卡片急切求值，任何重活（读原图/渲染/写盘）放在这里都会把主线程打满 ——
     /// 表现就是「图库滚不动、点击丢失」。渲染推迟到真正拖放时的传输闭包里做。
     private func dragFile(for shot: Shot) -> ShotDragFile {
-        ShotDragFile(shot: shot)
+        ShotDragFile(shot: shot, shotIDs: draggedIDs(for: shot))
+    }
+
+    /// 拖拽携带哪些 ID：被拖的这张在多选集合里 → 全部选中项；不在 → 只有它自己。
+    /// 这是 Finder 的行为，也是「先框选一批、再一把拖到侧边栏标签上」能成立的前提。
+    ///
+    /// 同样受上面那条廉价纪律约束：命中多选时是 `Set` 的 COW 引用拷贝（O(1)，不遍历），
+    /// 未命中时新建一个单元素 Set。**不要**改成去 `store.displayShots` 里按展示顺序过滤 ——
+    /// 那是「全库长度 × 可见卡片数」的每帧扫描，而打标签根本不需要顺序。
+    private func draggedIDs(for shot: Shot) -> Set<Int64> {
+        guard let id = shot.id else { return [] }
+        return selection.isSelected(id) ? selection.selectedIDs : [id]
     }
 
     /// 钉在桌面：走注册表的 pin 动作（界面层不直接建窗口），材料从图库记录重建。

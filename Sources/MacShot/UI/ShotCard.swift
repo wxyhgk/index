@@ -4,19 +4,53 @@ import UniformTypeIdentifiers
 // MARK: - 卡片
 //
 // 网格里的一张缩略图卡片（悬停、选中描边、收藏星、分类胶囊、标注角标），
-// 以及它拖出去时用的 Transferable 载荷。
+// 以及它拖出去时用的 Transferable 载荷（对外一份成品 PNG / 对内一串截图 ID）。
 
-/// 拖出卡片的载荷。构造只是拷一个 Shot 值 —— 渲染含标注的成品 PNG
+extension UTType {
+    /// 应用内截图引用（一串截图 ID）。反向域名与 bundle id `com.wxyhgk.macshot` 对齐，
+    /// 已在 `Resources/Info.plist` 的 `UTExportedTypeDeclarations` 里声明为导出类型 ——
+    /// 没有声明的话 `UTType(exportedAs:)` 只能拿到一个动态类型，跨进程识别不可靠。
+    static let macShotShotIDs = UTType(exportedAs: "com.wxyhgk.macshot.shot-ids")
+}
+
+/// 应用内拖拽的轻量载荷：**只有一串截图 ID**，没有图像、没有查库。
+/// 侧边栏「拖到标签上打标签」用 `.dropDestination(for: ShotIDPayload.self)` 接它，
+/// 拿到 ID 之后自己去 `ShotStore` 取需要的东西 —— 拖拽全程一张图都不解码。
+///
+/// 用 `Set` 而不是 `Array`：选中集合本身就是 `Set<Int64>`，直接拷进来是一次
+/// COW 引用拷贝（O(1)），选中 5000 张和选中 1 张的构造成本一样；
+/// 打标签本来也是集合语义，不关心顺序。
+struct ShotIDPayload: Codable, Transferable {
+    let shotIDs: Set<Int64>
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .macShotShotIDs)
+    }
+}
+
+/// 拖出卡片的载荷。构造只是拷一个 Shot 值 + 一个 ID 集合的引用 —— 渲染含标注的成品 PNG
 /// 发生在**接收方真正收文件时**（FileRepresentation 的导出闭包），
 /// 目录复用暂存栏的拖拽临时目录，下次启动统一清理；渲染失败退回原图路径。
 struct ShotDragFile: Transferable {
     let shot: Shot
+    /// 应用内接收方要用的 ID 集合：被拖的卡片在多选集合里 → 全部选中项，
+    /// 不在 → 只有它自己（Finder 的行为）。由 `GalleryGrid.dragFile(for:)` 组装，
+    /// 取的是内存里的 `GallerySelection.shared.selectedIDs`，不落盘不查库。
+    let shotIDs: Set<Int64>
 
     static var transferRepresentation: some TransferRepresentation {
+        // 次序即优先级。PNG 文件表示必须排在最前：外部 App（访达 / 聊天窗口 / 邮件）
+        // 按自己支持的类型挑第一个能用的，排后面会被应用内的 ID 类型抢走语义。
         FileRepresentation(exportedContentType: .png) { file in
             let url = await MainActor.run { file.writeRenderedPNG() }
             return SentTransferredFile(url, allowAccessingOriginalFile: true)
         }
+        // 应用内表示：只是把已经攥在手里的 ID 集合换个类型，闭包里没有解码 / 查库 / 渲染。
+        //
+        // ⚠️ 取舍：**外部拖出仍然只导出被拖的那一张**（上面 FileRepresentation 用的 `shot`）。
+        //    多选一次拖出多个 PNG 需要换掉 `.draggable(_:)` 这个单 item 接口，
+        //    是一个独立功能，本次不做 —— 因此「多选」目前只影响应用内这条 ID 通道。
+        ProxyRepresentation(exporting: { ShotIDPayload(shotIDs: $0.shotIDs) })
     }
 
     /// 重活集中在这：读原图 → 合成最新修订 → 编码 → 写临时文件。
