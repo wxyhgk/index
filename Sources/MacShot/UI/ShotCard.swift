@@ -55,9 +55,15 @@ struct ShotCard: View {
     /// 分类 / 标注角标同样由父级批量查好传入。
     let category: String?
     let isAnnotated: Bool
+    /// 按下态（四态之外的第五态，缩放 0.99）。**唯一由外部驱动的状态**：
+    /// 点击 / 双击 / `.draggable` 三个手势全挂在父级 GalleryGrid 上，卡片内部再挂一个
+    /// `DragGesture(minimumDistance: 0)` 去嗅探按下，会和 `.draggable` 的拖拽识别器抢事件 ——
+    /// 拖出是核心功能，不拿它赌一个按压反馈。默认 false：父级哪天接上按下手势，
+    /// 传这一个参数即可，卡片这边不用改。
+    var isPressed: Bool = false
     let onToggleFavorite: () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     /// 悬停 0.3s 后才浮出尺寸条 —— 快速扫过不打扰。
     @State private var showsDimensions = false
@@ -66,12 +72,28 @@ struct ShotCard: View {
     // 订阅了会导致任何 store 变化都重建全部缩略图。
     private var thumbnailURL: URL { ShotStore.shared.thumbnailURL(for: shot) }
 
+    /// 卡片四态。缩放只受悬停控制、选中只加光 —— 两者正交，
+    /// 「选中」和「鼠标在这张上」必须能同时读出（HIG：焦点与选中各自独立可见）。
+    private var cardState: SpatialCardState {
+        SpatialCardState(isHovering: isHovering, isSelected: isSelected, isPressed: isPressed)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.s2) {
+        // spacing 用 s1：缩略图自己已经内缩了 s1，两段相加正好是 s2 的视觉间隙。
+        VStack(alignment: .leading, spacing: DS.s1) {
             thumbnail
             caption
         }
+        // 热区跟着卡片形状走，四个角外的三角区不再吃点击。
+        .contentShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
+        // ⚠️ 悬停判定必须挂在 spatialCard（scale 1.02 / offset −3）**之前**：
+        // 挂在形变之后，卡片一悬停就上移，底边下的指针会掉出热区 →
+        // 「悬停→位移→脱离→复位→再悬停」的自激抖动。
         .onHover { isHovering = $0 }
+        // 表面填充 / 边缘高光 / 阴影 / 选中环 + 光晕 + 色调 / 四态动效，一次给全。
+        // 卡片背景是纯填充 + 描边，**没有任何 Material** —— 内容层不上玻璃，
+        // 也是性能红线（每张卡一个 NSVisualEffectView 必炸）。
+        .spatialCard(cardState)
         .task(id: isHovering) {
             guard isHovering else {
                 showsDimensions = false
@@ -79,68 +101,72 @@ struct ShotCard: View {
             }
             try? await Task.sleep(for: .seconds(0.3))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.15)) { showsDimensions = true }
+            // 浮条出没属于微交互，和角标同档；Reduce Motion 下自动收紧成 easeOut。
+            withAnimation(DS.Motion.micro(reduced: reduceMotion)) { showsDimensions = true }
         }
+    }
+
+    /// 缩略图内圆角 = 卡片外圆角 10 − 内缩 s1(4) = 6（正好落在 radiusSmall 上）。
+    /// 同心才能让缩略图与卡片边缘的缝隙在整圈上恒定 —— 不同心的话拐角处会被
+    /// 「掐细」或张成喇叭口，那种视觉张力就是廉价感的来源。
+    private var innerShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: DS.radiusInner(outer: DS.radiusCard, inset: DS.s1),
+            style: .continuous
+        )
     }
 
     private var thumbnail: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: DS.radiusCard)
-                .fill(.quaternary.opacity(0.5))
+            innerShape.fill(.quaternary.opacity(0.5))
             CachedImage(url: thumbnailURL, key: shot.sha256)
-                .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard))
+                // 视差只给当前悬停的那张卡开：未悬停时 unit vector 是 .zero，
+                // `.visualEffect` 闭包退化成 identity 变换，成本近似为零。
+                // 幅度（±5pt / ±1.5° / perspective 0.3）在 DS.Parallax 里，
+                // Reduce Motion 由修饰器自己整个关掉（不是减半）。
+                .parallaxThumbnail(isEnabled: isHovering)
         }
         .frame(height: height)
-        // 尺寸浮条盖在底边，先叠再裁 —— 让浮条跟着卡片圆角走。
+        // 尺寸浮条盖在底边，先叠再裁 —— 让浮条跟着缩略图圆角走。
         .overlay(alignment: .bottom) { dimensionBar }
-        .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard))
-        .overlay {
-            // 深色模式悬停不加阴影（黑底上看不见），改为整体提亮一档。
-            if colorScheme == .dark && isHovering {
-                RoundedRectangle(cornerRadius: DS.radiusCard)
-                    .fill(Color.white.opacity(0.05))
-                    .allowsHitTesting(false)
-            }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: DS.radiusCard)
-                .strokeBorder(Color.primary.opacity(strokeOpacity), lineWidth: 1)
-        }
+        .clipShape(innerShape)
+        .overlay(alignment: .topLeading) { selectionBadge }
         .overlay(alignment: .bottomLeading) { categoryBadge }
         .overlay(alignment: .bottomTrailing) { annotationBadge }
         .overlay(alignment: .topTrailing) { favoriteButton }
-        // 选中描边外扩，不压缩略图本身。
-        .overlay {
-            if isSelected {
-                RoundedRectangle(cornerRadius: DS.radiusCard + 3)
-                    .strokeBorder(Color.accentColor, lineWidth: 2.5)
-                    .padding(-DS.s1)
+        // 内缩 s1：卡片表面在缩略图四周露出一圈，深度才有落脚点。
+        .padding(DS.s1)
+        // 只剩角标出没需要动画（描边/阴影/缩放/选中环都归 spatialCard 管了）：
+        // 悬停角标走 micro，选中角标走 standard —— 替换掉原来的两条 .easeOut(0.12)。
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
+        .animation(DS.Motion.standard(reduced: reduceMotion), value: isSelected)
+    }
+
+    /// 左上角选中角标。图块选中的通用解是「发光环 + 角标」（Photos / Google Photos / Windows 一致）：
+    /// 多选时密集网格里的光环容易被邻居的环淹没，角标才是一眼可数的那个线索。
+    ///
+    /// 尺寸复用 favoriteButton 的约定：24pt 材质圆底（材质只出现在这种小件上，
+    /// 卡片表面依然零材质），净内缩 8pt 与右上角的星形对称。
+    /// palette 渲染让「白勾 + accent 圆盘」两层分开上色 —— 单色模式下勾是镂空的，
+    /// 落在亮缩略图上会糊掉。角标不参与点击（选中由父级的点击手势负责）。
+    @ViewBuilder
+    private var selectionBadge: some View {
+        if isSelected {
+            ZStack {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: 24, height: 24)
+                Image(systemName: "checkmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color.accentColor)
+                    // 18pt：比 24pt 圆底小一圈，留出材质做「光晕」，边缘不至于齐平割手。
+                    .font(.system(size: 18, weight: .semibold))
             }
+            .frame(width: 24, height: 24)
+            .padding(DS.s2)
+            .transition(.scale(scale: 0.6).combined(with: .opacity))
+            .allowsHitTesting(false)
         }
-        .shadow(
-            color: shadowColor,
-            radius: isHovering ? 7 : 3,
-            y: 2
-        )
-        .scaleEffect(isHovering && !isSelected ? 1.015 : 1)
-        .animation(.easeOut(duration: 0.12), value: isHovering)
-        .animation(.easeOut(duration: 0.12), value: isSelected)
-    }
-
-    /// 描边随深浅色分流：深色描边是唯一的悬停反馈来源之一，悬停升到 0.18；
-    /// 浅色有阴影帮忙，维持原来的 0.25。
-    private var strokeOpacity: Double {
-        if colorScheme == .dark {
-            return isHovering ? 0.18 : 0.08
-        }
-        return isHovering ? 0.25 : 0.08
-    }
-
-    /// 浅色小阴影撑层次；深色去阴影（层次交给描边 + 提亮）。
-    private var shadowColor: Color {
-        colorScheme == .dark
-            ? .clear
-            : .black.opacity(isHovering || isSelected ? 0.16 : 0.08)
     }
 
     /// 悬停浮条：像素尺寸。半透明材质垫底，从底边浮入。
@@ -218,6 +244,10 @@ struct ShotCard: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 2)
+        // 文字现在长在卡片表面上（不再是卡片外的裸文字），得有自己的内缩：
+        // 水平 s2 比缩略图的 s1 多 4pt —— 文字的视觉左边界在字形之外，
+        // 和图像同数内缩会显得往外顶。底部同样 s2，与顶部（s1 + 卡片圆角）配平。
+        .padding(.horizontal, DS.s2)
+        .padding(.bottom, DS.s2)
     }
 }
