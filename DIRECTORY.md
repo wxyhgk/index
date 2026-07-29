@@ -64,7 +64,7 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 - `PinImageView` — 图像、标注、Live Text、悬停时浮现的工具条
 - `PinKeyboard` — 按键分发（工具键消费 `AnnotationTool` 的公共快捷键表）
 
-## UI/ — 图库与编辑器（15 文件 / 5273 行）
+## UI/ — 图库与编辑器（24 文件 / 6268 行）
 
 同一个窗口的两个模式：图库（浏览、搜索、多选、标签）和编辑器（标注、图层、效果）。编辑器曾做成独立窗口，因为割裂感又并回了图库窗口。
 
@@ -74,7 +74,9 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 - `GalleryKeyboard` / `QuickLookController` / `EditorCanvasScrollView` — 三处事件处理，靠上面那个共享判定协调
 - `LayerCanvas` / `ThumbnailImage` / `WaterfallLayout` / `TimelineView` / `TagSection` / `DesignTokens`
 
-> **现存债务**：`GalleryView` 2000 行装了 17 个类型，`EditorView` 1189 行装了 6 种职责，都在下一批拆分计划里。
+图库部分已按「空间 UI」设计语言改版：`DesignTokens`（`extension DS`）定义深度层、渐变描边、发光、动效四档等 token，`SpatialModifiers` 提供 `spatialCard` / `glassPanel` / `parallaxThumbnail` 等修饰器。改视觉时**先读 `docs/spatial-ui-spec.md`**——里面每个数值都有出处，尤其"内容层不上玻璃""深色靠亮度阶梯不靠阴影"两条铁律，违反了会浑浊或卡顿。
+
+> **现存债务**：`EditorView` 1194 行装了 6 种职责，靠 26 处手动 `annotationTick` 驱动重绘，是下一批拆分对象。`ShotDetailPane` 里的 `maskSensitiveRegions` 是业务逻辑，待下沉到存储层。
 
 ## Settings/ — 应用内设置（5 文件 / 1319 行）
 

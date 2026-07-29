@@ -410,6 +410,13 @@ extension View {
     func scrollDepth() -> some View { modifier(ScrollDepthModifier()) }
 
     /// 容器级滚动边缘。用在 ScrollView 自身上，成本与卡片数无关。
+    ///
+    /// ⚠️ **目前全项目没有调用点**，保留是因为它只差一个参数就能用。
+    /// 图库网格用了 `pinnedViews` 吸顶分组头，实测（探针量几何 + 位图回读）
+    /// 发现 ScrollView 帧顶端 `y = 52` 与吸顶头顶端**完全重合** ——
+    /// 渐变带从 0 起算就直接淡掉了标题本身，而不是「卡片滑进标题时化开」。
+    /// 要让它可用，需要加一个渐变起点下移量（如 `startAt:` 或读 safeAreaInsets），
+    /// 让渐变从吸顶头下沿才开始。在那之前，顶部的深度感由逐卡 `scrollDepth()` 承担。
     func scrollEdgeMask(topInset: CGFloat = 28) -> some View {
         modifier(ScrollEdgeMask(topInset: topInset))
     }

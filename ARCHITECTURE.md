@@ -50,7 +50,7 @@
 |---|---|
 | 领域层引用 App 配置 | `Annotation/AnnotationState.init` 读 `AppSettings.shared`（取默认颜色）；效果层水印描述符读 `AppSettings`（开关语义，`CapturePostProcessor.isEnabled` 同款先例，可辩护但记录在案） |
 | 各层散读 `AppSettings` | `Storage/StorageJanitor`、`Platform/ImageExporter`、`Capture/OverlayView` 等 5 处（轻，逐步随重构下沉为注入参数） |
-| 界面层绕过注册表 | `UI/GalleryView` 直接 `UploadAction().perform(…)`（轻；pin 直调已于 2026-07 迁回注册表） |
+| 界面层绕过注册表 | `UI/ShotDetailPane` 直接 `UploadAction().perform(…)`（轻；pin 直调已于 2026-07 迁回注册表） |
 | 平台副作用散落 | `NSCursor` 5 个文件各自 set；`NSWorkspace` 2 处（取图标 / 开系统设置）。低优先级，暂不收敛 |
 
 **已修销账**（原违例表五行，全部修复）：剪贴板 → `Platform/Clipboard`（v0.0.9）；`OCRService`/`BrowserURLResolver` 直调 ShotStore → 流水线 + attribute writer（v0.0.7）；`CaptureActionPerformer` ↔ Pin 双向依赖 → 双方走 `CaptureActionRegistry`（v0.0.6）；GalleryView 内联存盘/目录面板与裸 `NSAlert` → `ImageExporter` / `SystemNavigator.chooseDirectory` / `Platform/AppAlert`（2026-07）。
@@ -203,7 +203,10 @@ struct EffectDescriptor {
 **阶段 6 现状（2026-07）**：止血已完成 —— 测试安全网（迁移链 / 清理豁免 / 引用计数删文件，项目首批测试）、写路径 reload 节流合并（leading+trailing 0.5s，回填/批删风暴坍缩为 ≤2Hz）、批量删除单事务。
 剩余（按序独立交付）：`ShotDatabase` 非 MainActor 仓库类型承接全部 SQL、`DatabasePool` + WAL、async 读接口逐点迁移（顺手修 `relatedShots` 全表拉取与 `attributePayloads` 主线程拉 blob）、按职责拆门面、`ValueObservation` 替代手动通知。UI 状态（searchText / filter / semantic）届时迁出 ShotStore 成为 GalleryViewModel。
 
-**下一批已规划**：拆巨文件 —— `GalleryView`（2000+ 行 / 17 类型）按 Selection / Sidebar / Grid / Card / Batch / DetailPane / SimilarSheet 切 8 件，`maskSensitiveRegions` 业务逻辑下沉；`EditorView` 切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。
+**拆巨文件（进行中）**：`GalleryView` 已于 2026-07 拆成 9 个文件（壳 171 行，最大的 `GalleryGrid` 548 行），拆分为纯搬家、逐行对账过。
+剩余：`maskSensitiveRegions` 业务逻辑仍留在 `ShotDetailPane` 待下沉；`EditorView`（1194 行）切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。
+
+**图库视觉规范（2026-07 新增）**：图库采用「空间 UI」设计语言，token 与修饰器在 `UI/DesignTokens.swift` 的 `extension DS` 与 `UI/SpatialModifiers.swift`。三条不可违反的铁律：**玻璃只给功能层**（侧边栏/详情栏/吸顶头/底栏/浮层），内容层（网格画布 + 卡片）一律不上材质；**每窗口最多一个 `behindWindow` 材质**，卡片的玻璃感用渐变描边冒充；**深色模式的深度是亮度阶梯不是阴影**。完整规格（含数值出处与性能红线）见 `docs/spatial-ui-spec.md`。
 
 阶段 4 结论（存档）：`CaptureCanvas` 通用画布废弃，因为它设想的三个需求方最终没有一个用它 ——
 

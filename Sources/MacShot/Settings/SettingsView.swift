@@ -123,6 +123,13 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("图库") {
+                Toggle("滚动时的深度效果", isOn: $settings.galleryScrollDepth)
+                Text("卡片滚出视野时轻微淡出并后退，让内容有前后层次。截图上万张后如果滚动不跟手，关掉这项。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("选区") {
                 Toggle("显示放大镜与取色器", isOn: $settings.showMagnifier)
                 Text("拖选时在光标旁显示像素级预览、色值和坐标。按 C 复制色值。")
