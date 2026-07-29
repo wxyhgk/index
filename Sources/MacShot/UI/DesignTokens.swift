@@ -44,3 +44,295 @@ enum DS {
         }
     }
 }
+
+// ============================================================
+// MARK: - 空间层 token
+//
+// 「空间 UI」底座：深度、边缘光、阴影、发光、动效、视差。
+// 一条总原则：**深度 = 光，不是边框**。
+// 浅色靠阴影，深色靠亮度阶梯 + 顶边高光；边框只是「增强对比度」
+// 无障碍模式下的降级方案，所以它才不是默认表达。
+// ============================================================
+
+extension DS {
+
+    // MARK: - 圆角新增档
+    //
+    // 连同已有的 radiusSmall(6) / radiusCard(10)，圆角共 5 档，到顶。
+    // 全项目一律 `style: .continuous`：10pt 处它和 .circular 肉眼几乎不可分
+    //（可见阈值在 16–24pt），但它零成本，而 14/18 这两档确实需要。
+    // 注意废弃的 `.cornerRadius(_:)` 只能画圆弧角，必须走
+    // `.clipShape(RoundedRectangle(cornerRadius:style:.continuous))`。
+
+    /// 极小件（时间戳胶囊、微角标）。
+    /// 4 是「还看得出是圆角」的下限 —— 再小按同心公式会被归零成直角。
+    static let radiusChip: CGFloat = 4
+    /// 浮层 / sheet / Quick Look。
+    /// 比卡片(10)大一档：浮层面积更大、离用户更近，圆角要跟着涨才不显得「削角」。
+    static let radiusPanel: CGFloat = 14
+    /// 全屏模态（暂无用例，占位）。
+    /// 预留最大一档，避免将来有人在视图里现编一个魔法数。
+    static let radiusModal: CGFloat = 18
+
+    /// 同心圆角：内层 = 外层 − 内缩量。低于 2 视觉上等于直角，直接归零。
+    ///
+    /// 为什么必须同心：两条曲线共圆心时，间隙在整圈上恒定；不同心时间隙会在
+    /// 拐角处被「掐细」或张成「喇叭口」，那种视觉张力就是廉价感的来源。
+    /// 实例：卡片外 10、缩略图内缩 s1(4) → 内圆角 6，正好落在 radiusSmall 上，
+    /// 阶梯自洽，不需要新常量。
+    static func radiusInner(outer: CGFloat, inset: CGFloat) -> CGFloat {
+        let r = outer - inset
+        return r < 2 ? 0 : r
+    }
+
+    /// 外扩环（选中环画在卡片外侧 offset 处）：外层 = 内层 + 外扩量。
+    ///
+    /// 外扩量和圆角增量必须是**同一个数**。旧代码 `radiusCard + 3` 配 `padding(-4)`
+    /// 就是外扩 4 却只加 3 圆角，四个拐角全是喇叭口。
+    static func radiusOuter(inner: CGFloat, offset: CGFloat) -> CGFloat {
+        inner + offset
+    }
+
+    // MARK: - 深度层
+    //
+    // 只有 4 档，且不打算再加。Apple 的理由是生理性的：
+    // 每一次深度差异都要求眼睛重新对焦，深度平面太多会造成视觉疲劳。
+    // 所以这是「层级模型」，不是可以随手 +1 的 z-index 阶梯。
+
+    enum Elevation: Int, Comparable, CaseIterable {
+        /// 窗口画布：侧边栏 / 详情栏（系统材质）、网格底（不透明）。
+        case canvas = 0
+        /// 卡片常态、详情栏信息卡。
+        case content = 1
+        /// 卡片悬停、吸顶分组头、底栏。
+        case raised = 2
+        /// Quick Look / sheet / popover / 右键预览。
+        case floating = 3
+
+        static func < (a: Elevation, b: Elevation) -> Bool { a.rawValue < b.rawValue }
+
+        var radius: CGFloat {
+            switch self {
+            case .canvas:   return 0
+            case .content:  return DS.radiusCard
+            case .raised:   return DS.radiusCard
+            case .floating: return DS.radiusPanel
+            }
+        }
+    }
+
+    // MARK: - 表面填充（亮度阶梯）
+    //
+    // 深色模式的「高度」是亮度，不是阴影 —— 深色下阴影会饱和成一坨黑，
+    // 读不出高度差（浅色只需 10–15% 的阴影，深色要 40–70% 才看得见，
+    // 那时候已经脏了）。所以深色走 4 档亮度叠加，每档只差几个 RGB 点，
+    // 边界交给发丝线撑（Raycast / Linear 都是这个做法）。
+    //
+    // 浅色模式所有层都是纯白：在 #ECECEC 左右的窗背景上纯白本身就高一层，
+    // 再往上叠亮度会直接溢出，层级差只能交给阴影。
+
+    static func surfaceFill(_ e: Elevation, _ scheme: ColorScheme) -> Color {
+        switch (e, scheme) {
+        case (.canvas, _):        return .white.opacity(0.00)
+        case (.content, .dark):   return .white.opacity(0.045)
+        case (.content, _):       return .white.opacity(1.00)
+        case (.raised, .dark):    return .white.opacity(0.075)
+        case (.raised, _):        return .white.opacity(1.00)
+        case (.floating, .dark):  return .white.opacity(0.10)
+        case (.floating, _):      return .white.opacity(1.00)
+        }
+    }
+
+    // MARK: - 边缘高光（rim）
+    //
+    // 「边缘比表面重要」：一条从亮到暗的渐变描边，比任何背景不透明度调整
+    // 都更能做出玻璃感，而且全是 GPU 上的便宜原语（几百张卡也扛得住）。
+    //
+    // 渐变方向的物理含义是「光从上方来」：
+    // 深色 —— 顶边斜面接光是唯一强线索，所以顶亮底暗；`.plusLighter` 是加法混合，
+    //         保证这条线永远只提亮、不会压暗底下的内容。
+    // 浅色 —— 白表面的顶边接光根本看不出来，主导线索变成「整体暗一档的发丝线」，
+    //         且底边更暗（底边处于自遮挡），所以是顶浅底深、`.normal` 直接压上去。
+
+    struct Rim {
+        var top: Double
+        var bottom: Double
+        var isLight: Bool
+        var lineWidth: CGFloat = 1
+
+        var gradient: LinearGradient {
+            let c: Color = isLight ? .white : .black
+            return LinearGradient(
+                colors: [c.opacity(top), c.opacity(bottom)],
+                startPoint: .top, endPoint: .bottom
+            )
+        }
+        var blend: BlendMode { isLight ? .plusLighter : .normal }
+    }
+
+    /// 悬停时描边整体加浓（深色 +0.08 / 浅色 +0.05）：
+    /// 抬起来的表面接光更多，边缘对比理应更强 —— 这比单纯加阴影更省、也更准。
+    static func rim(_ e: Elevation, _ scheme: ColorScheme, hovering: Bool) -> Rim {
+        if scheme == .dark {
+            let boost = hovering ? 0.08 : 0.0
+            switch e {
+            case .canvas:   return Rim(top: 0, bottom: 0, isLight: true)
+            case .content:  return Rim(top: 0.14 + boost, bottom: 0.035, isLight: true)
+            case .raised:   return Rim(top: 0.20 + boost, bottom: 0.05,  isLight: true)
+            case .floating: return Rim(top: 0.24,         bottom: 0.06,  isLight: true)
+            }
+        } else {
+            let boost = hovering ? 0.05 : 0.0
+            switch e {
+            case .canvas:   return Rim(top: 0, bottom: 0, isLight: false)
+            case .content:  return Rim(top: 0.07 + boost, bottom: 0.13 + boost, isLight: false)
+            case .raised:   return Rim(top: 0.08 + boost, bottom: 0.15 + boost, isLight: false)
+            case .floating: return Rim(top: 0.09,         bottom: 0.17,         isLight: false)
+            }
+        }
+    }
+
+    // MARK: - 阴影
+    //
+    // 深色的 L1 故意没有阴影：静止卡片的黑阴影落在黑底上只是糊一层脏，
+    // 读不出任何高度信息。L2 才给 —— 卡片这时已经真的抬起来了，
+    // 环境遮挡有了参照物，才读得出来。
+    //
+    // 硬约束：绝不把 shadow 的参数（color/radius/y）挂在连续手势或滚动上，
+    // SwiftUI 会逐帧重新离屏渲染阴影。悬停态直接切换两组静态值、
+    // 由 spring 隐式插值是可接受的（radius 12↔3 的插值代价有限）。
+
+    struct Shadow {
+        var color: Color
+        var radius: CGFloat
+        var y: CGFloat
+        static let none = Shadow(color: .clear, radius: 0, y: 0)
+    }
+
+    static func shadow(_ e: Elevation, _ scheme: ColorScheme) -> Shadow {
+        if scheme == .dark {
+            switch e {
+            case .canvas, .content: return .none
+            case .raised:           return Shadow(color: .black.opacity(0.55), radius: 14, y: 6)
+            case .floating:         return Shadow(color: .black.opacity(0.65), radius: 26, y: 12)
+            }
+        } else {
+            switch e {
+            case .canvas:   return .none
+            case .content:  return Shadow(color: .black.opacity(0.07), radius: 3,  y: 1)
+            case .raised:   return Shadow(color: .black.opacity(0.13), radius: 12, y: 5)
+            case .floating: return Shadow(color: .black.opacity(0.18), radius: 24, y: 10)
+            }
+        }
+    }
+
+    /// 「直接光」硬阴影，配合上面那层宽软的「环境光」构成双层阴影。
+    ///
+    /// **只有 L3 允许**叠这一层 —— 双层阴影 = 双份离屏合成，
+    /// 网格里几百张 L1/L2 卡片各来两份是性能自杀。浮层同屏通常只有一个，成本有界。
+    static func shadowKey(_ scheme: ColorScheme) -> Shadow {
+        scheme == .dark
+            ? Shadow(color: .black.opacity(0.40), radius: 3, y: 1)
+            : Shadow(color: .black.opacity(0.10), radius: 2, y: 1)
+    }
+
+    // MARK: - 发光（选中）
+    //
+    // 选中绝不用实心填充 —— 缩略图会把填充整片盖住，填充等于没画。
+    // 通用解是「发光环 + 色调」（Photos / Google Photos / Windows 一致）。
+    //
+    // 深色数值全线更高（环 1.00 vs 0.90、光晕 0.38 vs 0.22、色调 0.14 vs 0.09）：
+    // 深色模式需要**更多**层级区分而不是更少 —— 同样的不透明度在深色背景上看起来更弱。
+    // 这是最反直觉也最实用的一条。
+
+    enum Glow {
+        /// WCAG 2.4.13 Focus Appearance 的下限就是 2px。
+        /// 旧代码的 2.5px 在 1x 显示器上会渲染成模糊的 2.5 像素，2px 干净且达标。
+        static let ringWidth: CGFloat = 2
+        /// 等价于 CSS 的 `outline-offset: 2px`：环和缩略图之间要留呼吸位，
+        /// 否则会和图片边缘糊在一起。同心换算 → 环圆角 = radiusCard + 2 = 12。
+        static let ringOffset: CGFloat = 2
+        /// 逆向 Liquid Glass 测得的镜面高光不透明度落在 0.20–0.50：
+        /// 低于 0.2 直接消失，高于 0.5 会退化成一道生硬描边。
+        /// blur 9 让光晕刚好溢出环外一圈而不散成一团雾。
+        static let haloBlur: CGFloat = 9
+
+        static func ringOpacity(_ s: ColorScheme) -> Double { s == .dark ? 1.00 : 0.90 }
+        /// 取 0.20–0.50 区间的下沿：这是常驻状态，长期挂在屏幕上不能太抢。
+        static func haloOpacity(_ s: ColorScheme) -> Double { s == .dark ? 0.38 : 0.22 }
+        /// 配套混合模式见 SpatialCardModifier：
+        /// 浅色 `.multiply`（accent 像染色玻璃压在白卡上，保留下方明暗），
+        /// 深色 `.plusLighter`（加法，accent 像发光而不是脏污）。
+        /// 反过来用会把深色卡片直接压黑。
+        static func tint(_ s: ColorScheme) -> Double        { s == .dark ? 0.14 : 0.09 }
+    }
+
+    // MARK: - 动效
+    //
+    // Apple WWDC23 之后的现代轴是 duration + bounce：
+    // bounce 0 = 默认 / 0.15 = 俏皮 / 0.3 = 物理感 / >0.4 = UI 里绝不用。
+    // 这里沿用项目已有的 response + dampingFraction 轴，换算关系是
+    // dampingFraction ≈ 1 − bounce。
+
+    enum Motion {
+        /// 悬停抬升 / 按下 / 角标出没 / 收藏星。
+        /// 微交互要跟手：0.22 是「立刻发生」的感知阈；
+        /// 阻尼 0.90 ≈ bounce 0.1，有一点点生命力但不弹。
+        static let micro = Animation.spring(response: 0.22, dampingFraction: 0.90)
+        /// 选中切换 / 布局模式切换（网格↔瀑布）/ inspector 开合。
+        /// 系统默认是 0.55/0.825，对高频操作太拖沓；0.35 更利落。
+        /// 阻尼 0.85 ≈ bounce 0.15。
+        static let standard = Animation.spring(response: 0.35, dampingFraction: 0.85)
+        /// 侧边栏展开 / sheet 出现 / 大面积表面。
+        /// Liquid Glass 规则：大面积 = 更厚的材质 = 应该动得更慢。
+        /// 阻尼 1.0 = 临界阻尼、零过冲 —— 大面块过冲会晃眼。
+        static let ambient = Animation.spring(response: 0.50, dampingFraction: 1.00)
+        /// 指针跟随（视差）唯一的一档。
+        /// 零过冲是硬要求：跟随一旦有 bounce，读起来是「卡顿」而不是「弹性」。
+        static let track = Animation.interactiveSpring(response: 0.16, dampingFraction: 1.00)
+
+        // Reduce Motion 下 Apple 要求的是「收紧弹簧、减少弹性」，不是禁用动画 ——
+        // 突变没有过程，用户反而会丢失「这是同一个元素」的连续性。
+        // 所以 micro/standard 降级成同量级的 easeOut，只有视差（track）整个关掉。
+        static func micro(reduced: Bool) -> Animation {
+            reduced ? .easeOut(duration: 0.12) : micro
+        }
+        static func standard(reduced: Bool) -> Animation {
+            reduced ? .easeOut(duration: 0.16) : standard
+        }
+    }
+
+    // MARK: - 视差
+    //
+    // Apple 原话：视差要「几乎不可察觉」（almost unnoticeable）。
+    // tvOS 官方那套是 ±4pt 位移 / ±10° 倾斜，但那是按 **3 米观看距离**标定的，
+    // 桌面在 50cm 处照搬会像玩具。
+
+    enum Parallax {
+        /// ±5pt：桌面比 tvOS 近，可以略大于它的 ±4pt，
+        /// 5 是「能感觉到、但说不出哪里动了」的量。
+        static let maxOffset: CGFloat = 5
+        /// ±1.5°：图库网格的卡间距只有 16pt，倾斜再大就会视觉上切到邻居卡片。
+        /// 社区共识是密集网格 ~5°、超过 15° 一定翻车，1.5° 已是安全上限。
+        static let maxTilt: Double = 1.5
+        /// 透视越小、3D 感越弱。0.3 让 1.5° 读起来像「轻微抬头」，
+        /// 而不是一张卡在翻面。
+        static let perspective: CGFloat = 0.3
+        /// 位移会把图片边缘的空白露出来，所以要先放大补上 2×maxOffset。
+        /// 封顶 1.12 是防止小卡片被放大到糊。
+        static let maxOverscale: CGFloat = 1.12
+    }
+
+    // MARK: - 卡片形变
+    //
+    // 1.02 / −3pt 是桌面卡片抬升的行业共识（translateY(-2..-5px) + scale(1.02)）。
+    // tvOS 的 1.1× + 16pt 位移同样是 3 米距离标定的，桌面要除以 3~4 才对。
+    // 1.015 偏保守、1.05 在密集网格里会顶到邻居，1.02 是甜点值。
+
+    enum Lift {
+        static let hoverScale: CGFloat = 1.02
+        static let hoverY: CGFloat = -3
+        /// 按下轻微内陷。0.99 足够给出「按到了」的触感，再深会像塌陷。
+        static let pressScale: CGFloat = 0.99
+    }
+}
