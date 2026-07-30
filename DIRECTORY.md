@@ -56,12 +56,15 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 
 **加捕获方式**：实现 `CaptureSource` + 注册一行，不改协调器。
 
-## Pin/ — 钉图窗口（3 文件 / 813 行）
+## Pin/ — 钉图窗口（4 文件 / 1059 行）
 
 把截图钉在屏幕最上层。关键设计是它**复用同一套标注系统和工具条**——早期钉图有独立的第二套工具条，用起来割裂，后来统一。
 
-- `PinWindowController` — 窗口与 `CaptureActionHost` 实现，负责修订落库
-- `PinImageView` — 图像、标注、Live Text、悬停时浮现的工具条
+结构是**上下两块**：图片一个窗口，工具条一个窗口。工具条曾画在图片窗口内部、从窗口高度里切走一条「条带」，而条带高度又取决于窗口宽度（放不下就折行）——缩放钉图会改变工具条，工具条又反过来改变图片的显示倍率。拆开之后工具条按内容开自然尺寸，钉图缩到多小、放到多大都不动它。
+
+- `PinWindowController` — 窗口与 `CaptureActionHost` 实现，负责修订落库；把工具条窗口挂成子窗口并在父窗口 frame 变化时重新落位
+- `PinImageView` — **只装图片**：图像、标注、Live Text
+- `PinToolbarWindow` — 工具条子窗口（`PinToolbarPanel` + `PinToolbarView`）。不持有任何状态，画什么、点了谁处理全部回到 `PinImageView`
 - `PinKeyboard` — 按键分发（工具键消费 `AnnotationTool` 的公共快捷键表）
 
 ## UI/ — 图库与编辑器（29 文件 / 9210 行）
@@ -119,11 +122,13 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 - `EffectLayer` / `EffectSpecs` — 效果层契约（水印/美化/外壳/捕获信息），排除逻辑一律从 `kind.isEffect` 派生
 - `ResizeHandle` / `AnnotationRenderer`
 
-## Toolbar/ — 工具条注册制（6 文件 / 767 行）
+## Toolbar/ — 工具条注册制（6 文件 / 726 行）
 
 工具条不是写死的按钮列表，而是控件注册表：每个控件声明自己的分组、次序、可见条件和视图，注册表按 scope（截图 / 钉图 / 编辑器）聚合，动作控件由 `CaptureActionRegistry` 自动展开。
 
 **加按钮**：注册一行。
+
+`ToolbarLayout` 只回答两件事：这一条有多宽（`blockSize`，只看内容）、每个控件落在哪（`slots`，绘制与命中共用同一份结果）。**尺寸不许依赖画布**——按可用宽度折行的老做法制造过一个反馈回路，见 `Pin/`。宿主只能改工具条的位置，改不了它的形状。
 
 ## Render/ — 绘制唯一真相（1 文件 / 1043 行）
 

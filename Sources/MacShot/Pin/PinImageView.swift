@@ -1,9 +1,10 @@
 import AppKit
 import VisionKit
 
-/// 钉图的内容视图。
+/// 钉图的内容视图。**只装图片** —— 工具条是挂在窗口下方的独立子窗口
+/// （`PinToolbarPanel`），不在这里画、也不占这里的空间。
 ///
-/// 和截图覆盖层共用 `AnnotationState` / `ToolbarLayout` / `ToolbarRenderer` ——
+/// 和截图覆盖层共用 `AnnotationState` 与同一份工具条注册表 ——
 /// 所以钉完图之后工具条不换、手感不断，可以接着画。
 ///
 /// 画布空间是**图片像素、左上原点**，标注图层直接存在这个坐标系里，
@@ -14,17 +15,18 @@ final class PinImageView: NSView {
     var onOpacityStep: ((CGFloat) -> Void)?
     var onAction: ((String) -> Void)?
     var onAnnotationsChanged: (() -> Void)?
-    /// 工具条行数变化时通知控制器调整窗口高度。
-    var onToolbarHeightChanged: (() -> Void)?
+    /// 工具条的内容可能变了（工具、选中、撤销栈、效果开关……）——
+    /// 通知控制器重算工具条窗口的尺寸与位置并重绘。
+    /// **不是**尺寸随窗口变：宽度只跟「此刻有哪些控件可见」走。
+    var onToolbarInvalidated: (() -> Void)?
+    /// 鼠标进出图片区。控制器把它和工具条窗口的进出合并成一个悬停状态。
+    var onHoverChanged: (() -> Void)?
     /// ⌘T 切换鼠标穿透。
     var onTogglePassthrough: (() -> Void)?
 
-    /// 穿透模式：窗口收不到鼠标，边框改虚线提示「现在点不到我」，工具条也不画。
+    /// 穿透模式：窗口收不到鼠标，边框改虚线提示「现在点不到我」，工具条窗口也收起来。
     var isPassthrough = false {
         didSet {
-            // 穿透后 mouseExited 不会再来，手动清掉悬停态。
-            isHovering = false
-            hoveredControlID = nil
             // 穿透中收不到任何鼠标事件，选字层留着只会误导。
             if isPassthrough { exitLiveText() }
             needsDisplay = true
@@ -38,9 +40,6 @@ final class PinImageView: NSView {
     private let initialLayers: Layers<ImageSpace>
     /// 底图 + 已应用的马赛克。只在马赛克图层增减时重算，绝不逐帧跑 CoreImage。
     private var canvasImage: CGImage
-
-    private var isHovering = false
-    private var hoveredControlID: String?
 
     /// 选字（Live Text）模式：系统 `ImageAnalysisOverlayView` 叠在图像区域上。
     /// 分析对象是 canvasImage（含已应用马赛克）—— 打了码的字不该还能选出来。
@@ -73,39 +72,20 @@ final class PinImageView: NSView {
     /// 截图时的标注 + 钉图后新加的，合起来就是当前这版的完整图层。
     var allLayers: Layers<ImageSpace> { initialLayers + newLayers }
 
-    // MARK: - 布局
-
-    /// 窗口底部留给工具条的空白条带。它是透明的 —— 看上去就是工具条浮在图片下方，
-    /// 和截图时工具条贴在选区外侧的位置关系完全一致。
-    var requiredStripHeight: CGFloat {
-        ToolbarLayout.blockHeight(in: bounds.width, config: toolbarConfig(anchor: .zero))
-            + ToolbarLayout.gap + 4
-    }
-
-    /// 图片实际占据的区域：视图顶部，底下让出条带。
-    private var imageRect: CGRect {
-        let strip = requiredStripHeight
-        return CGRect(
-            x: 0,
-            y: strip,
-            width: bounds.width,
-            height: max(0, bounds.height - strip)
-        )
-    }
-
     // MARK: - 画布换算
 
-    /// 图片像素 → 视图点。
+    /// 图片像素 → 视图点。整个视图就是图片 —— 工具条搬进独立窗口之后，
+    /// 这里不再有任何「给工具条让位」的逻辑，倍率直接由窗口尺寸决定。
     private var displayScale: CGFloat {
-        guard base.width > 0, imageRect.width > 0 else { return 1 }
-        return imageRect.width / CGFloat(base.width)
+        guard base.width > 0, bounds.width > 0 else { return 1 }
+        return bounds.width / CGFloat(base.width)
     }
 
     private func canvasPoint(_ viewLocal: CGPoint) -> CGPoint {
         let inverse = 1 / max(displayScale, 0.0001)
         return CGPoint(
-            x: (viewLocal.x - imageRect.minX) * inverse,
-            y: (imageRect.maxY - viewLocal.y) * inverse
+            x: viewLocal.x * inverse,
+            y: (bounds.maxY - viewLocal.y) * inverse
         )
     }
 
@@ -116,7 +96,9 @@ final class PinImageView: NSView {
 
     // MARK: - 工具条
 
-    private var toolbarContext: ToolbarContext {
+    /// 工具条窗口画什么、控件被点时读什么状态，都取自这里 ——
+    /// 状态只有一份，工具条搬到别的窗口去也还是这一份。
+    var toolbarContext: ToolbarContext {
         ToolbarContext(
             annotation: annotation,
             scope: .pinned,
@@ -129,25 +111,10 @@ final class PinImageView: NSView {
         )
     }
 
-    private func toolbarConfig(anchor: CGRect) -> ToolbarLayout.Configuration {
-        .init(
-            anchor: anchor,
-            alignment: .center,
-            placement: .below,
-            context: toolbarContext
-        )
-    }
-
-    private var slots: [ToolbarSlot] {
-        ToolbarLayout.slots(in: bounds, config: toolbarConfig(anchor: imageRect))
-    }
-
-    private var toolbarAlpha: CGFloat { isHovering ? 1.0 : 0.45 }
-
     /// 工具条不认识具体控件，交给控件自己处理。图层数量可能因此变化，
-    /// 所以统一在这里刷新画布并通知控制器落库。
-    private func activate(_ control: any ToolbarControl) {
-        let heightBefore = requiredStripHeight
+    /// 所以统一在这里刷新画布并通知控制器落库。工具条窗口点中控件后调这里 ——
+    /// 状态变更的入口只有这一个。
+    func activateToolbarControl(_ control: any ToolbarControl) {
         syncStrokeScale()
         control.activate(toolbarContext)
         // 选字模式下点了别的工具（画笔 / 指针）→ 自动退出选字。
@@ -157,13 +124,12 @@ final class PinImageView: NSView {
         refreshCanvas()
         needsDisplay = true
         onAnnotationsChanged?()
-        if requiredStripHeight != heightBefore { onToolbarHeightChanged?() }
+        onToolbarInvalidated?()
     }
 
     /// 图层内容变化（画完、移完、删完）后的统一收尾：重算马赛克底图、重绘、通知落库。
     /// 键盘扩展也要用，所以不是 private。
     func commitAnnotationChange() {
-        let heightBefore = requiredStripHeight
         refreshCanvas()
         // 选字模式中 ⌘Z 撤销 / 重做可能增删马赛克 —— 底图变了，分析跟着换
         //（缓存按马赛克图层判等，没动马赛克就是空操作）。
@@ -173,7 +139,7 @@ final class PinImageView: NSView {
         }
         needsDisplay = true
         onAnnotationsChanged?()
-        if requiredStripHeight != heightBefore { onToolbarHeightChanged?() }
+        onToolbarInvalidated?()
     }
 
     private func refreshCanvas() {
@@ -193,11 +159,11 @@ final class PinImageView: NSView {
     /// 自己接管拖动，AppKit 不要插手 —— 否则点工具条会被当成拖窗口。
     override var mouseDownCanMoveWindow: Bool { false }
 
-    /// 窗口缩放 / 工具条行数变化都会改 imageRect，选字层跟着贴齐。
+    /// 窗口缩放会改变图片显示区，选字层跟着贴齐。
     /// 分析结果是归一化坐标，只改 frame 不用重跑。
     override func layout() {
         super.layout()
-        liveTextOverlay?.frame = imageRect
+        liveTextOverlay?.frame = bounds
     }
 
     override func updateTrackingAreas() {
@@ -214,29 +180,21 @@ final class PinImageView: NSView {
     // MARK: - 鼠标
 
     override func mouseEntered(with event: NSEvent) {
-        isHovering = true
-        needsDisplay = true
+        onHoverChanged?()
     }
 
     override func mouseExited(with event: NSEvent) {
-        isHovering = false
-        hoveredControlID = nil
-        needsDisplay = true
+        onHoverChanged?()
     }
 
     override func mouseMoved(with event: NSEvent) {
+        onHoverChanged?()
         let point = convert(event.locationInWindow, from: nil)
-        let hit = slots.first { $0.control != nil && $0.frame.contains(point) }?.control?.id
-        if hit != hoveredControlID {
-            hoveredControlID = hit
-            needsDisplay = true
-        }
         if isLiveTextActive {
-            // 图像区域的光标（I-beam）由系统 overlay 自己管，这里不抢；其余恢复箭头。
-            if hit != nil || !imageRect.contains(point) { NSCursor.arrow.set() }
+            // 图像区域的光标（I-beam）由系统 overlay 自己管，这里不抢。
             return
         }
-        if hit == nil, annotation.tool == nil, imageRect.contains(point) {
+        if annotation.tool == nil {
             // 指针模式：悬停到选中图层的缩放控制点时换 resize 光标。
             syncStrokeScale()
             if let handle = annotation.resizeHandle(at: canvasPoint(point)) {
@@ -244,23 +202,21 @@ final class PinImageView: NSView {
                 return
             }
         }
-        (hit == nil && annotation.tool != nil ? NSCursor.crosshair : NSCursor.arrow).set()
+        (annotation.tool != nil ? NSCursor.crosshair : NSCursor.arrow).set()
     }
 
     override func mouseDown(with event: NSEvent) {
+        // 工具条的内容取决于工具 / 选中 / 撤销栈，这一下点击都可能改到 ——
+        // 走哪条分支都要让工具条窗口重算一次。
+        defer { onToolbarInvalidated?() }
+
         let point = convert(event.locationInWindow, from: nil)
 
-        if let control = slots.first(where: { $0.control != nil && $0.frame.contains(point) })?.control {
-            activate(control)
-            return
-        }
-
-        // 选字模式：图像区域的事件归系统 overlay（子视图，命中优先）；
-        // 能落到这里的点击都在条带区，一律忽略 —— 不画标注、不拖窗口，
+        // 选字模式：事件全归系统 overlay（子视图铺满，命中优先），
         // 退出只走控件 / Esc / 切工具 / 右键。
         if isLiveTextActive { return }
 
-        if annotation.tool != nil, imageRect.contains(point) {
+        if annotation.tool != nil {
             syncStrokeScale()
             annotation.beginDraw(at: canvasPoint(point))
             // 序号是点击即成层的工具：不进入拖拽也不进入文字编辑态，
@@ -276,25 +232,22 @@ final class PinImageView: NSView {
         // 指针模式下优先命中选中图层的缩放控制点；再是图层本体（选中并准备拖动）；
         // 点空处 → 取消选中，落回下面的拖窗口逻辑。
         // 截图时带来的底层标注是只读的，不参与命中。
-        if annotation.tool == nil, imageRect.contains(point) {
-            syncStrokeScale()
-            let canvas = canvasPoint(point)
-            if let handle = annotation.resizeHandle(at: canvas) {
-                annotation.endTextEditing()
-                annotation.beginResize(handle: handle, at: canvas)
-                needsDisplay = true
-                return
-            }
-            if let id = annotation.layer(at: canvas) {
-                annotation.endTextEditing()
-                annotation.beginMove(id: id, at: canvas)
-                needsDisplay = true
-                return
-            }
-            if annotation.select(nil) {
-                needsDisplay = true
-                onToolbarHeightChanged?()
-            }
+        syncStrokeScale()
+        let canvas = canvasPoint(point)
+        if let handle = annotation.resizeHandle(at: canvas) {
+            annotation.endTextEditing()
+            annotation.beginResize(handle: handle, at: canvas)
+            needsDisplay = true
+            return
+        }
+        if let id = annotation.layer(at: canvas) {
+            annotation.endTextEditing()
+            annotation.beginMove(id: id, at: canvas)
+            needsDisplay = true
+            return
+        }
+        if annotation.select(nil) {
+            needsDisplay = true
         }
 
         annotation.endTextEditing()
@@ -319,6 +272,9 @@ final class PinImageView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        // 画完 / 移完 / 缩完都可能改变可撤销状态 → 工具条内容跟着变。
+        defer { onToolbarInvalidated?() }
+
         if annotation.isDrawing {
             annotation.endDraw { [base] rect in
                 base.cropping(to: rect.integral)
@@ -346,8 +302,10 @@ final class PinImageView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        defer { onToolbarInvalidated?() }
+
         if isLiveTextActive {
-            // 图像区域上的右键归系统 overlay（服务菜单），能落到这里的都在条带区。
+            // 图像上的右键归系统 overlay（服务菜单）；能落到这里的说明没被它接走。
             exitLiveText()
         } else if annotation.isEditingText {
             annotation.endTextEditing()
@@ -397,12 +355,11 @@ final class PinImageView: NSView {
         isLiveTextActive = true
         prepareLiveTextAnalysis()
 
-        // 系统层盖住图像区域（不含工具条条带）。分析的是完整的 canvasImage，
-        // imageRect 恰好是整图等比缩放后的显示区域，归一化坐标按 bounds
-        // 映射即对齐 —— 与窗口缩放倍率、Retina 与否无关。
+        // 系统层铺满视图。分析的是完整的 canvasImage，而视图整个就是整图等比缩放后的
+        // 显示区域，归一化坐标按 bounds 映射即对齐 —— 与窗口缩放倍率、Retina 与否无关。
         let overlay = ImageAnalysisOverlayView()
         overlay.preferredInteractionTypes = [.textSelection]
-        overlay.frame = imageRect
+        overlay.frame = bounds
         addSubview(overlay)
         liveTextOverlay = overlay
         applyLiveTextAnalysis()
@@ -430,7 +387,7 @@ final class PinImageView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let frame = imageRect
+        let frame = bounds
         guard frame.height > 1 else { return }
 
         let clip = NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6)
@@ -445,7 +402,8 @@ final class PinImageView: NSView {
         clip.lineWidth = 1
         clip.stroke()
 
-        // 穿透中：虚线边框代替工具条 —— 反正也点不到，画出来只会误导。
+        // 穿透中：虚线边框代替工具条（工具条窗口那时是收起来的）——
+        // 反正也点不到，画出来只会误导。
         if isPassthrough {
             let dashed = NSBezierPath(
                 roundedRect: frame.insetBy(dx: 1.5, dy: 1.5),
@@ -456,13 +414,7 @@ final class PinImageView: NSView {
             dashed.lineWidth = 2
             NSColor.systemOrange.setStroke()
             dashed.stroke()
-            return
         }
-
-        ctx.saveGState()
-        ctx.setAlpha(toolbarAlpha)
-        ToolbarRenderer.draw(slots, hovered: hoveredControlID, context: toolbarContext)
-        ctx.restoreGState()
     }
 
     private func drawAnnotations(in ctx: CGContext) {
@@ -472,7 +424,7 @@ final class PinImageView: NSView {
         let scale = displayScale
         ctx.saveGState()
         // 翻成「图片像素、左上原点、Y 向下」—— 和图层坐标系一致。
-        ctx.translateBy(x: imageRect.minX, y: imageRect.maxY)
+        ctx.translateBy(x: bounds.minX, y: bounds.maxY)
         ctx.scaleBy(x: scale, y: -scale)
         AnnotationRenderer.draw(
             layers,

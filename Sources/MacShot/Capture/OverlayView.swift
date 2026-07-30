@@ -80,14 +80,17 @@ final class OverlayView: NSView {
 
     /// 工具条布局按需计算：绘制和命中测试用的是同一份结果，不可能不一致。
     /// plain 模式恒为空 —— 工具条既不绘制也不参与命中。
+    ///
+    /// 尺寸只由可见控件决定：选区从很小拖到全屏，工具条一个像素都不变，
+    /// 变的只有它贴在选区下方（放不下时上方 / 内侧）的位置。
     private var slots: [ToolbarSlot] {
         guard mode == .capture, model.phase == .confirmed,
               let rect = model.confirmedRect else { return [] }
-        return ToolbarLayout.slots(in: bounds, config: .init(
+        return ToolbarLayout.slots(
+            in: bounds,
             anchor: geometry.viewLocal(fromGlobal: rect),
-            alignment: .trailing,
             context: toolbarContext
-        ))
+        )
     }
 
     init(model: SelectionModel, isPrimaryScreen: Bool, mode: SelectionMode = .capture) {

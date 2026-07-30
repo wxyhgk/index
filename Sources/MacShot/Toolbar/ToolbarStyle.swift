@@ -4,7 +4,6 @@ import AppKit
 enum ToolbarStyle {
 
     static let rowHeight: CGFloat = 34
-    static let rowGap: CGFloat = 4
     static let anchorGap: CGFloat = 8
 
     static let iconButtonWidth: CGFloat = 30
@@ -16,9 +15,6 @@ enum ToolbarStyle {
     static let iconGap: CGFloat = 5
 
     static var labelFont: NSFont { .systemFont(ofSize: 12, weight: .medium) }
-
-    /// 比这更小的画布放不下工具条，索性不显示。
-    static let minimumCanvasSize = CGSize(width: 120, height: 60)
 
     static func labelWidth(_ text: String) -> CGFloat {
         (text as NSString).size(withAttributes: [.font: labelFont]).width

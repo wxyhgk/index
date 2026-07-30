@@ -7,7 +7,7 @@ enum ToolbarRenderer {
     static func draw(_ slots: [ToolbarSlot], hovered: String?, context: ToolbarContext) {
         guard !slots.isEmpty else { return }
 
-        for row in ToolbarLayout.rowFrames(of: slots) {
+        if let row = ToolbarLayout.rowFrame(of: slots) {
             NSColor(calibratedWhite: 0.13, alpha: 0.96).setFill()
             let path = NSBezierPath(roundedRect: row, xRadius: 8, yRadius: 8)
             path.fill()

@@ -4,6 +4,9 @@ import AppKit
 ///
 /// 持有的是**未标注的底图 + 图层**，而不是合成好的位图 ——
 /// 所以钉图之后继续画仍然是非破坏性的，改动作为新的修订入库。
+///
+/// **窗口只装图片**：工具条是挂在下方的独立子窗口（`PinToolbarPanel`），
+/// 尺寸只由「此刻有哪些控件可见」决定。钉图缩到多小、放到多大，工具条都不变。
 @MainActor
 final class PinWindowController: NSWindowController, CaptureActionHost {
 
@@ -24,12 +27,21 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
 
     private let base: CGImage
     private let shot: Shot?
+    /// 钉出来时图片在屏幕上的原始尺寸，缩放的基准。
+    private let naturalSize: CGSize
     private var zoom: CGFloat = 1.0
     private var opacity: CGFloat = 1.0
     /// 鼠标穿透中：点击落到下层窗口，钉图只当参考图看。
     private var isPassthrough = false
+    /// 鼠标在钉图上（图片窗口或工具条窗口都算）。工具条据此在 0.45 / 1.0 之间切换。
+    private var isHovering = false
     /// 上次落库的图层内容。比数量更可靠 —— 撤销一层再画一层，数量不变但内容变了。
     private var savedLayers: Layers<ImageSpace>
+
+    /// 工具条：独立的子窗口，不占图片窗口的任何空间。
+    private let toolbarPanel = PinToolbarPanel()
+    /// 父窗口 frame 变化的观察者 —— 子窗口跟着移动是自动的，但缩放和翻边要自己重算。
+    private var frameObservers: [NSObjectProtocol] = []
 
     private var imageView: PinImageView? { window?.contentView as? PinImageView }
 
@@ -48,12 +60,13 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         self.shot = shot
         self.savedLayers = layers
 
-        // 图片区域保持在原位，窗口往下多出一条透明条带放工具条。
+        // 窗口就是图片本身，不再为工具条预留条带。
         let imageFrame = anchor.isEmpty
             ? CGRect(x: 200, y: 200,
                      width: CGFloat(base.width) / 2,
                      height: CGFloat(base.height) / 2)
             : anchor
+        self.naturalSize = imageFrame.size
 
         let panel = PinPanel(
             contentRect: imageFrame,
@@ -76,7 +89,8 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         view.onOpacityStep = { [weak self] step in self?.applyOpacity(step) }
         view.onAction = { [weak self] actionID in self?.perform(actionID) }
         view.onAnnotationsChanged = { [weak self] in self?.saveRevisionIfNeeded() }
-        view.onToolbarHeightChanged = { [weak self] in self?.fitWindowToContent() }
+        view.onToolbarInvalidated = { [weak self] in self?.layoutToolbar() }
+        view.onHoverChanged = { [weak self] in self?.refreshHover() }
         view.onTogglePassthrough = { [weak self] in
             guard let self else { return }
             self.setPassthrough(!self.isPassthrough)
@@ -99,32 +113,97 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         }
         panel.contentView = view
 
-        fitWindowToContent()
+        // 工具条窗口只认这三件事：画什么（状态在图片视图那边）、点了谁来处理、
+        // 鼠标进出。它自己不持有任何状态。
+        toolbarPanel.toolbarView.context = { [weak view] in view?.toolbarContext }
+        toolbarPanel.toolbarView.onActivate = { [weak view] control in
+            view?.activateToolbarControl(control)
+        }
+        toolbarPanel.toolbarView.onHoverChanged = { [weak self] in self?.refreshHover() }
+        toolbarPanel.toolbarView.onDragBy = { [weak self] delta in self?.moveWindow(by: delta) }
+
+        // 用户拖动钉图时子窗口自动跟着走，但贴屏幕下边缘要翻到上方；
+        // 缩放改的是父窗口尺寸，工具条得重新居中。两种都靠这两条通知兜住。
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
+            frameObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: panel, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.layoutToolbar() }
+            })
+        }
     }
 
-    /// 窗口高度 = 图片高度 + 工具条条带。图片顶边固定，条带在下方伸缩，
-    /// 所以选中工具让工具条多出一行时，图片不会跳。
-    private func fitWindowToContent() {
-        guard let window, let view = imageView else { return }
-        let strip = view.requiredStripHeight
-        let frame = window.frame
-        let imageHeight = CGFloat(base.height) / 2 * zoom
-        let target = imageHeight + strip
-        guard abs(frame.height - target) > 0.5 else { return }
-
-        window.setFrame(
-            CGRect(
-                x: frame.minX,
-                y: frame.maxY - target,
-                width: frame.width,
-                height: target
-            ),
-            display: true
-        )
-        window.invalidateShadow()
+    deinit {
+        frameObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    // MARK: - 工具条窗口
+
+    /// 挂成子窗口：父窗口移动时 AppKit 自动带着它走。
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        attachToolbar()
+    }
+
+    private func attachToolbar() {
+        guard let window, !isPassthrough else { return }
+        if toolbarPanel.parent !== window {
+            window.addChildWindow(toolbarPanel, ordered: .above)
+        }
+        layoutToolbar()
+        refreshHover()
+        // 刚挂上来（或穿透解除后重新挂上）时窗口的 alpha 还是默认值，补一次。
+        applyToolbarAlpha()
+    }
+
+    /// 重算工具条窗口的尺寸与位置。**尺寸只跟内容走** ——
+    /// 这里读的是「有哪些控件可见」，跟父窗口多大没有关系。
+    private func layoutToolbar() {
+        guard let window, toolbarPanel.parent != nil else { return }
+        toolbarPanel.reposition(around: window)
+    }
+
+    /// 从工具条上拖 = 拖整个钉图（保住「拖条带挪窗口」的老手感）。
+    private func moveWindow(by delta: CGSize) {
+        guard let window else { return }
+        let origin = window.frame.origin
+        window.setFrameOrigin(CGPoint(x: origin.x + delta.width, y: origin.y - delta.height))
+    }
+
+    // MARK: - 悬停
+
+    /// 悬停状态在两个窗口之间合并 —— 鼠标移到工具条上时工具条必须是亮的。
+    ///
+    /// 不用两个窗口各自的进出布尔量取或：跨窗口时两边的事件不保证同一轮到达（会闪一下暗），
+    /// 而且工具条比图片窄时，鼠标从图片底边斜着离开会落进一块谁都收不到事件的空地，
+    /// 悬停会卡在亮态。改成每次事件都按指针的实际位置判定。
+    private var isPointerOnPin: Bool {
+        guard let window, toolbarPanel.parent != nil else { return false }
+        let point = NSEvent.mouseLocation
+        let image = window.frame
+        let toolbar = toolbarPanel.frame
+        if image.insetBy(dx: 1, dy: 1).contains(point) { return true }
+        if toolbar.insetBy(dx: 1, dy: 1).contains(point) { return true }
+        // 两窗共享的那条边：退出事件报的坐标正好落在边界上，两个 inset 矩形都判不中，
+        // 补一条窄桥把它接上。
+        let edgeY = toolbar.midY < image.midY ? image.minY : image.maxY
+        return CGRect(x: toolbar.minX, y: edgeY - 2, width: toolbar.width, height: 4)
+            .contains(point)
+    }
+
+    private func refreshHover() {
+        let hovered = isPointerOnPin
+        guard hovered != isHovering else { return }
+        isHovering = hovered
+        applyToolbarAlpha()
+    }
+
+    /// 悬停才亮。整体透明度（⌘滚轮）也乘进去 —— 工具条以前住在窗口里，跟着一起淡。
+    private func applyToolbarAlpha() {
+        toolbarPanel.alphaValue = opacity * (isHovering ? 1.0 : 0.45)
+    }
 
     // MARK: - 动作
 
@@ -169,11 +248,11 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         guard abs(next - zoom) > 0.001 else { return }
         zoom = next
 
-        // 以窗口中心为锚点缩放；工具条条带不参与缩放，始终是固定高度。
-        let strip = imageView?.requiredStripHeight ?? 0
+        // 以窗口中心为锚点缩放。窗口里只有图片，工具条在另一个窗口上，
+        // 缩放不会牵动它 —— 它只是重新居中到新的下边缘（见 layoutToolbar）。
         let size = CGSize(
-            width: CGFloat(base.width) / 2 * zoom,
-            height: CGFloat(base.height) / 2 * zoom + strip
+            width: naturalSize.width * zoom,
+            height: naturalSize.height * zoom
         )
         let frame = window.frame
         window.setFrame(
@@ -192,6 +271,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
     private func applyOpacity(_ step: CGFloat) {
         opacity = min(1.0, max(0.2, opacity + step))
         window?.alphaValue = opacity
+        applyToolbarAlpha()
     }
 
     // MARK: - 鼠标穿透
@@ -213,11 +293,23 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         panel.ignoresMouseEvents = on
         panel.alphaValue = on ? min(opacity, 0.55) : opacity
         imageView?.isPassthrough = on
+
+        // 工具条整个收起来 —— 穿透中它也点不到，留在屏幕上只会误导。
+        // `ignoresMouseEvents` 不会传染给子窗口，必须自己下线。
+        if on {
+            isHovering = false
+            panel.removeChildWindow(toolbarPanel)
+            toolbarPanel.orderOut(nil)
+        } else {
+            attachToolbar()
+        }
     }
 
     override func close() {
         saveRevisionIfNeeded()
         Self.passthroughPins.remove(self)
+        window?.removeChildWindow(toolbarPanel)
+        toolbarPanel.orderOut(nil)
         super.close()
     }
 }

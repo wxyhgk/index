@@ -5,6 +5,10 @@ import AppKit
 extension PinImageView {
 
     override func keyDown(with event: NSEvent) {
+        // 切工具、退选中、撤销都会改变工具条上有哪些控件可见 ——
+        // 走哪条分支都让工具条窗口重算一次（它是独立窗口，收不到这些按键）。
+        defer { onToolbarInvalidated?() }
+
         if annotation.isEditingText {
             switch event.keyCode {
             case KeyCode.escape, KeyCode.returnKey, KeyCode.keypadEnter:
@@ -53,7 +57,6 @@ extension PinImageView {
             annotation.endTextEditing()
             annotation.tool = tool
             needsDisplay = true
-            onToolbarHeightChanged?()
             return
         }
 
@@ -68,11 +71,9 @@ extension PinImageView {
             // 逐级退出：先取消图层选中，再放下画笔，最后才关窗口。
             if annotation.select(nil) {
                 needsDisplay = true
-                onToolbarHeightChanged?()
             } else if annotation.tool != nil {
                 annotation.tool = nil
                 needsDisplay = true
-                onToolbarHeightChanged?()
             } else {
                 onAction?(ActionID.close)
             }
