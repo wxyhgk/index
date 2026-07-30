@@ -123,7 +123,8 @@ protocol CaptureAction {
 
 **几何契约（2026-07 补）**：工具条是**独立的一块**，尺寸只由「此刻有哪些控件可见」决定，宿主只能决定它落在哪。`ToolbarLayout.blockSize` 不接受任何画布尺寸参数，宿主也不许自己排控件。钉图据此把工具条搬进了独立子窗口（`Pin/PinToolbarWindow.swift`）——此前它画在钉图窗口内部并按窗口宽度折行，形成「缩放窗口 → 工具条折行 → 条带变高 → 图片显示倍率变」的反馈回路。
 
-**记录在案的膨胀风险**：Live Text 往 `ToolbarContext` 加了 `isLiveTextActive` / `toggleLiveText` 一对宿主回调 —— 「每个要宿主配合的控件加一对闭包」是注册制的经典逃生门。**第二个**同类控件出现之前，必须把它们收敛成一个 `hostCapabilities` 结构。`MoreActionsControl` 的折叠策略目前写在注册表的 `.capture` 分支里，同属待收敛项。
+**记录在案的膨胀风险**：Live Text 往 `ToolbarContext` 加了 `isLiveTextActive` / `toggleLiveText` 一对宿主回调 —— 「每个要宿主配合的控件加一对闭包」是注册制的经典逃生门。**第二个**同类控件出现之前，必须把它们收敛成一个 `hostCapabilities` 结构。
+（`MoreActionsControl` 的折叠策略原先写在注册表的 `.capture` 分支里，**已于 2026-07 收敛**：折叠对所有场景一视同仁，注册表不再认识具体场景。）
 
 ### 2.5 效果层：`EffectDescriptor` —— 整图效果怎么加（2026-07 新增）
 
