@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - 相似截图
 //
@@ -7,98 +8,97 @@ import SwiftUI
 
 /// 「查找相似」结果。指纹距离在 ShotStore 里已算好并升序排好，这里只管展示。
 ///
-/// 这是全项目唯一的 L3 浮层实例（见规格 §1）：`.popover` 材质 + `.withinWindow`
-/// 混合 + `DS.radiusPanel`(14) 圆角 + **双层阴影**（宽软的环境光 + 短锐的直接光）。
-/// 双层阴影只有 L3 配用 —— 它等于两份离屏合成，网格里几百张卡片各来两份是性能自杀，
-/// 而浮层同屏通常只有一个，成本有界。
-/// 材质选 `.popover` 而不是 `.hudWindow`：这块面板装的是可读的图文网格，
-/// hudWindow 是给瞬时 HUD 的重着色材质，压在正文上会吃掉文字对比。
+/// 视觉语言和改版后的图库统一：**窗口底色打底 + 浮起的圆角卡片**
+///（`DS.windowBase` + `floatingPanel`），标题行直接坐在底色上、结果网格装在卡片里。
+///
+/// 为什么不再是 `.popover` 材质 + 双层阴影：
+///   · 这块 sheet 自己就是一个窗口，底下没有本 App 的内容可借 —— 材质只会
+///     采样到自家的不透明底，白付一份模糊（同 GalleryShell 的取舍 1）；
+///   · sheet 的投影由系统画，自绘的双层阴影落在自己的窗口里根本出不去边界；
+///   · 顺带的好处：ReduceTransparency 不需要降级分支，本来就是实色。
+/// 卡片的描边 / 浅色阴影 / 圆角全部由 `floatingPanel` 统一给出，这里不再手写 rim。
 struct SimilarShotsSheet: View {
     let shot: Shot
 
     @Environment(\.dismiss) private var dismiss
-    /// 边缘高光（rim）和阴影都要按外观分流 —— 深色靠亮度和顶边接光，浅色靠阴影。
-    @Environment(\.colorScheme) private var scheme
-    /// 降低透明度时 rim 的加法混合要退回 `.normal`，否则在实色底上会烧出一道白边。
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     /// nil = 还在比对；空数组 = 比对完但没有可比的候选。
     @State private var results: [Shot]?
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Label("相似截图", systemImage: "sparkles.rectangle.stack")
-                    .font(.headline)
-                Spacer()
-                Button("关闭") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(DS.s3)
+        ZStack {
+            // 深底。sheet 的四角由系统裁，这一层只负责「面板之间露出的那层灰」。
+            Color(nsColor: DS.windowBase)
+                .ignoresSafeArea()
 
-            // 这条 Divider 保留：头部和内容在**同一块材质**上，没有材质边界可用，
-            // 它是这里唯一能读出「标题栏 / 结果区」分组的线索 —— 功能，不是装饰。
-            Divider()
-
-            if let results {
-                if results.isEmpty {
-                    ContentUnavailableView(
-                        "没有可比对的截图",
-                        systemImage: "sparkles.rectangle.stack",
-                        description: Text("其它截图还没完成特征分析，稍后再试")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: DS.s3)],
-                            spacing: DS.s4
-                        ) {
-                            ForEach(results) { result in
-                                SimilarShotCard(shot: result)
-                                    .onTapGesture {
-                                        // 定位类场景：清空多选后单选目标。
-                                        GallerySelection.shared.select(only: result.id)
-                                        dismiss()
-                                    }
-                            }
-                        }
-                        .padding(DS.s4)
-                    }
-                }
-            } else {
-                ProgressView("正在比对特征指纹…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: DS.Shell.panelGap) {
+                header
+                resultsPanel
             }
+            .padding(DS.Shell.windowMargin)
         }
         .frame(width: 640, height: 440)
         // 「比对中 → 结果」是整块面板的换面，属于大面积表面：走 ambient
         //（response 0.50、临界阻尼零过冲）。大面块动得慢才不晃眼；
         // ambient 本身就没有回弹，Reduce Motion 下也无需再降级。
         .animation(DS.Motion.ambient, value: results == nil)
-        .glassPanel(.popover, blending: .withinWindow, radius: DS.radiusPanel)
-        // 边缘高光：浅色是「整体暗一档、底边更暗」的发丝线，深色是「顶边接光」。
-        // 浮层浮在别的内容之上，没有这一圈边，两种外观下面板都会和底下糊在一起。
-        .overlay {
-            let rim = DS.rim(.floating, scheme, hovering: false)
-            RoundedRectangle(cornerRadius: DS.radiusPanel, style: .continuous)
-                .strokeBorder(rim.gradient, lineWidth: rim.lineWidth)
-                .blendMode(reduceTransparency ? .normal : rim.blend)
-                .allowsHitTesting(false)
-        }
-        // 混合模式必须有 compositingGroup 兜边界，否则会和兄弟视图混合；
-        // 它也顺便让两层阴影都基于同一个已合成的形状去画。
-        .compositingGroup()
-        .shadow(color: ambientShadow.color, radius: ambientShadow.radius, y: ambientShadow.y)
-        .shadow(color: keyShadow.color, radius: keyShadow.radius, y: keyShadow.y)
         .task(id: shot.id) {
             results = await ShotStore.shared.similarShots(to: shot)
         }
     }
 
-    /// 环境光：宽而软，交代「这块面板离底下很远」。
-    private var ambientShadow: DS.Shadow { DS.shadow(.floating, scheme) }
-    /// 直接光：短而锐，贴着边缘把轮廓咬出来。只有 L3 配叠这一层。
-    private var keyShadow: DS.Shadow { DS.shadowKey(scheme) }
+    /// 标题行坐在窗口底色上（不进卡片）—— 卡片的边界本身就是「标题 / 结果区」
+    /// 的分组线索，原来那条 Divider 因此不再需要。
+    private var header: some View {
+        HStack(spacing: DS.s2) {
+            Label("相似截图", systemImage: "sparkles.rectangle.stack")
+                .font(.headline)
+            Spacer(minLength: 0)
+            PanelCloseButton(label: "关闭") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, DS.s2)
+    }
+
+    private var resultsPanel: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // ScrollView 在 macOS 上会垫一层不透明的 windowBackgroundColor，
+            // 不关掉会盖住卡片自己的底色（两种灰打架）。
+            .scrollContentBackground(.hidden)
+            .floatingPanel()
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let results {
+            if results.isEmpty {
+                ContentUnavailableView(
+                    "没有可比对的截图",
+                    systemImage: "sparkles.rectangle.stack",
+                    description: Text("其它截图还没完成特征分析，稍后再试")
+                )
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: DS.s3)],
+                        spacing: DS.s4
+                    ) {
+                        ForEach(results) { result in
+                            SimilarShotCard(shot: result)
+                                .onTapGesture {
+                                    // 定位类场景：清空多选后单选目标。
+                                    GallerySelection.shared.select(only: result.id)
+                                    dismiss()
+                                }
+                        }
+                    }
+                    .padding(DS.s4)
+                }
+            }
+        } else {
+            ProgressView("正在比对特征指纹…")
+        }
+    }
 }
 
 /// 相似结果卡片：缩略图 + App 名 + 时间。刻意比 ShotCard 简单 ——

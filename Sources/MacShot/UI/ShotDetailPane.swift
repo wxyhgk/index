@@ -1,23 +1,32 @@
 import SwiftUI
 
-// MARK: - 右侧详情
+// MARK: - 右侧详情（单选）
 //
-// 单选时 inspector 里的那一栏：预览、动作区（编辑 / 收藏 / 钉图 / 导出 + 更多菜单）、
-// 敏感内容横幅与一键打码、来源 / 识别 / 标签 / 修订历史四张分组卡片，
-// 以及修订历史的单行视图与它的展示用快照类型。
+// 设计稿 §6 的那块浮动卡片，自上而下：
+//   预览区（190 高）→ 动作行（编辑 + 收藏 / 钉图 / 分享 / 更多）
+//   → 元信息列表（App / 来源页 / 时间 / 像素 / 识别字数）
+//   → 标签胶囊行（TagSection）→ 「查看全部信息 ›」
+//
+// 三条结构上的取舍：
+//
+// 1. **旧的四张分组卡片（来源 / 识别 / 标签 / 修订历史）不再堆在首屏。**
+//    首屏改成设计稿的「一行一条」元信息列表，完整属性（OCR 全文、场景标签、
+//    文件路径、sha256、敏感明细、修订链）搬到下钻页 `ShotInfoPage`。
+//    信息一件没少，只是分了两层 —— 常看的五行留在眼前，排查用的长尾按需展开。
+//
+// 2. **动作一件都不许丢。** 设计稿只给了 5 个位置（1 主按钮 + 4 圆形位），
+//    所以「分享」和「更多」这两位是菜单：导出 / 复制图片 / 上传进分享，
+//    出处 / 取字 / 访达 / 相似 / 时间线 / 历史版本 / 打开录像 / Bug 报告 / 删除
+//    进更多。放不下 ≠ 砍掉。
+//
+// 3. **不加材质。** 外层 `floatingPanel` 已经是不透明的面板底色，
+//    面板内再叠玻璃只会互相采样出浑浊；分块用半透明填充（`.quaternary`）
+//    而不是 Material，且因为底是实色，`.quaternary` 的对比度也站得住
+//    （规格 §7.2 禁止的是它落在 `.thin` / `.ultraThin` 材质上）。
+//
+// 关闭按钮由外层 `GalleryInspectorPanel` 画在面板右上角，这里不重复画，
+// 但内容要给它让位 —— 见 `InspectorMetrics.closeButtonLane`。
 
-/// 修订的展示用快照。避免在 body 里反复解 layersJSON。
-private struct RevisionSummary: Identifiable {
-    let id: Int64
-    let version: Int
-    let note: String
-    let layerCount: Int
-    let createdAt: Date
-}
-
-// 关于材质：整栏**故意不加任何材质**。`.inspector` 已经自动套好了详情栏材质，
-// 这里再叠一层就是「材质叠材质」；同理栏内的信息卡只能用 `.quaternary` 这类
-// 半透明填充，绝不能放 Material（§4.2 末行）。
 struct ShotDetailPane: View {
     let shot: Shot
 
@@ -26,11 +35,8 @@ struct ShotDetailPane: View {
     @ObservedObject private var selection = GallerySelection.shared
     /// 阴影要按外观分流：深色下 L1 的阴影是 `.none`（黑底上的黑阴影只是糊一层脏）。
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// 修订历史只在切换截图 / 关闭编辑器时查一次数据库，不再挂在 body 上。
-    @State private var revisions: [RevisionSummary] = []
-    /// 派生属性同理，切换截图时查一次。
-    @State private var category: String?
     /// 目标是否已有特征指纹。没有就先禁用「相似」——刚截的图可能还在后台分析。
     @State private var hasFeaturePrint = false
     @State private var showingSimilar = false
@@ -44,94 +50,319 @@ struct ShotDetailPane: View {
     @State private var sensitiveMasked = false
     /// 录屏锚点：这张截图是某段录屏的首帧时，`recording.path` 属性存着 mp4 路径。
     @State private var recordingPath: String?
+    /// 是否处于「全部信息」下钻页。换截图时自动回到摘要页（见 task）。
+    @State private var showingAllInfo = false
 
     var body: some View {
+        content
+            .task(id: shot.id) {
+                // 换了截图就回到摘要页：下钻页讲的是「这一张」的属性，
+                // 让它跨截图保持展开会让人以为看的还是刚才那张。
+                showingAllInfo = false
+                refreshFeaturePrint()
+                refreshSensitiveRegions()
+                relatedCount = store.relatedShots(to: shot).count
+                // 路径存在 payload 里（不进全文索引），这里转回字符串。
+                recordingPath = shot.id
+                    .flatMap { store.attributePayload(shotID: $0, key: AttributeKey.recordingPath) }
+                    .flatMap { String(data: $0, encoding: .utf8) }
+            }
+            // 指纹与敏感区域由后台分析异步补上：store 每次刷新（属性落库会触发
+            // reload）都重查一次。属性写入不一定改变 shots 数组本身，所以订阅
+            // objectWillChange 而不是 onChange。单行 LIMIT 1 查询，代价可忽略。
+            .onReceive(store.objectWillChange) { _ in
+                refreshFeaturePrint()
+                refreshSensitiveRegions()
+            }
+            .sheet(isPresented: $showingSimilar) {
+                SimilarShotsSheet(shot: shot)
+            }
+            .sheet(isPresented: $showingTimeline) {
+                TimelineSheet(shot: shot)
+            }
+            // 摘要页 ↔ 下钻页是同一块面板换面，走 standard（0.35 利落）；
+            // ReduceMotion 下降级成短 easeOut，不是硬切 —— 突变会丢失
+            // 「这是同一块面板」的连续性。
+            .animation(DS.Motion.standard(reduced: reduceMotion), value: showingAllInfo)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if showingAllInfo {
+            ShotInfoPage(shot: shot) { showingAllInfo = false }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+        } else {
+            summary
+                .transition(.move(edge: .leading).combined(with: .opacity))
+        }
+    }
+
+    private var summary: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.s3) {
                 preview
-                actions
-                if let recordingPath {
-                    openRecordingButton(path: recordingPath)
-                }
+                actionRow
                 if !sensitiveRegions.isEmpty {
                     sensitiveBanner
                 }
-                sourceCard
-                // TagSection 插槽：标签分支（feat/tags）会在来源和识别之间
-                // 插入单选详情的标签行。
-                recognitionCard
+                metaList
                 TagSection(shot: shot)
-                historyCard
+                // 信息密度区的分隔线是功能不是装饰（规格 §4.3）：
+                // 它把「这一张的属性」和「下钻入口」分开。
+                Divider()
+                InspectorDrillRow(title: "查看全部信息") { showingAllInfo = true }
             }
-            .padding(DS.s4)
-        }
-        .task(id: shot.id) {
-            loadRevisions()
-            category = shot.id.flatMap { store.attributeText(shotID: $0, key: AttributeKey.category) }
-            refreshFeaturePrint()
-            refreshSensitiveRegions()
-            relatedCount = store.relatedShots(to: shot).count
-            // 路径存在 payload 里（不进全文索引），这里转回字符串。
-            recordingPath = shot.id
-                .flatMap { store.attributePayload(shotID: $0, key: AttributeKey.recordingPath) }
-                .flatMap { String(data: $0, encoding: .utf8) }
-        }
-        // 指纹由后台分析异步补上：store 每次刷新（属性落库会触发 reload）都重查一次。
-        // 属性写入不一定改变 shots 数组本身，所以订阅 objectWillChange 而不是 onChange。
-        // 单行 LIMIT 1 查询，代价可忽略。
-        // 修订列表同理：编辑器是同一窗口内的模式分支（非模态 sheet），保存时机
-        // 不再有「sheet 收起」这样的锚点 —— appendRevision 落库会发布变更，这里重查。
-        .onReceive(store.objectWillChange) { _ in
-            refreshFeaturePrint()
-            refreshSensitiveRegions()
-            loadRevisions()
-        }
-        .sheet(isPresented: $showingSimilar) {
-            SimilarShotsSheet(shot: shot)
-        }
-        .sheet(isPresented: $showingTimeline) {
-            TimelineSheet(shot: shot)
+            .padding(.horizontal, DS.s4)
+            // 顶部这条巷子留给外层面板画的 ✕。
+            .padding(.top, InspectorMetrics.closeButtonLane)
+            .padding(.bottom, DS.s4)
         }
     }
 
-    /// 录屏首帧锚点的「打开录像」：用系统默认播放器打开 mp4。
-    /// 视频文件被用户删掉时按钮禁用（锚点截图还在，历史不丢）。
-    private func openRecordingButton(path: String) -> some View {
-        Button {
-            SystemNavigator.open(url: URL(fileURLWithPath: path))
+    // MARK: - 预览
+
+    /// 预览区（设计稿 §6.2：等比预览、约 190 高、圆角 12、四周留白）。
+    ///
+    /// 等比意味着宽图上下留边、长图左右留边，所以垫一层浅底把预览区的边界
+    /// 交代清楚 —— 否则一张窄长图会读成「面板上飘着一条图片」。
+    /// 预览图是 L1 内容层：单层阴影走 `DS.shadow(.content, scheme)`
+    ///（浅色 black .07/r3/y1，深色 `.none`）。
+    private var preview: some View {
+        let sh = DS.shadow(.content, scheme)
+        let shape = RoundedRectangle(
+            cornerRadius: InspectorMetrics.previewRadius,
+            style: .continuous
+        )
+        return CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
+            .frame(maxWidth: .infinity)
+            .frame(height: InspectorMetrics.previewHeight)
+            .background(.quaternary.opacity(0.5), in: shape)
+            .clipShape(shape)
+            .shadow(color: sh.color, radius: sh.radius, y: sh.y)
+            .contentShape(Rectangle())
+            .onTapGesture { QuickLookController.shared.present() }
+            .help("点击（或按空格）用 Quick Look 预览原图")
+            .accessibilityLabel("预览：\(shot.appName ?? "未知 App")")
+    }
+
+    // MARK: - 动作行
+
+    /// 设计稿 §6.3：主按钮「编辑」+ 四个圆形位（收藏 / 钉图 / 分享 / 更多）。
+    /// 圆形位靠右对齐、主按钮贴左 —— 370 宽的面板上 100 + 4×34 + 缝还有余量，
+    /// 把余量放在中间比全部堆在左边更像设计稿。
+    private var actionRow: some View {
+        HStack(spacing: DS.s2) {
+            Button {
+                GalleryWindowMode.shared.openEditor(shotID: shot.id)
+            } label: {
+                Label("编辑", systemImage: "pencil")
+            }
+            .buttonStyle(.inspectorPill)
+            .help("编辑标注")
+
+            Spacer(minLength: DS.s2)
+
+            favoriteButton
+
+            Button {
+                pin()
+            } label: {
+                Image(systemName: "pin")
+            }
+            .buttonStyle(.inspectorCircle)
+            .help("钉在桌面")
+            .accessibilityLabel("钉在桌面")
+
+            shareMenu
+            moreMenu
+        }
+    }
+
+    private var favoriteButton: some View {
+        let favorited = shot.id.map(store.isFavorite) ?? false
+        return Button {
+            store.toggleFavorite(shot)
         } label: {
-            Label("打开录像", systemImage: "play.rectangle")
+            Image(systemName: favorited ? "star.fill" : "star")
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .disabled(!FileManager.default.fileExists(atPath: path))
-        .help(path)
+        // 收藏用黄色而不是 accent：同屏只允许一个控件戴强调色，
+        // 那一份归主按钮「编辑」（规格 §7.1）。
+        .buttonStyle(.inspectorCircle(tint: favorited ? .yellow : nil))
+        .help(favorited ? "取消收藏" : "收藏")
+        .accessibilityLabel(favorited ? "取消收藏" : "收藏")
     }
 
-    private func refreshFeaturePrint() {
-        hasFeaturePrint = shot.id.map {
-            store.attributePayload(shotID: $0, key: AttributeKey.featurePrint) != nil
-        } ?? false
+    /// 分享位：出图的三条路（存盘 / 剪贴板 / 图床）。
+    private var shareMenu: some View {
+        InspectorCircleMenu(
+            systemImage: "square.and.arrow.up",
+            label: "分享：导出 / 复制图片 / 上传图床"
+        ) {
+            Button {
+                export()
+            } label: {
+                Label("导出成品…", systemImage: "square.and.arrow.down")
+            }
+
+            Button {
+                copyImage()
+            } label: {
+                Label("复制图片", systemImage: "doc.on.doc")
+            }
+
+            Button {
+                upload()
+            } label: {
+                Label("上传图床", systemImage: "arrow.up.circle")
+            }
+            .disabled(
+                AppSettings.shared.uploadEndpoint
+                    .trimmingCharacters(in: .whitespaces).isEmpty
+            )
+        }
     }
 
-    private func refreshSensitiveRegions() {
-        guard let id = shot.id,
-              let data = store.attributePayload(shotID: id, key: AttributeKey.sensitiveRegions),
-              let regions = try? JSONDecoder().decode([SensitiveRegion].self, from: data),
-              !regions.isEmpty
-        else {
-            sensitiveRegions = []
-            sensitiveMasked = false
-            return
-        }
-        sensitiveRegions = regions
-        // 已打码 = 最新修订里每个命中区域都被某个马赛克层完整覆盖。
-        let pixelates = (store.latestRevision(for: shot)?.layers ?? [])
-            .filter { $0.kind == .pixelate }
-        sensitiveMasked = regions.allSatisfy { region in
-            pixelates.contains { $0.rect.cg.contains(region.rect) }
+    /// 更多位：设计稿放不下的动作全在这里，**一件都不许在改版里蒸发**。
+    private var moreMenu: some View {
+        InspectorCircleMenu(systemImage: "ellipsis", label: "更多动作") {
+            Button {
+                openSource()
+            } label: {
+                Label("回到出处", systemImage: "arrow.up.forward.app")
+            }
+            .disabled(shot.sourceURL == nil && shot.appBundleID == nil)
+
+            Button {
+                copyRecognizedText()
+            } label: {
+                Label("取字（复制识别文字）", systemImage: "text.viewfinder")
+            }
+            .disabled((shot.ocrText ?? "").isEmpty)
+
+            Button {
+                SystemNavigator.revealInFinder(store.originalURL(for: shot))
+            } label: {
+                Label("在访达中显示", systemImage: "folder")
+            }
+
+            Divider()
+
+            Button {
+                showingSimilar = true
+            } label: {
+                Label("查找相似", systemImage: "sparkles.rectangle.stack")
+            }
+            .disabled(!hasFeaturePrint)
+
+            Button {
+                showingTimeline = true
+            } label: {
+                Label("同源时间线", systemImage: "clock.arrow.circlepath")
+            }
+            .disabled(relatedCount < 2)
+
+            Button {
+                showingAllInfo = true
+            } label: {
+                Label("历史版本与全部信息", systemImage: "clock.arrow.2.circlepath")
+            }
+
+            if let path = recordingPath {
+                Button {
+                    SystemNavigator.open(url: URL(fileURLWithPath: path))
+                } label: {
+                    Label("打开录像", systemImage: "play.rectangle")
+                }
+                // 视频文件被用户删掉时禁用（锚点截图还在，历史不丢）。
+                .disabled(!FileManager.default.fileExists(atPath: path))
+            }
+
+            Divider()
+
+            Button {
+                Clipboard.copy(text: BugReport.markdown(
+                    shot: shot,
+                    pixelWidth: shot.pixelWidth,
+                    pixelHeight: shot.pixelHeight
+                ))
+            } label: {
+                Label("复制 Bug 报告", systemImage: "ladybug")
+            }
+
+            Divider()
+
+            // 删除走和键盘 ⌘⌫ / 右键菜单同一条路：写 pendingDeleteIDs，
+            // 由网格上那个唯一的确认对话框收口。删除不可撤销，必须过确认。
+            Button(role: .destructive) {
+                selection.pendingDeleteIDs = shot.id.map { [$0] }
+            } label: {
+                Label("删除…", systemImage: "trash")
+            }
         }
     }
+
+    // MARK: - 元信息列表
+
+    /// 设计稿 §6.4：五行「18pt 图标 + 13pt 文字」，行高 38。
+    /// **没有值的行不构造** —— 空行在列表里是一道读不出含义的缝。
+    private var metaList: some View {
+        VStack(spacing: 0) {
+            if let appName = shot.appName, !appName.isEmpty {
+                InspectorMetaRow(
+                    icon: .appIcon(bundleID: shot.appBundleID),
+                    text: appName,
+                    help: shot.appBundleID ?? appName
+                )
+            }
+
+            if let source = sourceRow {
+                InspectorMetaRow(
+                    icon: .symbol("globe"),
+                    text: source.text,
+                    help: source.help,
+                    action: source.canOpen ? { openSource() } : nil
+                )
+            }
+
+            InspectorMetaRow(icon: .symbol("calendar"), text: capturedText)
+
+            InspectorMetaRow(
+                icon: .symbol("photo"),
+                text: "\(shot.pixelWidth) × \(shot.pixelHeight) px"
+            )
+
+            if let ocr = shot.ocrText, !ocr.isEmpty {
+                InspectorMetaRow(
+                    icon: .symbol("text.alignleft"),
+                    text: "识别文字 \(ocr.count) 字",
+                    help: "查看全部识别文字",
+                    action: { showingAllInfo = true }
+                )
+            }
+        }
+    }
+
+    /// 来源页那一行：优先窗口标题（浏览器截图里它就是页面标题），
+    /// 没有标题时退到网址的主机名；两个都没有就不画这一行。
+    private var sourceRow: (text: String, help: String?, canOpen: Bool)? {
+        let title = shot.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = shot.sourceURL.flatMap { URL(string: $0)?.host }
+        guard let text = [title, host].compactMap({ $0 }).first(where: { !$0.isEmpty }) else {
+            return nil
+        }
+        return (text, shot.sourceURL ?? text, shot.sourceURL != nil)
+    }
+
+    /// 设计稿的时间格式「2026年7月29日 · 20:17」。
+    /// 用 `.long` + `.shortened` 让系统按用户区域给年月日与 24 小时制，
+    /// 而不是写死一个中文模板 —— 中文环境下出来的就是上面那个样子。
+    private var capturedText: String {
+        let day = shot.capturedAt.formatted(date: .long, time: .omitted)
+        let time = shot.capturedAt.formatted(date: .omitted, time: .shortened)
+        return "\(day) · \(time)"
+    }
+
+    // MARK: - 敏感内容
 
     /// 按种类汇总的提示文案，如「2 处邮箱、1 处 API 密钥」。
     private var sensitiveSummary: String {
@@ -144,6 +375,9 @@ struct ShotDetailPane: View {
         return order.map { "\(counts[$0] ?? 0) 处\($0)" }.joined(separator: "、")
     }
 
+    /// 敏感横幅。设计稿没画它（那张设计图里没有命中），但它**只在有命中时出现**，
+    /// 删掉等于让脱敏功能失去入口。命中内容的明细留在下钻页 ——
+    /// 首屏只说「有几处什么」，具体的邮箱 / 密钥片段不铺在这里。
     private var sensitiveBanner: some View {
         VStack(alignment: .leading, spacing: DS.s2) {
             HStack(alignment: .firstTextBaseline, spacing: DS.s2) {
@@ -152,10 +386,6 @@ struct ShotDetailPane: View {
                 Text("检测到敏感内容：\(sensitiveSummary)")
                     .font(.caption.weight(.semibold))
             }
-            Text(sensitiveRegions.map(\.preview).joined(separator: " · "))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
             if sensitiveMasked {
                 Label("已打码", systemImage: "checkmark.circle.fill")
                     .font(.caption.weight(.medium))
@@ -166,14 +396,12 @@ struct ShotDetailPane: View {
                 } label: {
                     Label("一键打码", systemImage: "squareshape.split.3x3")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(InspectorSoftButtonStyle(tint: .orange))
             }
         }
         .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // 警示色（黄）是状态语义，不是强调色也不参与深度表达 —— 保持。
-        // 圆角统一补 .continuous。
+        // 警示色（黄）是状态语义，不是强调色也不参与深度表达。
         .background(
             RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
                 .fill(Color.yellow.opacity(0.18))
@@ -200,158 +428,67 @@ struct ShotDetailPane: View {
         }
         guard store.appendRevision(shot: shot, layers: layers, note: "自动脱敏") != nil else { return }
         sensitiveMasked = true
-        loadRevisions()
     }
 
-    private func loadRevisions() {
-        revisions = store.revisions(for: shot).enumerated().map { index, rev in
-            RevisionSummary(
-                id: rev.id ?? Int64(index),
-                version: index + 1,
-                note: rev.note ?? "编辑",
-                layerCount: rev.layers.count,
-                createdAt: rev.createdAt
-            )
+    // MARK: - 派生数据
+
+    private func refreshFeaturePrint() {
+        hasFeaturePrint = shot.id.map {
+            store.attributePayload(shotID: $0, key: AttributeKey.featurePrint) != nil
+        } ?? false
+    }
+
+    private func refreshSensitiveRegions() {
+        guard let id = shot.id,
+              let data = store.attributePayload(shotID: id, key: AttributeKey.sensitiveRegions),
+              let regions = try? JSONDecoder().decode([SensitiveRegion].self, from: data),
+              !regions.isEmpty
+        else {
+            sensitiveRegions = []
+            sensitiveMasked = false
+            return
+        }
+        sensitiveRegions = regions
+        // 已打码 = 最新修订里每个命中区域都被某个马赛克层完整覆盖。
+        let pixelates = (store.latestRevision(for: shot)?.layers ?? [])
+            .filter { $0.kind == .pixelate }
+        sensitiveMasked = regions.allSatisfy { region in
+            pixelates.contains { $0.rect.cg.contains(region.rect) }
         }
     }
 
-    private var preview: some View {
-        // 预览图是详情栏里的 L1 内容层：单层阴影，数值走 DS.shadow 统一出数
-        // （浅色 black .07/r3/y1，深色 .none）—— 旧的 0.12/r4/y2 是魔法数，
-        // 且在深色下会在材质上糊出一圈黑。
-        let sh = DS.shadow(.content, scheme)
-        return CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
-            .shadow(color: sh.color, radius: sh.radius, y: sh.y)
-            .contentShape(Rectangle())
-            .onTapGesture { QuickLookController.shared.present() }
-            .help("点击（或按空格）用 Quick Look 预览原图")
-    }
+    // MARK: - 动作实现
 
-    /// 动作区一行放完：「编辑」主按钮 + 收藏/钉图/导出 icon-only，
-    /// 低频动作（出处/相似/时间线/Bug 报告/上传）收进「更多」菜单。
-    private var actions: some View {
-        HStack(spacing: DS.s2) {
-            Button {
-                GalleryWindowMode.shared.openEditor(shotID: shot.id)
-            } label: {
-                Label("编辑", systemImage: "pencil.tip.crop.circle")
-            }
-            .buttonStyle(.borderedProminent)
-
-            let favorited = shot.id.map(store.isFavorite) ?? false
-            Button {
-                store.toggleFavorite(shot)
-            } label: {
-                Label(favorited ? "取消收藏" : "收藏", systemImage: favorited ? "star.fill" : "star")
-                    .foregroundStyle(favorited ? Color.yellow : Color.primary)
-            }
-            .labelStyle(.iconOnly)
-            .help(favorited ? "取消收藏" : "收藏")
-
-            Button {
-                pin()
-            } label: {
-                Label("钉图", systemImage: "pin")
-            }
-            .labelStyle(.iconOnly)
-            .help("钉在桌面")
-
-            Button {
-                export()
-            } label: {
-                Label("导出", systemImage: "square.and.arrow.up")
-            }
-            .labelStyle(.iconOnly)
-            .help("导出成品（含标注）")
-
-            Spacer(minLength: 0)
-
-            moreMenu
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-    }
-
-    private var moreMenu: some View {
-        Menu {
-            Button {
-                openSource()
-            } label: {
-                Label("回到出处", systemImage: "arrow.up.forward.app")
-            }
-            .disabled(shot.sourceURL == nil && shot.appBundleID == nil)
-
-            Button {
-                showingSimilar = true
-            } label: {
-                Label("查找相似", systemImage: "sparkles.rectangle.stack")
-            }
-            .disabled(!hasFeaturePrint)
-
-            Button {
-                showingTimeline = true
-            } label: {
-                Label("同源时间线", systemImage: "clock.arrow.circlepath")
-            }
-            .disabled(relatedCount < 2)
-
-            Divider()
-
-            Button {
-                Clipboard.copy(text: BugReport.markdown(
-                    shot: shot,
-                    pixelWidth: shot.pixelWidth,
-                    pixelHeight: shot.pixelHeight
-                ))
-            } label: {
-                Label("复制 Bug 报告", systemImage: "ladybug")
-            }
-
-            Button {
-                upload()
-            } label: {
-                Label("上传图床", systemImage: "arrow.up.circle")
-            }
-            .disabled(
-                AppSettings.shared.uploadEndpoint
-                    .trimmingCharacters(in: .whitespaces).isEmpty
-            )
-        } label: {
-            Label("更多", systemImage: "ellipsis.circle")
-        }
-        .labelStyle(.iconOnly)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("更多动作：出处 / 相似 / 时间线 / Bug 报告 / 上传")
-    }
-
-    /// 钉在桌面：走注册表的 pin 动作（界面层不直接建窗口），材料从图库记录重建。
-    private func pin() {
-        guard let base = store.originalImage(for: shot) else { return }
-        let context = CaptureContext(
+    /// 图库记录 → 动作上下文。钉图 / 上传都从这里取材料（原图 + 最新标注）。
+    private func actionContext() -> CaptureContext? {
+        guard let base = store.originalImage(for: shot) else { return nil }
+        return CaptureContext(
             base: base,
             layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
             shot: shot,
             region: nil,
             host: nil
         )
+    }
+
+    /// 钉在桌面：走注册表的 pin 动作（界面层不直接建窗口）。
+    private func pin() {
+        guard let context = actionContext() else { return }
         Task { try? await CaptureActionRegistry.shared.action(id: ActionID.pin)?.perform(context) }
     }
 
-    /// 上传图床：复用截图工具条的 UploadAction，材料从图库记录重建。
+    /// 上传图床：走注册表的 upload 动作。
+    ///
+    /// 以前这里是 `UploadAction().perform(...)` —— 界面层直接实例化具体动作、
+    /// 绕过注册表（ARCHITECTURE §1 违例表里记着的那一条）。后果不是理论上的：
+    /// 谁替换或包装了注册表里的 upload（加一层限流、换成企业图床），
+    /// 图库这条路径会悄悄用回旧实现。现在和 pin 走同一条路，界面层只认 `ActionID`。
     private func upload() {
-        guard let base = store.originalImage(for: shot) else { return }
-        let context = CaptureContext(
-            base: base,
-            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
-            shot: shot,
-            region: nil,
-            host: nil
-        )
+        guard let context = actionContext(),
+              let action = CaptureActionRegistry.shared.action(id: ActionID.upload) else { return }
         Task {
             do {
-                try await UploadAction().perform(context)
+                try await action.perform(context)
             } catch {
                 AppAlert.error(
                     "上传失败",
@@ -371,178 +508,32 @@ struct ShotDetailPane: View {
         }
     }
 
-    // MARK: - 信息分组卡片
-
-    /// 分组卡片：quaternary 底 + 卡片圆角 + caption.semibold 组题。
-    ///
-    /// 底色**只能是 `.quaternary`，不能换成 Material**：详情栏本身已经站在
-    /// inspector 材质上了，卡片再上材质就是玻璃叠玻璃，两层模糊互相采样，
-    /// 结果是浑浊而不是更透。
-    /// 同心圆角：外 10、内缩 s3(12) → 内层 = −2 → 归零，所以卡内元素一律直角
-    /// （见 RevisionRow）。这正是公式该给出的答案，不是偷懒。
-    private func card(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: DS.s2) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            content()
-        }
-        .padding(DS.s3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            .quaternary.opacity(0.5),
-            in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
-        )
-    }
-
-    private var sourceCard: some View {
-        card("来源") {
-            row("App", shot.appName)
-            row("Bundle ID", shot.appBundleID)
-            row("版本", shot.appVersion.map { v in
-                shot.appBuild.map { "\(v) (\($0))" } ?? v
-            })
-            row("窗口标题", shot.windowTitle)
-            if let url = shot.sourceURL {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("网址").font(.caption).foregroundStyle(.secondary)
-                    Link(url, destination: URL(string: url) ?? URL(string: "about:blank")!)
-                        .font(.caption)
-                        .lineLimit(3)
-                }
-            }
-            row("显示器", shot.displayName)
-            row("尺寸", "\(shot.pixelWidth) × \(shot.pixelHeight) px @\(String(format: "%.0f", shot.scale))x")
-            row("时间", shot.capturedAt.formatted(date: .abbreviated, time: .standard))
-        }
-    }
-
-    /// 机器补出来的信息（分类、OCR）单独一组，和采集自系统的「来源」分开。
-    @ViewBuilder
-    private var recognitionCard: some View {
-        let ocr = shot.ocrText ?? ""
-        if category != nil || !ocr.isEmpty {
-            card("识别") {
-                row("分类", category)
-                if !ocr.isEmpty {
-                    DisclosureGroup("识别文字（\(ocr.count) 字）") {
-                        Text(ocr)
-                            .font(.caption)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, DS.s1)
-                    }
-                    .font(.caption)
-                }
-            }
-        }
-    }
-
-    private var historyCard: some View {
-        card("修订历史（\(revisions.count)）") {
-            Text("每次编辑都追加一条记录，原图从不被修改。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(revisions.enumerated()), id: \.element.id) { index, rev in
-                    RevisionRow(
-                        revision: rev,
-                        isLatest: index == revisions.count - 1,
-                        isFirst: index == 0,
-                        isLast: index == revisions.count - 1
-                    )
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func row(_ label: String, _ value: String?) -> some View {
-        if let value, !value.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: DS.s2) {
-                Text(label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 64, alignment: .leading)
-                Text(value)
-                    .font(.caption)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
+    /// 取字：把已入库的 OCR 结果直接送进剪贴板。
+    /// 不重跑一遍 Vision —— 后台早就识别过了，重跑只是让用户白等。
+    private func copyRecognizedText() {
+        guard let text = shot.ocrText, !text.isEmpty else { return }
+        Clipboard.copy(text: text)
     }
 
     private func export() {
-        guard let base = store.originalImage(for: shot) else { return }
-        let rendered = LayerRenderer.render(
-            base: base,
-            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers()
-        )
+        guard let rendered = renderedImage() else { return }
         _ = try? ImageExporter.exportWithPanel(
             rendered,
             suggestedName: ImageExporter.suggestedName(for: shot)
         )
     }
-}
 
-/// 修订历史的一行：左侧 2pt 竖线把圆点连成真时间线，行内容 hover 提亮。
-private struct RevisionRow: View {
-    let revision: RevisionSummary
-    let isLatest: Bool
-    let isFirst: Bool
-    let isLast: Bool
-
-    @State private var isHovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            // 连线分上下两段等分行高，中间给圆点留 8pt；首行缺上段、末行缺下段。
-            VStack(spacing: 0) {
-                connector.opacity(isFirst ? 0 : 1)
-                Color.clear.frame(height: 8)
-                connector.opacity(isLast ? 0 : 1)
-            }
-            .padding(.leading, 3)
-
-            Circle()
-                .fill(isLatest ? Color.accentColor : Color.secondary.opacity(0.55))
-                .frame(width: 8, height: 8)
-
-            HStack(spacing: DS.s2) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("v\(revision.version) · \(revision.note)")
-                        .font(.caption)
-                    Text("\(revision.layerCount) 个图层 · \(revision.createdAt.formatted(date: .omitted, time: .shortened))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.leading, DS.s4)
-            .padding(.vertical, DS.s1)
-        }
-        // 同心圆角：外层信息卡 10，内缩 s3(12) → 内层 = −2 → 归零。
-        // 所以这条 hover 提亮底是**直角**，不是「忘了给圆角」——
-        // 在只剩 12pt 呼吸位的地方硬套 6pt 圆角，拐角处的间隙会被掐细。
-        .background(
-            RoundedRectangle(
-                cornerRadius: DS.radiusInner(outer: DS.radiusCard, inset: DS.s3),
-                style: .continuous
-            )
-            .fill(Color.primary.opacity(isHovering ? 0.06 : 0))
-        )
-        .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
-        // 悬停提亮是微交互，走 micro（0.22 是「立刻发生」的感知阈）。
-        .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
+    private func copyImage() {
+        guard let rendered = renderedImage() else { return }
+        Clipboard.copy(rendered)
     }
 
-    private var connector: some View {
-        Rectangle()
-            .fill(Color.secondary.opacity(0.3))
-            .frame(width: 2)
-            .frame(maxHeight: .infinity)
+    /// 含最新标注的成品图。导出 / 复制共用一个口径 —— 和网格、暂存栏一致。
+    private func renderedImage() -> CGImage? {
+        guard let base = store.originalImage(for: shot) else { return nil }
+        return LayerRenderer.render(
+            base: base,
+            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers()
+        )
     }
 }
