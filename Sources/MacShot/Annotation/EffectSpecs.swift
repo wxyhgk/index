@@ -9,8 +9,46 @@ import CoreGraphics
 // 绘制实现在 `LayerRenderer`，开关编排在 `AnnotationState.toggleEffect`，
 // 描述符注册表在 `EffectLayer.swift`。
 
-/// 美化层（backdrop）的背景预设。`Layer.text` 存 rawValue。
+/// 美化层（backdrop）的完整参数。`Layer.text` 存它的 JSON。
+///
+/// **向后兼容**：早期版本的 `text` 里只有一个预设名（如 `"gradient-blue"`），
+/// 不是 JSON。解析时先试 JSON，失败就当成裸预设名 —— 旧修订照常渲染，
+/// 阴影退回从前那套按 padding 推导的默认值。
+struct BackdropSpec: Codable, Equatable {
+    var preset: String = BackdropPreset.default.rawValue
+    /// 阴影模糊半径（图像像素，创建时烤入）。nil = 用旧的 `padding / 3` 推导。
+    var shadowRadius: Double?
+    /// 阴影浓度 0…1。nil = 旧默认 0.3。
+    var shadowAlpha: Double?
+    /// 阴影颜色。nil = 黑。
+    var shadowColor: LColor?
+
+    var backdropPreset: BackdropPreset {
+        BackdropPreset(rawValue: preset) ?? .default
+    }
+
+    /// 从 `Layer.text` 解析，兼容两种格式。
+    static func parse(_ text: String) -> BackdropSpec {
+        if let data = text.data(using: .utf8),
+           let spec = try? JSONDecoder().decode(BackdropSpec.self, from: data) {
+            return spec
+        }
+        // 裸预设名（旧格式）；空串也走这里，落到 default。
+        return BackdropSpec(preset: text.isEmpty ? BackdropPreset.default.rawValue : text)
+    }
+
+    var json: String {
+        guard let data = try? JSONEncoder().encode(self),
+              let text = String(data: data, encoding: .utf8) else { return preset }
+        return text
+    }
+}
+
+/// 美化层（backdrop）的背景预设。存在 `BackdropSpec.preset` 里。
 enum BackdropPreset: String, CaseIterable {
+    /// 四周留白**完全透明**，只留圆角 + 投影。
+    /// 这是「贴到深色/浅色文档里都自然」的那一档，也是自动美化的默认。
+    case transparent = "transparent"
     case gradientBlue = "gradient-blue"
     case gradientSunset = "gradient-sunset"
     case gradientMono = "gradient-mono"
@@ -20,12 +58,18 @@ enum BackdropPreset: String, CaseIterable {
 
     var displayName: String {
         switch self {
+        case .transparent: return "透明"
         case .gradientBlue: return "蓝紫渐变"
         case .gradientSunset: return "日落渐变"
         case .gradientMono: return "灰黑渐变"
         case .solid: return "纯色"
         }
     }
+
+    /// 是否需要填背景。透明档什么都不画 —— 位图本来就是全透明的，
+    /// 内容之外只会留下投影。**注意**：导出成 PNG 才保得住透明，
+    /// JPEG 没有 alpha 通道，会被压成黑底或白底。
+    var fillsBackground: Bool { self != .transparent }
 
     /// 渐变两端的颜色；solid 返回 nil（用图层自身的 `color`）。
     var gradientColors: (CGColor, CGColor)? {
@@ -45,7 +89,8 @@ enum BackdropPreset: String, CaseIterable {
                 CGColor(srgbRed: 0.24, green: 0.25, blue: 0.28, alpha: 1),
                 CGColor(srgbRed: 0.08, green: 0.08, blue: 0.10, alpha: 1)
             )
-        case .solid:
+        case .solid, .transparent:
+            // solid 用图层自身的 color；transparent 根本不填背景。
             return nil
         }
     }

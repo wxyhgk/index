@@ -123,6 +123,56 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("自动美化") {
+                Toggle("截图后自动加留白与阴影", isOn: $settings.autoBackdrop)
+                Text("四周留出透明留白、内容切圆角、投一层柔和阴影 —— 贴进文档或聊天里就有成品感。只对拖拽选区的截图生效：整窗截图（⌥+单击）自带系统窗口阴影，叠加会变双重阴影。留白是透明的，导出请用 PNG（JPEG 没有透明通道，会被压成黑底）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if settings.autoBackdrop {
+                    LabeledContent("留白") {
+                        HStack {
+                            Slider(value: $settings.backdropPadding, in: 0...120, step: 4)
+                            Text("\(Int(settings.backdropPadding)) px")
+                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                                .frame(width: 52, alignment: .trailing)
+                        }
+                    }
+                    LabeledContent("圆角") {
+                        HStack {
+                            Slider(value: $settings.backdropCornerRadius, in: 0...40, step: 1)
+                            Text("\(Int(settings.backdropCornerRadius)) px")
+                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                                .frame(width: 52, alignment: .trailing)
+                        }
+                    }
+                    LabeledContent("阴影大小") {
+                        HStack {
+                            Slider(value: $settings.backdropShadowSize, in: 0...60, step: 1)
+                            Text("\(Int(settings.backdropShadowSize)) px")
+                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                                .frame(width: 52, alignment: .trailing)
+                        }
+                    }
+                    LabeledContent("阴影浓度") {
+                        HStack {
+                            Slider(value: $settings.backdropShadowAlpha, in: 0.05...0.8)
+                            Text("\(Int(settings.backdropShadowAlpha * 100))%")
+                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                                .frame(width: 52, alignment: .trailing)
+                        }
+                    }
+                    if settings.backdropPadding < settings.backdropShadowSize * 1.5 {
+                        Label(
+                            "留白比阴影小，阴影会被裁掉一圈 —— 建议留白至少是阴影大小的 1.5 倍。",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    }
+                }
+            }
+
             Section("图库") {
                 Toggle("滚动时的深度效果", isOn: $settings.galleryScrollDepth)
                 Text("卡片滚出视野时轻微淡出并后退，让内容有前后层次。截图上万张后如果滚动不跟手，关掉这项。")

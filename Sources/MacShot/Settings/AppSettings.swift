@@ -65,6 +65,11 @@ final class AppSettings: ObservableObject {
         static let defaultColorIndex = "defaultColorIndex"
         static let defaultWidthIndex = "defaultWidthIndex"
         static let toolStyles = "toolStyles"
+        static let autoBackdrop = "autoBackdrop"
+        static let backdropPadding = "backdropPadding"
+        static let backdropCornerRadius = "backdropCornerRadius"
+        static let backdropShadowSize = "backdropShadowSize"
+        static let backdropShadowAlpha = "backdropShadowAlpha"
         static let captureDelay = "captureDelay"
         static let captureShortcut = "captureShortcut"
         static let galleryShortcut = "galleryShortcut"
@@ -198,6 +203,35 @@ final class AppSettings: ObservableObject {
 
     @Published var defaultWidthIndex: Int {
         didSet { defaults.set(defaultWidthIndex, forKey: Keys.defaultWidthIndex) }
+    }
+
+    // MARK: - 自动美化（透明留白 + 圆角 + 投影）
+
+    /// 截图后自动套一层「透明美化」：四周留出透明留白、内容切圆角、投一层柔和阴影。
+    /// 只作用于**拖拽选区**的截图 —— 整窗截图（⌥+单击）走系统窗口阴影，
+    /// 两者叠加会出现双重阴影。
+    @Published var autoBackdrop: Bool {
+        didSet { defaults.set(autoBackdrop, forKey: Keys.autoBackdrop) }
+    }
+
+    /// 四周留白（图像像素）。留白要装得下阴影，太小会把阴影切掉。
+    @Published var backdropPadding: Double {
+        didSet { defaults.set(backdropPadding, forKey: Keys.backdropPadding) }
+    }
+
+    /// 内容圆角半径（图像像素）。
+    @Published var backdropCornerRadius: Double {
+        didSet { defaults.set(backdropCornerRadius, forKey: Keys.backdropCornerRadius) }
+    }
+
+    /// 阴影模糊半径（图像像素）。
+    @Published var backdropShadowSize: Double {
+        didSet { defaults.set(backdropShadowSize, forKey: Keys.backdropShadowSize) }
+    }
+
+    /// 阴影浓度 0…1。
+    @Published var backdropShadowAlpha: Double {
+        didSet { defaults.set(backdropShadowAlpha, forKey: Keys.backdropShadowAlpha) }
     }
 
     /// 每个工具单独记住的样式（键是 `AnnotationTool.id`）。
@@ -346,6 +380,12 @@ final class AppSettings: ObservableObject {
             Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
             Keys.defaultColorIndex: 0,
             Keys.defaultWidthIndex: 1,
+            Keys.autoBackdrop: false,
+            // 默认值对齐 iShot 那套观感：留白略大于阴影，圆角 12 在小图上也不显钝。
+            Keys.backdropPadding: 40.0,
+            Keys.backdropCornerRadius: 12.0,
+            Keys.backdropShadowSize: 18.0,
+            Keys.backdropShadowAlpha: 0.30,
             Keys.watermarkText: "",
             Keys.watermarkMode: WatermarkMode.corner.rawValue,
             Keys.watermarkAlpha: 0.35,
@@ -379,6 +419,11 @@ final class AppSettings: ObservableObject {
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish
         defaultColorIndex = defaults.integer(forKey: Keys.defaultColorIndex)
         defaultWidthIndex = defaults.integer(forKey: Keys.defaultWidthIndex)
+        autoBackdrop = defaults.bool(forKey: Keys.autoBackdrop)
+        backdropPadding = defaults.double(forKey: Keys.backdropPadding)
+        backdropCornerRadius = defaults.double(forKey: Keys.backdropCornerRadius)
+        backdropShadowSize = defaults.double(forKey: Keys.backdropShadowSize)
+        backdropShadowAlpha = defaults.double(forKey: Keys.backdropShadowAlpha)
         toolStyles = defaults.string(forKey: Keys.toolStyles)
             .flatMap { $0.data(using: .utf8) }
             .flatMap { try? JSONDecoder().decode([String: ToolStyle].self, from: $0) } ?? [:]

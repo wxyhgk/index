@@ -206,8 +206,12 @@ enum LayerRenderer {
         ) else { return nil }
 
         let canvas = CGRect(x: 0, y: 0, width: width, height: height)
-        let preset = BackdropPreset(rawValue: layer.text) ?? .default
-        drawBackdropBackground(preset, solidColor: layer.color.cg, in: ctx, rect: canvas)
+        let spec = BackdropSpec.parse(layer.text)
+        let preset = spec.backdropPreset
+        // 透明档什么都不填：位图初始就是全透明，留白处最终只剩投影。
+        if preset.fillsBackground {
+            drawBackdropBackground(preset, solidColor: layer.color.cg, in: ctx, rect: canvas)
+        }
 
         let contentRect = CGRect(
             x: padding,
@@ -228,11 +232,22 @@ enum LayerRenderer {
 
         // 投影：先用带阴影的实心圆角矩形打底（阴影由它投出），再在其上画内容。
         // 上下文是 CG 默认的左下原点，offset y 取负让阴影在视觉上落向下方。
+        //
+        // 三个参数都可由设置调节（`BackdropSpec`）；旧图层没有这些字段，
+        // 退回从前按 padding 推导的那套，观感不变。
+        let shadowBlur = spec.shadowRadius ?? max(4, padding / 3)
+        let shadowAlpha = spec.shadowAlpha ?? 0.3
+        let shadowColor = spec.shadowColor.map { color -> CGColor in
+            CGColor(srgbRed: color.r, green: color.g, blue: color.b, alpha: shadowAlpha)
+        } ?? CGColor(gray: 0, alpha: shadowAlpha)
+
         ctx.saveGState()
         ctx.setShadow(
-            offset: CGSize(width: 0, height: -padding / 8),
-            blur: max(4, padding / 3),
-            color: CGColor(gray: 0, alpha: 0.3)
+            // 位移跟着模糊量走，而不是跟着 padding —— 留白很大而阴影很淡时，
+            // 按 padding 推位移会把阴影推出内容之外，看着像图片没对齐。
+            offset: CGSize(width: 0, height: -shadowBlur / 3),
+            blur: shadowBlur,
+            color: shadowColor
         )
         ctx.addPath(path)
         ctx.setFillColor(CGColor(gray: 1, alpha: 1))

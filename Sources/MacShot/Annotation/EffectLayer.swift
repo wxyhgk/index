@@ -140,10 +140,17 @@ enum EffectRegistry {
         kind: .backdrop,
         renderOrder: 3,
         makeLayer: { _ in
+            // 留白 / 圆角 / 阴影三档参数由设置提供，手动开关（工具条、编辑器）
+            // 与自动美化（`CaptureCoordinator`）因此是同一份参数，不会两套观感。
+            let settings = AppSettings.shared
             var layer = Layer(kind: .backdrop, rect: LRect(x: 0, y: 0, w: 0, h: 0))
-            layer.lineWidth = 48            // 复用字段：四周留白 padding
-            layer.fontSize = 12             // 复用字段：内容圆角半径
-            layer.text = BackdropPreset.default.rawValue
+            layer.lineWidth = settings.backdropPadding       // 复用字段：四周留白 padding
+            layer.fontSize = settings.backdropCornerRadius   // 复用字段：内容圆角半径
+            layer.text = BackdropSpec(
+                preset: BackdropPreset.default.rawValue,
+                shadowRadius: settings.backdropShadowSize,
+                shadowAlpha: settings.backdropShadowAlpha
+            ).json
             return layer
         },
         previewDraw: nil

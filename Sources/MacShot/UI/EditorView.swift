@@ -442,6 +442,17 @@ struct EditorView: View {
             RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(swatchGradient(preset))
                 .frame(width: 40, height: 26)
+                // 透明档画一条斜杠示意「这里什么都没有」——
+                // 光靠一块浅灰跟 solid 预设分不出来。
+                .overlay {
+                    if preset == .transparent {
+                        Path { path in
+                            path.move(to: CGPoint(x: 6, y: 20))
+                            path.addLine(to: CGPoint(x: 34, y: 6))
+                        }
+                        .stroke(Color.primary.opacity(0.45), lineWidth: 1.5)
+                    }
+                }
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .strokeBorder(
@@ -456,9 +467,10 @@ struct EditorView: View {
 
     private func swatchGradient(_ preset: BackdropPreset) -> LinearGradient {
         guard let (a, b) = preset.gradientColors else {
-            // solid 预设：导出时用图层自身颜色，色块示意为中性灰。
+            // 透明档示意为很淡的底（配一条斜杠）；solid 导出时用图层自身颜色，示意为中性灰。
+            let white = preset == .transparent ? 0.85 : 0.4
             return LinearGradient(
-                colors: [Color(.sRGB, white: 0.4, opacity: 1)],
+                colors: [Color(.sRGB, white: white, opacity: preset == .transparent ? 0.25 : 1)],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
         }

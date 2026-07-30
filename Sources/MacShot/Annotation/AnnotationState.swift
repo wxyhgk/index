@@ -738,7 +738,7 @@ final class AnnotationState {
     // MARK: 效果参数的类型化读写（都是 effectText / updateEffect 的一行封装）
 
     /// 当前美化层的背景预设名；未开启时为 nil。
-    var backdropPresetID: String? { effectText(.backdrop) }
+    var backdropPresetID: String? { effectText(.backdrop).map { BackdropSpec.parse($0).preset } }
 
     /// 当前水印的摆放模式；未开启时为 nil。
     var watermarkMode: WatermarkMode? {
@@ -756,9 +756,17 @@ final class AnnotationState {
     }
 
     /// 替换美化层的背景预设。
+    ///
+    /// **只换 preset 一个字段**：`text` 里还装着阴影参数，
+    /// 整条覆盖成预设名会把它们抹掉（旧实现就是这样，那时 text 里只有预设名）。
     @discardableResult
     func setBackdropPreset(_ presetID: String) -> Bool {
-        updateEffect(.backdrop) { $0 == presetID ? nil : presetID }
+        updateEffect(.backdrop) { text in
+            var spec = BackdropSpec.parse(text)
+            guard spec.preset != presetID else { return nil }
+            spec.preset = presetID
+            return spec.json
+        }
     }
 
     /// 替换水印的摆放模式。

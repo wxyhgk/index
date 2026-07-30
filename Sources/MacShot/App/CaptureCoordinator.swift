@@ -165,6 +165,27 @@ final class CaptureCoordinator {
                 layers.append(watermark.makeLayer(context))
             }
 
+            // 「自动美化」：四周透明留白 + 内容圆角 + 柔和投影，贴进文档就有成品感。
+            // 与水印同一套路 —— 走描述符造层（参数与手动开关同源）、单例语义查重、
+            // 进修订链所以图库里能看到也能删。
+            //
+            // **只作用于拖拽选区**：整窗截图（⌥+单击）已经带系统窗口阴影，
+            // 再套一层会是双重阴影；带壳截图（frame 效果）同理自带壳与投影。
+            if settings.autoBackdrop,
+               result.windowCaptureRequest == nil,
+               !layers.elements.contains(where: { $0.kind == .backdrop }),
+               !layers.elements.contains(where: { $0.kind == .frame }),
+               let backdrop = EffectRegistry.descriptor(for: .backdrop) {
+                var layer = backdrop.makeLayer(EffectContext())
+                // 描述符默认的是渐变底；自动美化要的是透明留白。
+                layer.text = BackdropSpec(
+                    preset: BackdropPreset.transparent.rawValue,
+                    shadowRadius: settings.backdropShadowSize,
+                    shadowAlpha: settings.backdropShadowAlpha
+                ).json
+                layers.append(layer)
+            }
+
             if !layers.isEmpty {
                 ShotStore.shared.appendRevision(
                     shot: shot,
