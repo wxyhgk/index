@@ -169,10 +169,14 @@ final class CaptureCoordinator {
             // 与水印同一套路 —— 走描述符造层（参数与手动开关同源）、单例语义查重、
             // 进修订链所以图库里能看到也能删。
             //
-            // **只作用于拖拽选区**：整窗截图（⌥+单击）已经带系统窗口阴影，
-            // 再套一层会是双重阴影；带壳截图（frame 效果）同理自带壳与投影。
+            // 整窗截图（⌥+单击）**同样适用**。曾经把它排除掉，理由是「系统窗口阴影
+            // 会与这层叠成双重阴影」—— 实测不成立：`SCContentFilter(desktopIndependentWindow:)`
+            // 返回的图恰好是窗口框本身（原图尺寸 == 选区 × 倍率，一个像素不多），
+            // 阴影被裁在外面，`ignoreShadowsSingleWindow` 改的只是渲染而非产出尺寸。
+            // 于是整窗截图反而是最需要这层留白的场景。
+            //
+            // 仍然排除带壳截图（frame 效果）：壳自带边框与投影，再套一层就真的重了。
             if settings.autoBackdrop,
-               result.windowCaptureRequest == nil,
                !layers.elements.contains(where: { $0.kind == .backdrop }),
                !layers.elements.contains(where: { $0.kind == .frame }),
                let backdrop = EffectRegistry.descriptor(for: .backdrop) {

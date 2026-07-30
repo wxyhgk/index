@@ -125,7 +125,7 @@ private struct GeneralSettings: View {
 
             Section("自动美化") {
                 Toggle("截图后自动加留白与阴影", isOn: $settings.autoBackdrop)
-                Text("四周留出透明留白、内容切圆角、投一层柔和阴影 —— 贴进文档或聊天里就有成品感。只对拖拽选区的截图生效：整窗截图（⌥+单击）自带系统窗口阴影，叠加会变双重阴影。留白是透明的，导出请用 PNG（JPEG 没有透明通道，会被压成黑底）。")
+                Text("四周留出透明留白、内容切圆角、投一层柔和阴影 —— 贴进文档或聊天里就有成品感。拖拽选区和整窗截图（⌥+单击）都生效；带壳截图除外，壳自带边框与投影。留白是透明的，导出请用 PNG（JPEG 没有透明通道，会被压成黑底）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
