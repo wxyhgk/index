@@ -1,68 +1,51 @@
 import SwiftUI
 import AppKit
 
-// MARK: - 三栏布局：侧边栏（筛选） / 网格 / 详情
+// MARK: - 浮动面板布局：自绘顶栏 / 侧栏 / 网格 / 详情栏
 //
-// 布局参考 Snagit Library：左侧按 分类 / 应用 导航（带计数和真实 App 图标），
-// 中间大缩略图网格 + 底部缩放条，右侧详情。NavigationSplitView 自带侧边栏
-// 毛玻璃材质和折叠行为，搜索框走 .searchable 进窗口工具栏。
+// 布局参考用户提供的设计稿：**全定制窗口 chrome + 浮在深底上的圆角面板**。
+// 顶栏自绘（GalleryTopBar），侧栏与详情栏是浮起的卡片（floatingPanel），
+// 面板之间留出可见的缝，缝里露出的是窗口底色（`DS.windowBase`）。
 //
-// 本文件只剩窗口壳：模式分支（图库 / 编辑器）、三栏装配、搜索与 inspector。
-// 各栏的实现分别在 GallerySidebar / GalleryGrid / ShotDetailPane / MultiSelectionPane。
+// 为什么放弃 `NavigationSplitView` + `.inspector`：那两个 API 给的是**齐平分栏**
+//（系统材质、系统分隔线、栏与栏之间没有间隙），而设计稿要的是彼此分离的浮起面板。
+// 代价与收获都要说清楚：
+//   · 丢掉：系统侧边栏材质与 vibrancy、可拖的分隔条、系统 inspector 动画。
+//     侧边栏宽度改成固定值（`DS.Shell.sidebarWidth`）—— 顺手也就没有了
+//     「拖分隔条时每帧重算」这条老路。
+//   · 丢掉：`.searchable` 桥进窗口工具栏那条路（工具栏整个取消了）。
+//     搜索改为自绘，实现在 GalleryTopBar，功能一件不少（见那边的文件注释）。
+//   · 换来：外壳完全由我们自己排版，红绿灯之外没有任何系统 chrome。
+//
+// 本文件只剩窗口壳：模式分支（图库 / 编辑器）+ 四块的位置关系。
+// 各块的实现在 GalleryTopBar / GalleryPageHeader / GallerySidebar / GalleryGrid /
+// GalleryShell（浮动面板容器 + GalleryInspectorPanel）。
 
 struct GalleryView: View {
 
-    @ObservedObject private var store = ShotStore.shared
-    @ObservedObject private var selection = GallerySelection.shared
     /// 窗口模式（图库 / 编辑器），整窗切换的依据。
     @ObservedObject private var mode = GalleryWindowMode.shared
-    // 语义模式切换只在「开关已开 + 模型已就绪」时出现，所以要订阅这两个。
-    @ObservedObject private var settings = AppSettings.shared
-    @ObservedObject private var modelStore = CLIPModelStore.shared
 
-    // ⚠️ 这里**没有**任何宽度状态，这是有意的。本视图是三栏的共同父层，
-    // 在这一层放一个「随网格宽度每帧变化」的 @State（曾经的 gridWidth），
-    // 拖 NavigationSplitView 的分隔条时每一帧都会重算 GalleryView.body，代价是：
-    //   · `inspectorPane` 是 ViewBuilder 参数，**急切求值** ——
-    //     `multiSelectedShots` / `selectedShot` 的三趟全列表扫描每帧各跑一遍；
-    //   · 整条 searchable / toolbar / inspector 修饰器链每帧重建；
-    //   · 最贵的一项：网格的入参每帧都不同 → GalleryGrid.body 必定重算 →
-    //     每张可见卡片的 contextMenu 内容、draggable 载荷、preview 闭包
-    //     跟着逐帧重求值（这几样都是急切求值的，见 GalleryGrid.cardBody）。
-    // 宽度感知现在住在 GalleryGrid 内部（见 GalleryGrid.widthReader），
-    // 失效范围收缩到网格子树，拖动分隔条时本视图的 body 一次都不重算。
+    // ⚠️ 这里**没有** store / selection 的订阅，也**没有**任何宽度状态，两条都是有意的。
+    //
+    // 宽度：本视图是四块的共同父层，在这一层放一个「随网格宽度每帧变化」的 @State
+    //（曾经的 gridWidth）会让整棵外壳每帧重算 —— 宽度感知住在 GalleryGrid 内部
+    //（见 GalleryGrid.widthReader），别搬回来。
+    //
+    // store / selection：详情栏的内容解析要扫两趟全列表，那份订阅现在住在
+    // `GalleryInspectorPanel` 里。放在这一层的话，任何一次选中变化都要重算整棵外壳的
+    // body（顶栏、胶囊行、面板容器全部跟着走一遍），而真正需要重算的只有详情栏。
+    // 现在本视图的 body 只依赖 `mode` 和 `showInspector` 两个值。
 
-    /// 详情栏（inspector）开关，跨启动记住。
+    /// 详情栏开关，跨启动记住。顶栏的开关按钮和详情面板右上角的 ✕ 都写它。
     @AppStorage("galleryInspectorShown") private var showInspector = true
 
-    private var semanticAvailable: Bool {
-        settings.semanticSearch && modelStore.isReady
-    }
-
-    private var selectedShot: Shot? {
-        // 语义结果可能不在常规列表（最近 500 张）里，两边都找。
-        store.displayShots.first { $0.id == selection.primaryID }
-            ?? store.shots.first { $0.id == selection.primaryID }
-    }
-
-    /// 多选时按展示顺序解析出的截图（选中集合里可能残留已删除的 ID，以解析结果为准）。
-    private var multiSelectedShots: [Shot] {
-        guard selection.isMultiple else { return [] }
-        var picked = store.displayShots.filter { selection.isSelected($0.id) }
-        let seen = Set(picked.compactMap(\.id))
-        picked += store.shots.filter { shot in
-            guard let id = shot.id else { return false }
-            return selection.selectedIDs.contains(id) && !seen.contains(id)
-        }
-        return picked
-    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // 单窗口双模式（Snagit 的 Editor/Library）：编辑模式时整窗切到编辑器，
         // 返回图库 = `mode.returnToGallery()`（选中状态原样保留）。
         // Shot 值按 ID **现查** —— store 更新后编辑器拿到的永远是最新值。
-        // .searchable / .inspector / .toolbar 只挂在图库分支 ——
-        // 编辑器模式下窗口工具栏不该出现搜索框和详情开关。
         Group {
             if let shot = mode.resolveEditingShot() {
                 EditorView(shot: shot)
@@ -73,7 +56,7 @@ struct GalleryView: View {
                 gallery
             }
         }
-        .onReceive(store.objectWillChange) { _ in
+        .onReceive(ShotStore.shared.objectWillChange) { _ in
             // objectWillChange 发在变更**之前**，转一拍再查库。
             // 正在编辑的 shot 被删（自动清理等）时退回图库。
             DispatchQueue.main.async { closeEditorIfShotDeleted() }
@@ -81,80 +64,69 @@ struct GalleryView: View {
     }
 
     private var gallery: some View {
-        // 两栏（侧边栏 + 网格）+ 可开关的 inspector 详情栏 ——
-        // 详情从 NavigationSplitView 的 detail 列挪出来，换取标准的
-        // 「随时收起给网格让路」行为和系统自带的材质/分隔线。
-        NavigationSplitView {
-            GallerySidebar()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
-        } detail: {
-            GalleryGrid()
-        }
-        .inspector(isPresented: $showInspector) {
-            inspectorPane
-                .inspectorColumnWidth(min: 260, ideal: 300)
-        }
-        .searchable(
-            text: $store.searchText,
-            placement: .toolbar,
-            prompt: store.semanticMode
-                ? "描述画面内容，回车搜索（英文效果最好）"
-                : "搜 App、标题、网址或截图里的字"
-        )
-        .onChange(of: store.searchText) { _, newValue in
-            if store.semanticMode {
-                // 语义搜索按回车触发；清空输入即恢复常规列表。
-                if newValue.trimmingCharacters(in: .whitespaces).isEmpty {
-                    store.clearSemanticResults()
-                }
-            } else {
-                store.reload()
-            }
-        }
-        .onSubmit(of: .search) {
-            guard store.semanticMode else { return }
-            Task { await store.runSemanticSearch() }
-        }
-        .toolbar {
-            if semanticAvailable {
-                ToolbarItem(placement: .primaryAction) {
-                    Picker("搜索模式", selection: $store.semanticMode) {
-                        Text("精确").tag(false)
-                        Text("语义").tag(true)
+        ZStack(alignment: .top) {
+            // 窗口底色。**这一层必须不透明** —— 面板之间的缝露出的是它，
+            // 而窗口本身没有开 `isOpaque = false`（那会透出壁纸，是整窗级事故，
+            // 理由写在 GalleryWindowController 里）。同一个 NSColor 也赋给了
+            // `window.backgroundColor`，live resize 时不会闪出第二种灰。
+            Color(nsColor: DS.windowBase)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                GalleryTopBar(showInspector: $showInspector)
+
+                HStack(alignment: .top, spacing: DS.Shell.panelGap) {
+                    sidebarPanel
+                    content
+                    if showInspector {
+                        GalleryInspectorPanel(isPresented: $showInspector)
+                            .frame(width: DS.Shell.inspectorWidth)
+                            // 从右侧滑入 / 滑出。ReduceMotion 下由下面那条
+                            // `.animation(reduced:)` 降级成短 easeOut，不是硬切。
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
-                    .pickerStyle(.segmented)
-                    .help("精确：全文匹配文字与元数据；语义：用自然语言描述画面，按回车搜索")
                 }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showInspector.toggle()
-                } label: {
-                    Label("详情", systemImage: "sidebar.trailing")
-                }
-                .help(showInspector ? "隐藏详情栏" : "显示详情栏")
+                .padding(.horizontal, DS.Shell.windowMargin)
+                .padding(.bottom, DS.Shell.windowMargin)
             }
         }
-        .onChange(of: store.semanticMode) { _, semantic in
-            if !semantic { store.clearSemanticResults() }
-        }
+        // 顶栏要自己接管标题栏那一条：窗口是 fullSizeContentView + 透明标题栏，
+        // 内容伸到红绿灯底下，避让由 `DS.Shell.trafficLightInset` 在顶栏内部完成。
+        .ignoresSafeArea(.container, edges: .top)
+        .animation(DS.Motion.standard(reduced: reduceMotion), value: showInspector)
         .frame(minWidth: 1000, minHeight: 600)
     }
 
-    @ViewBuilder
-    private var inspectorPane: some View {
-        let multi = multiSelectedShots
-        if multi.count > 1 {
-            MultiSelectionPane(shots: multi)
-        } else if let shot = selectedShot ?? multi.first {
-            ShotDetailPane(shot: shot)
-        } else {
-            ContentUnavailableView(
-                "未选择截图",
-                systemImage: "photo.on.rectangle",
-                description: Text("在网格中选择一张截图查看详情")
-            )
+    /// 左侧面板。**这一轮只是把现有侧边栏放进浮动卡片里**，它的内部结构
+    ///（设计稿 §2 的图标轨 + §3 的可折叠标签面板）归下一批改。
+    ///
+    /// `.scrollContentBackground(.hidden)`：`GallerySidebar` 是 `List(.sidebar)`，
+    /// 离开 `NavigationSplitView` 之后它自带的那层底会盖住面板的底色。
+    /// 这行必须写在**外面** —— 侧边栏文件这一轮不许改。
+    private var sidebarPanel: some View {
+        GallerySidebar()
+            .scrollContentBackground(.hidden)
+            .frame(width: DS.Shell.sidebarWidth)
+            .frame(maxHeight: .infinity)
+            .floatingPanel()
+    }
+
+    /// 中间内容区：页头（大标题 + 计数 + 筛选胶囊）+ 网格。
+    ///
+    /// 网格**必须继续填满**中间区域，且不许破坏两件已修好的东西：
+    ///   · 宽度感知在网格内部，父层一个每帧 state 都不写；
+    ///   · 网格画布不透明（`underPageBackgroundColor`，几百张缩略图不该垫模糊）。
+    /// 所以这里对网格只做一件事：按同一套圆角把它裁一下，让那块不透明画布
+    /// 读起来也是「浮起的一块」而不是一张贴边的方纸。等网格改版把画布交给
+    /// 窗口底色之后，这个 clipShape 可以直接删掉。
+    private var content: some View {
+        VStack(alignment: .leading, spacing: DS.s3) {
+            GalleryPageHeader()
+                .padding(.horizontal, DS.s2)
+            GalleryGrid()
+                .clipShape(RoundedRectangle(cornerRadius: DS.radiusFloating, style: .continuous))
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     /// 正在编辑的记录已不存在（图库外的删除 / 清理）→ 退回图库模式。

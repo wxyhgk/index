@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// 全局设计 token。图库改版期间由并行分支共同遵守的约定，
 /// 间距、圆角、分类色都收敛到这里 —— 视图代码里不再出现魔法数。
@@ -334,5 +335,107 @@ extension DS {
         static let hoverY: CGFloat = -3
         /// 按下轻微内陷。0.99 足够给出「按到了」的触感，再深会像塌陷。
         static let pressScale: CGFloat = 0.99
+    }
+}
+
+// ============================================================
+// MARK: - 外壳层 token（浮动面板窗口）
+//
+// 图库窗口从「NavigationSplitView 齐平分栏」改成「深底 + 浮起圆角面板」之后
+// 新增的一组 token：窗口底色、面板底色、面板圆角、外壳尺寸。
+//
+// 两条约定，改这里之前先读：
+//   1. **窗口底色是不透明的。** 面板之间的间隙露出的是这层底色，不是桌面 ——
+//      窗口**没有**开 `isOpaque = false`（那会让任何没人上色的区域透出壁纸，
+//      是整窗级事故）。所以「透明度」在这套外壳里只是亮度差，不是真透。
+//   2. **面板一律纯色填充，不上材质。** 每窗口只允许一个 behindWindow 材质
+//      （见 SpatialModifiers 的铁律 2），而这套布局里同屏面板有三四块；
+//      纯色也顺手让 ReduceTransparency 无需降级 —— 本来就不透明。
+// ============================================================
+
+extension DS {
+
+    /// 浮动面板圆角（18）。
+    ///
+    /// 与 `radiusModal` 同值但**不是同一个 token**：那一档的语义是「全屏模态」，
+    /// 这一档是「浮在窗口底色上的功能面板」。两者哪天要分开调，各调各的。
+    static let radiusFloating: CGFloat = 18
+
+    /// 面板离窗口底色有多远。
+    enum PanelLevel {
+        /// 直接坐在窗口底色上：侧栏、详情栏、图标轨。
+        case resting
+        /// 压在别的面板或内容之上：底部工具条、展开的标签面板。亮一档、阴影更重。
+        case overlay
+    }
+
+    // MARK: 窗口与面板底色
+    //
+    // 用**动态 NSColor** 而不是 `Color` + `@Environment(\.colorScheme)`：
+    //   · 同一个实例既能给 SwiftUI（`Color(nsColor:)`）也能给 `NSWindow.backgroundColor`，
+    //     「窗口自己那层底」和「内容铺的那层底」保证同色 ——
+    //     两边各写一遍常量的话，live resize 时会在边缘闪出一条不同的灰。
+    //   · 深浅切换由 AppKit 解析，视图层不需要为了取色而订阅 colorScheme。
+
+    /// 窗口底色。深色近黑 `#0D0D0F`（所有浮起面板都比它亮一档），
+    /// 浅色用系统窗背景色 —— 浅色侧的层级差由阴影承担，底色不该自己发明一个灰。
+    static let windowBase = NSColor(name: "MacShotWindowBase") { appearance in
+        appearance.isDarkAqua
+            ? NSColor(srgbRed: 0.051, green: 0.051, blue: 0.059, alpha: 1)  // #0D0D0F
+            : .windowBackgroundColor
+    }
+
+    /// 面板底色。深色 `#17171A` / `#1C1C1F`（比窗底亮 4~8 个 RGB 点，
+    /// 正是 §8 亮度阶梯的做法）；浅色一律纯白 —— 在 #ECECEC 的窗背景上
+    /// 纯白本身就是「高一层」，再叠亮度只会溢出。
+    static func panelFill(_ level: PanelLevel) -> Color {
+        Color(nsColor: level == .overlay ? panelFillOverlay : panelFillResting)
+    }
+
+    private static let panelFillResting = NSColor(name: "MacShotPanelResting") { appearance in
+        appearance.isDarkAqua
+            ? NSColor(srgbRed: 0.090, green: 0.090, blue: 0.102, alpha: 1)  // #17171A
+            : .white
+    }
+
+    private static let panelFillOverlay = NSColor(name: "MacShotPanelOverlay") { appearance in
+        appearance.isDarkAqua
+            ? NSColor(srgbRed: 0.110, green: 0.110, blue: 0.122, alpha: 1)  // #1C1C1F
+            : .white
+    }
+
+    // MARK: 外壳尺寸
+    //
+    // 设计稿是 1586×992 量出来的，这里按比例落到 1240 宽的默认窗口上。
+
+    enum Shell {
+        /// 自绘顶栏高度。红绿灯（中心约 y=20）落在它上半部，logo 与搜索框垂直居中。
+        static let topBarHeight: CGFloat = 72
+        /// 顶栏左侧安全区：红绿灯是系统画的，位置留系统默认，自绘内容从这里才开始。
+        /// 三颗按钮右沿约 x=72，留 80 是给「窗口变大时按钮不动」的余量。
+        static let trafficLightInset: CGFloat = 80
+        /// 面板与窗口边缘的距离。
+        static let windowMargin: CGFloat = DS.s3
+        /// 面板之间的缝。缝就是深度线索本身 —— 不要为了「多点内容」把它压到 8 以下。
+        static let panelGap: CGFloat = DS.s3
+        /// 左侧面板宽度（设计稿：图标轨 56 + 标签面板 168 + 缝）。
+        static let sidebarWidth: CGFloat = 232
+        /// 右侧详情面板宽度（设计稿 370）。
+        static let inspectorWidth: CGFloat = 370
+        /// 搜索胶囊的最大宽度（设计稿 460）。窗口窄时它先让位。
+        static let searchWidth: CGFloat = 460
+        static let searchHeight: CGFloat = 38
+        /// 顶栏右侧图标按钮的边长（设计稿 36×36 圆角方）。
+        static let controlSide: CGFloat = 36
+        /// 筛选胶囊行的高度（设计稿 34）。
+        static let chipHeight: CGFloat = 34
+    }
+}
+
+extension NSAppearance {
+    /// 当前外观是否深色。写在这里而不是每个 dynamicProvider 里各来一遍
+    /// `bestMatch(from:)` —— 那串字面量重复四次就一定会有人抄错一个。
+    var isDarkAqua: Bool {
+        bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 }

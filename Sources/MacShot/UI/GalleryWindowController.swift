@@ -12,27 +12,32 @@ final class GalleryWindowController: NSWindowController {
     private var editingCancellable: AnyCancellable?
 
     private init() {
+        // 没有 `sceneBridgingOptions = [.toolbars]` 了：窗口不再有工具栏，
+        // 顶栏（logo / 搜索 / 控件组）整条由 SwiftUI 自绘，见 GalleryTopBar。
         let hosting = NSHostingController(rootView: GalleryView())
-        // 把 SwiftUI 的 .searchable / .toolbar 桥进 NSWindow 的工具栏，
-        // 否则搜索框会缩在内容区里而不是标题栏。
-        hosting.sceneBridgingOptions = [.toolbars]
 
         let window = NSWindow(contentViewController: hosting)
+        // 标题**藏起来但不清空**：窗口菜单、Mission Control、⌘` 切窗都读它，
+        // 编辑模式下还会被换成「标注 — 出处」（见下面那个 sink）。
         window.title = "MacShot 图库"
         window.setContentSize(NSSize(width: 1240, height: 760))
-        // fullSizeContentView + .unified：内容伸到标题栏底下，工具栏和标题同一条。
-        // **不要换成 .hiddenTitleBar** —— 搜索框是靠上面那行 sceneBridgingOptions
-        // 桥进窗口工具栏的，藏掉标题栏会把它踢回内容区。
+        // 全定制 chrome：内容伸满整窗（含标题栏那一条），标题栏透明、标题不画，
+        // 也不挂 NSToolbar —— 窗口上剩下的唯一系统件是红绿灯。
+        // 红绿灯位置保留系统默认（不手动摆位），自绘内容靠
+        // `DS.Shell.trafficLightInset`(80) 在顶栏内部避让。
         //
-        // 也**没有**设 `isOpaque = false` + `backgroundColor = .clear`。
-        // 那对组合是「让侧边栏真的透出桌面」的开关，代价是：窗口里任何一块没人上色的
-        // 区域都会直接透出壁纸。中栏画布已经不透明了（GalleryGrid 的
-        // underPageBackgroundColor），但详情栏 / sheet / 空态那几块的底不归本文件管，
-        // 而这台机器上无法把图库窗口截到（窗口不在可捕获的 Space 上），
-        // 「实测确认没有透壁纸」这一步做不了。没验证过就不开 —— 透壁纸是整窗级事故，
-        // 不是局部瑕疵。要开的前提写在交付报告里。
+        // **仍然没有**设 `isOpaque = false` + `backgroundColor = .clear`。
+        // 那对组合是「让面板真的透出桌面」的开关，代价是窗口里任何一块没人上色的
+        // 区域都会直接透出壁纸 —— 而这套布局里「面板之间的缝」正是大片没有内容的区域。
+        // 缝里露出的必须是窗口底色，所以底色由内容自己铺一层不透明的
+        // `DS.windowBase`（见 GalleryView.gallery）。透壁纸是整窗级事故，不是局部瑕疵。
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.toolbarStyle = .unified
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        // 窗口自己那层底也换成同一个 NSColor（SwiftUI 侧铺的是 `Color(nsColor:)`
+        // 的同一实例）：默认的 windowBackgroundColor 比它亮一档，live resize 时
+        // 会在还没上色的新边缘闪出一条更亮的灰。
+        window.backgroundColor = DS.windowBase
         // 记住窗口位置与大小；首次启动没有记录时才居中。
         if !window.setFrameUsingName("MacShotGallery") {
             window.center()
