@@ -1,19 +1,23 @@
 import SwiftUI
 
-// MARK: - 详情栏「标签」分组
+// MARK: - 详情栏标签胶囊行
 
-/// 详情栏（inspector）单选视图里的「标签」分组卡片。样式对齐 ShotDetailPane
-/// 的其它分组：quaternary 底 + DS.radiusCard 圆角 + caption.semibold 组题。
+/// 详情面板单选视图里的标签行（设计稿 §6.5：一行小号胶囊，深色底、灰字）。
 ///
 /// 已有标签显示为胶囊流式排列（hover 出 ✕ 移除），尾部「+ 标签」点击变
 /// TextField，回车提交；输入时按前缀匹配给最多 5 条建议（按使用量降序），
 /// 点击即选。数据挂 task(id: shot.id)，切换截图时查一次，不挂 body ——
-/// 和文件里其它派生数据的惯例一致；增删之后就地刷新本地状态。
+/// 和详情面板里其它派生数据的惯例一致；增删之后就地刷新本地状态。
 ///
-/// 材质纪律：这块卡片已经是「inspector 材质 → quaternary 信息卡」两层了，
-/// 胶囊上原来的 `.thinMaterial` 是第三层，属于典型的玻璃叠玻璃 ——
-/// 三层半透明互相采样只会越叠越浑，反而看不清底下的东西。
-/// 现在胶囊一律用 `.quaternary` 半透明填充 + 一圈发丝描边，深度交给边缘去说。
+/// 改版说明：**外面那层「标签」组题卡片去掉了**。设计稿把标签画成紧接元信息
+/// 列表的一行胶囊 —— 胶囊本身就说明了自己是什么，再套一张带标题的卡片是
+/// 一层白付的层级（而且它会把这一行从「面板的一部分」变成「面板里的一个盒子」）。
+/// 功能一件没动：增、删、建议、焦点态全在。
+///
+/// 材质纪律：胶囊一律用 `.quaternary` 半透明填充 + 一圈发丝描边，不用 Material。
+/// 外层面板是不透明纯色底（`floatingPanel`），在实色上做模糊只是白付一次采样；
+/// 而 `.quaternary` 落在实色上对比度是够的（规格 §7.2 禁的是它落在
+/// `.thin` / `.ultraThin` 材质上）。
 struct TagSection: View {
     let shot: Shot
 
@@ -29,10 +33,6 @@ struct TagSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.s2) {
-            Text("标签")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
             FlowLayout(spacing: DS.s1 + 2) {
                 ForEach(tags, id: \.self) { tag in
                     TagChip(name: tag) { remove(tag) }
@@ -44,13 +44,10 @@ struct TagSection: View {
                 suggestionRow
             }
         }
-        .padding(DS.s3)
+        // 左右不再内缩：这一行现在和元信息列表、下钻行共用面板的内边距，
+        // 缩进会让它看起来比上下两块窄一圈。
+        .padding(.horizontal, DS.s2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // 和 ShotDetailPane.card 完全一致：quaternary 底、radiusCard、.continuous。
-        .background(
-            .quaternary.opacity(0.5),
-            in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
-        )
         // 「+ 标签」按钮 ↔ 输入框的互换、以及建议行的出没，都是小件出没 → micro。
         .animation(DS.Motion.micro(reduced: reduceMotion), value: isAdding)
         .task(id: shot.id) {
@@ -201,8 +198,11 @@ private struct TagChip: View {
 
     var body: some View {
         HStack(spacing: 3) {
+            // 设计稿 §6.5：小号胶囊、灰字。标签是「这张图属于哪几堆」的补充信息，
+            // 不该和元信息列表的正文抢同一档对比度。
             Text(name)
-                .font(.caption)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
@@ -216,8 +216,8 @@ private struct TagChip: View {
         }
         .padding(.horizontal, DS.s2)
         .padding(.vertical, 3)
-        // quaternary 填充 + 一圈发丝描边取代原来的 .thinMaterial：
-        // 卡片已在 inspector 材质之上，胶囊再上材质就是第三层玻璃。
+        // quaternary 填充 + 一圈发丝描边，不用 Material：面板底是不透明纯色，
+        // 在实色上做模糊只是白付一次采样。
         // 「边缘比表面重要」—— 这圈线比任何背景模糊都更能把胶囊托起来。
         .background(.quaternary, in: Capsule())
         .overlay(
