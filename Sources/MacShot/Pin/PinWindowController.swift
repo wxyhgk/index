@@ -102,6 +102,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         view.annotation.effectContext = { [base] in
             var context = EffectContext()
             context.imagePixelWidth = Double(base.width)
+            context.imagePixelHeight = Double(base.height)
             context.chromeScale = max(1, shot?.scale ?? 1)
             context.windowTitle = shot?.windowTitle
             context.sourceURL = shot?.sourceURL

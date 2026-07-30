@@ -21,6 +21,18 @@ struct EffectContext {
     /// 成品图**像素宽**，水印字号按「图宽 3%」烤入时用。0 = 未知，只按 14px 下限走。
     var imagePixelWidth: Double = 0
 
+    /// 成品图**像素高**。美化层的留白/圆角/阴影按**短边百分比**换算时要用 ——
+    /// 绝对像素在小图上会把内容淹掉、在大图上又几乎看不见。0 = 未知，退回按宽算。
+    var imagePixelHeight: Double = 0
+
+    /// 短边像素。按比例烤参数的效果层用它做基准。
+    var imageShortSide: Double {
+        let w = imagePixelWidth
+        let h = imagePixelHeight
+        if w > 0, h > 0 { return min(w, h) }
+        return max(w, h)   // 只知道一边时用已知那边，总比 0 强
+    }
+
     /// 画布单位到图像像素的倍率。由 `AnnotationState.toggleEffect` 从自身的
     /// `pixelScale` 补进来，宿主不用设 —— 水印的字号/描边按它反除到画布单位。
     var pixelScale: Double = 1
@@ -139,22 +151,43 @@ enum EffectRegistry {
     static let backdrop = EffectDescriptor(
         kind: .backdrop,
         renderOrder: 3,
-        makeLayer: { _ in
-            // 留白 / 圆角 / 阴影三档参数由设置提供，手动开关（工具条、编辑器）
-            // 与自动美化（`CaptureCoordinator`）因此是同一份参数，不会两套观感。
+        makeLayer: { context in
+            // 留白 / 圆角 / 阴影三个参数都按**短边百分比**烤入，不用绝对像素：
+            //   · 绝对值在小图上会把内容淹掉（40px 留白配 200px 宽的图），
+            //     在大图上又几乎看不见（3440px 宽的图上 40px 是一条细边）；
+            //   · 比例还顺带解决了 Retina —— 同一个窗口 2x 抓出来像素多一倍，
+            //     百分比算出的留白也大一倍，**视觉尺寸因此一致**。
+            // 上下钳位只为兜住极端情况（几十像素的小图 / 超宽长截图）。
             let settings = AppSettings.shared
+            let short = context.imageShortSide
+
             var layer = Layer(kind: .backdrop, rect: LRect(x: 0, y: 0, w: 0, h: 0))
-            layer.lineWidth = settings.backdropPadding       // 复用字段：四周留白 padding
-            layer.fontSize = settings.backdropCornerRadius   // 复用字段：内容圆角半径
+            layer.lineWidth = Self.backdropMetric(     // 复用字段：四周留白 padding
+                short, ratio: settings.backdropPaddingRatio, min: 8, max: 240
+            )
+            layer.fontSize = Self.backdropMetric(      // 复用字段：内容圆角半径
+                short, ratio: settings.backdropCornerRatio, min: 0, max: 64
+            )
             layer.text = BackdropSpec(
                 preset: BackdropPreset.default.rawValue,
-                shadowRadius: settings.backdropShadowSize,
+                shadowRadius: Self.backdropMetric(
+                    short, ratio: settings.backdropShadowRatio, min: 3, max: 120
+                ),
                 shadowAlpha: settings.backdropShadowAlpha
             ).json
             return layer
         },
         previewDraw: nil
     )
+
+    /// 短边百分比 → 像素，并钳在合理区间。
+    /// 短边未知（0）时退回下限，宁可留一条细边也不要 0。
+    private static func backdropMetric(
+        _ shortSide: Double, ratio: Double, min lower: Double, max upper: Double
+    ) -> Double {
+        guard shortSide > 0 else { return lower }
+        return Swift.min(Swift.max(shortSide * ratio, lower), upper)
+    }
 
     /// 全部效果，按导出套用次序排好（`renderOrder` 升序）。
     static let ordered: [EffectDescriptor] =

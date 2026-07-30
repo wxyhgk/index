@@ -133,6 +133,7 @@ struct EditorView: View {
         annotation.effectContext = { [shot] in
             var context = EffectContext()
             context.imagePixelWidth = Double(base.width)
+            context.imagePixelHeight = Double(base.height)
             context.chromeScale = max(1, shot.scale)
             context.windowTitle = shot.windowTitle
             context.sourceURL = shot.sourceURL

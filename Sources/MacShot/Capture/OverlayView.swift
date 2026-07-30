@@ -112,6 +112,8 @@ final class OverlayView: NSView {
             var context = EffectContext()
             context.imagePixelWidth =
                 Double((model.confirmedRect?.width ?? 0) * model.snapshot.scale)
+            context.imagePixelHeight =
+                Double((model.confirmedRect?.height ?? 0) * model.snapshot.scale)
             context.windowTitle = model.confirmedWindow?.title
             context.appDescription = Self.captureInfoApp(for: model.confirmedWindow)
             return context

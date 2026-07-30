@@ -162,6 +162,7 @@ final class CaptureCoordinator {
                let watermark = EffectRegistry.descriptor(for: .watermark) {
                 var context = EffectContext()
                 context.imagePixelWidth = Double(image.width)
+                context.imagePixelHeight = Double(image.height)
                 layers.append(watermark.makeLayer(context))
             }
 
@@ -180,13 +181,17 @@ final class CaptureCoordinator {
                !layers.elements.contains(where: { $0.kind == .backdrop }),
                !layers.elements.contains(where: { $0.kind == .frame }),
                let backdrop = EffectRegistry.descriptor(for: .backdrop) {
-                var layer = backdrop.makeLayer(EffectContext())
+                // 尺寸必须传：留白/圆角/阴影都是按短边百分比烤入的。
+                var context = EffectContext()
+                context.imagePixelWidth = Double(image.width)
+                context.imagePixelHeight = Double(image.height)
+                var layer = backdrop.makeLayer(context)
                 // 描述符默认的是渐变底；自动美化要的是透明留白。
-                layer.text = BackdropSpec(
-                    preset: BackdropPreset.transparent.rawValue,
-                    shadowRadius: settings.backdropShadowSize,
-                    shadowAlpha: settings.backdropShadowAlpha
-                ).json
+                // **只换 preset 一个字段** —— 阴影参数已经由描述符按短边比例算好，
+                // 整条重造会把它覆盖掉（`setBackdropPreset` 踩过同一个坑）。
+                var spec = BackdropSpec.parse(layer.text)
+                spec.preset = BackdropPreset.transparent.rawValue
+                layer.text = spec.json
                 layers.append(layer)
             }
 

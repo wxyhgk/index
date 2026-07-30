@@ -66,9 +66,10 @@ final class AppSettings: ObservableObject {
         static let defaultWidthIndex = "defaultWidthIndex"
         static let toolStyles = "toolStyles"
         static let autoBackdrop = "autoBackdrop"
-        static let backdropPadding = "backdropPadding"
-        static let backdropCornerRadius = "backdropCornerRadius"
-        static let backdropShadowSize = "backdropShadowSize"
+        // 存的是**短边百分比**而不是像素，见 `EffectRegistry.backdrop`。
+        static let backdropPaddingRatio = "backdropPaddingRatio"
+        static let backdropCornerRatio = "backdropCornerRatio"
+        static let backdropShadowRatio = "backdropShadowRatio"
         static let backdropShadowAlpha = "backdropShadowAlpha"
         static let captureDelay = "captureDelay"
         static let captureShortcut = "captureShortcut"
@@ -214,19 +215,24 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(autoBackdrop, forKey: Keys.autoBackdrop) }
     }
 
-    /// 四周留白（图像像素）。留白要装得下阴影，太小会把阴影切掉。
-    @Published var backdropPadding: Double {
-        didSet { defaults.set(backdropPadding, forKey: Keys.backdropPadding) }
+    // 下面三项都是**图片短边的百分比**，不是绝对像素 ——
+    // 绝对值在小图上会把内容淹掉、在大图上又几乎看不见，
+    // 而且 Retina 与非 Retina 抓同一个窗口像素差一倍。换算与钳位见
+    // `EffectRegistry.backdrop`。
+
+    /// 四周留白占短边的比例。留白要装得下阴影，太小会把阴影切掉。
+    @Published var backdropPaddingRatio: Double {
+        didSet { defaults.set(backdropPaddingRatio, forKey: Keys.backdropPaddingRatio) }
     }
 
-    /// 内容圆角半径（图像像素）。
-    @Published var backdropCornerRadius: Double {
-        didSet { defaults.set(backdropCornerRadius, forKey: Keys.backdropCornerRadius) }
+    /// 内容圆角半径占短边的比例。
+    @Published var backdropCornerRatio: Double {
+        didSet { defaults.set(backdropCornerRatio, forKey: Keys.backdropCornerRatio) }
     }
 
-    /// 阴影模糊半径（图像像素）。
-    @Published var backdropShadowSize: Double {
-        didSet { defaults.set(backdropShadowSize, forKey: Keys.backdropShadowSize) }
+    /// 阴影模糊半径占短边的比例。
+    @Published var backdropShadowRatio: Double {
+        didSet { defaults.set(backdropShadowRatio, forKey: Keys.backdropShadowRatio) }
     }
 
     /// 阴影浓度 0…1。
@@ -381,10 +387,11 @@ final class AppSettings: ObservableObject {
             Keys.defaultColorIndex: 0,
             Keys.defaultWidthIndex: 1,
             Keys.autoBackdrop: false,
-            // 默认值对齐 iShot 那套观感：留白略大于阴影，圆角 12 在小图上也不显钝。
-            Keys.backdropPadding: 40.0,
-            Keys.backdropCornerRadius: 12.0,
-            Keys.backdropShadowSize: 18.0,
+            // 短边百分比。1000px 短边的图上约等于：留白 50 / 圆角 14 / 阴影 22 像素，
+            // 与 iShot 那套观感接近；小图大图按同样比例缩放。
+            Keys.backdropPaddingRatio: 0.05,
+            Keys.backdropCornerRatio: 0.014,
+            Keys.backdropShadowRatio: 0.022,
             Keys.backdropShadowAlpha: 0.30,
             Keys.watermarkText: "",
             Keys.watermarkMode: WatermarkMode.corner.rawValue,
@@ -420,9 +427,9 @@ final class AppSettings: ObservableObject {
         defaultColorIndex = defaults.integer(forKey: Keys.defaultColorIndex)
         defaultWidthIndex = defaults.integer(forKey: Keys.defaultWidthIndex)
         autoBackdrop = defaults.bool(forKey: Keys.autoBackdrop)
-        backdropPadding = defaults.double(forKey: Keys.backdropPadding)
-        backdropCornerRadius = defaults.double(forKey: Keys.backdropCornerRadius)
-        backdropShadowSize = defaults.double(forKey: Keys.backdropShadowSize)
+        backdropPaddingRatio = defaults.double(forKey: Keys.backdropPaddingRatio)
+        backdropCornerRatio = defaults.double(forKey: Keys.backdropCornerRatio)
+        backdropShadowRatio = defaults.double(forKey: Keys.backdropShadowRatio)
         backdropShadowAlpha = defaults.double(forKey: Keys.backdropShadowAlpha)
         toolStyles = defaults.string(forKey: Keys.toolStyles)
             .flatMap { $0.data(using: .utf8) }

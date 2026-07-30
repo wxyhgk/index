@@ -130,41 +130,25 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
 
                 if settings.autoBackdrop {
-                    LabeledContent("留白") {
-                        HStack {
-                            Slider(value: $settings.backdropPadding, in: 0...120, step: 4)
-                            Text("\(Int(settings.backdropPadding)) px")
-                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                                .frame(width: 52, alignment: .trailing)
-                        }
-                    }
-                    LabeledContent("圆角") {
-                        HStack {
-                            Slider(value: $settings.backdropCornerRadius, in: 0...40, step: 1)
-                            Text("\(Int(settings.backdropCornerRadius)) px")
-                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                                .frame(width: 52, alignment: .trailing)
-                        }
-                    }
-                    LabeledContent("阴影大小") {
-                        HStack {
-                            Slider(value: $settings.backdropShadowSize, in: 0...60, step: 1)
-                            Text("\(Int(settings.backdropShadowSize)) px")
-                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                                .frame(width: 52, alignment: .trailing)
-                        }
-                    }
+                    backdropSlider("留白", value: $settings.backdropPaddingRatio, range: 0...0.15)
+                    backdropSlider("圆角", value: $settings.backdropCornerRatio, range: 0...0.06)
+                    backdropSlider("阴影大小", value: $settings.backdropShadowRatio, range: 0...0.08)
                     LabeledContent("阴影浓度") {
                         HStack {
                             Slider(value: $settings.backdropShadowAlpha, in: 0.05...0.8)
                             Text("\(Int(settings.backdropShadowAlpha * 100))%")
                                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                                .frame(width: 52, alignment: .trailing)
+                                .frame(width: 84, alignment: .trailing)
                         }
                     }
-                    if settings.backdropPadding < settings.backdropShadowSize * 1.5 {
+
+                    Text("三项都是**图片短边的百分比**，不是固定像素 —— 小图和大图因此得到同样的观感，Retina 与非 Retina 也一致。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if settings.backdropPaddingRatio < settings.backdropShadowRatio * 1.5 {
                         Label(
-                            "留白比阴影小，阴影会被裁掉一圈 —— 建议留白至少是阴影大小的 1.5 倍。",
+                            "留白比阴影小，阴影会被裁掉一圈 —— 建议留白至少是阴影的 1.5 倍。",
                             systemImage: "exclamationmark.triangle"
                         )
                         .font(.caption)
@@ -285,6 +269,23 @@ private struct GeneralSettings: View {
             appName: "Safari",
             windowTitle: "MacShot 使用指南"
         ) + ".png"
+    }
+
+    /// 美化参数的滑杆。显示百分比，并换算成「1000px 短边的图上约等于多少像素」——
+    /// 光给一个 5% 很难有手感，给个参照物就好判断了。
+    private func backdropSlider(
+        _ title: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>
+    ) -> some View {
+        LabeledContent(title) {
+            HStack {
+                Slider(value: value, in: range)
+                Text("\(value.wrappedValue * 100, specifier: "%.1f")% · \(Int(value.wrappedValue * 1000))px")
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    .frame(width: 84, alignment: .trailing)
+            }
+        }
     }
 }
 
