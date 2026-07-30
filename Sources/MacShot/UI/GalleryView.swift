@@ -113,18 +113,20 @@ struct GalleryView: View {
 
     /// 中间内容区：页头（大标题 + 计数 + 筛选胶囊）+ 网格。
     ///
-    /// 网格**必须继续填满**中间区域，且不许破坏两件已修好的东西：
+    /// **这里对网格什么都不做** —— 它直接坐在窗口底色上，和设计稿一致（卡片浮在
+    /// 深底上，中间区域不是一块浮起的纸）。上一轮为了让网格自铺的那层不透明画布
+    /// 读起来像「浮起的一块」而临时加过一个 `clipShape(radiusFloating)`，
+    /// 网格改版把画布交还窗口底色之后它已经没有对象可裁，删掉了。
+    ///
+    /// 仍然不许破坏的两件事：
     ///   · 宽度感知在网格内部，父层一个每帧 state 都不写；
-    ///   · 网格画布不透明（`underPageBackgroundColor`，几百张缩略图不该垫模糊）。
-    /// 所以这里对网格只做一件事：按同一套圆角把它裁一下，让那块不透明画布
-    /// 读起来也是「浮起的一块」而不是一张贴边的方纸。等网格改版把画布交给
-    /// 窗口底色之后，这个 clipShape 可以直接删掉。
+    ///   · 网格底下必须是不透明的 —— 现在由本文件 `gallery` 里那层 `DS.windowBase`
+    ///     负责（窗口也没开 `isOpaque = false`），别在这一层再补一块底色。
     private var content: some View {
         VStack(alignment: .leading, spacing: DS.s3) {
             GalleryPageHeader()
                 .padding(.horizontal, DS.s2)
             GalleryGrid()
-                .clipShape(RoundedRectangle(cornerRadius: DS.radiusFloating, style: .continuous))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

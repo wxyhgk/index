@@ -3,9 +3,15 @@ import AppKit
 
 // MARK: - 网格
 //
-// 图库中栏：时间分组（ShotSection）、网格 / 瀑布两种显示模式（GalleryLayoutMode）、
-// 稳定列宽数学、卡片装配与右键菜单、空态与底部缩放条，
+// 图库中栏：时间分组（ShotSection）、网格 / 瀑布两种显示模式（GalleryLayoutKind）、
+// 稳定列宽数学、卡片装配与右键菜单、空态与底部悬浮工具条，
 // 以及全图库唯一的那套删除确认框。
+//
+// 2026-07 改版的两件结构性变化：
+//   1. **画布交还窗口底色**（原来这里铺一层不透明的 `underPageBackgroundColor`）。
+//      逐条核对见 `body` 上的注释 —— 三条旧理由现在一条都不成立了。
+//   2. **底栏从贴底通栏变成居中悬浮胶囊**（设计稿 §5），因此它不再自动为内容
+//      占位，网格内容底部要显式让出 `contentBottomInset`。
 
 /// 一个时间段的截图。分组在 shots 变化时算一次，不在 body 里逐帧分组。
 private struct ShotSection: Identifiable {
@@ -40,12 +46,6 @@ private struct ShotSection: Identifiable {
     }
 }
 
-/// 图库显示模式：网格（固定高度，裁切显示）/ 瀑布（等宽不裁切，Eagle 式）。
-private enum GalleryLayoutMode: String {
-    case grid
-    case waterfall
-}
-
 struct GalleryGrid: View {
 
     @ObservedObject private var store = ShotStore.shared
@@ -54,12 +54,19 @@ struct GalleryGrid: View {
     /// 设置项的变更频率是「用户偶尔点一下」，用它换「关掉开关立刻生效」是划算的。
     @ObservedObject private var settings = AppSettings.shared
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// 缩略图基准宽度，底部滑杆控制，跨启动记住。
     /// 瀑布模式下同一个值语义变成「列宽基准」，滑杆行为自然成立。
     @AppStorage("galleryZoom") private var zoom = 200.0
 
-    /// 显示模式，底部条切换，跨启动记住。
-    @AppStorage("galleryLayout") private var layoutMode = GalleryLayoutMode.grid
+    /// 显示模式，底部悬浮工具条切换，跨启动记住。
+    ///
+    /// 类型是 `GalleryLayoutKind`（定义在 `GalleryTopBar.swift`）。这里曾经有一个
+    /// 私有的 `GalleryLayoutMode` 副本 —— 同一个 `@AppStorage("galleryLayout")` 键、
+    /// 同一组 rawValue，**两份定义、一份数据**。副本已删除：加一个 case 却只改一边
+    /// 就会得到「顶栏能切到、网格不认识」的静默错位，这种坑不留。
+    @AppStorage("galleryLayout") private var layoutMode = GalleryLayoutKind.grid
 
     /// 按时间段分好组的结果，随 store.shots 变化重算一次。
     @State private var sections: [ShotSection] = []
@@ -85,16 +92,36 @@ struct GalleryGrid: View {
     /// 瀑布模式的**数值**列宽（网格模式不用，见 `gridItems`）。
     @State private var waterfallColumnWidth: CGFloat = 200
 
+    // MARK: 版面常量
+    //
+    // 这四个数同时出现在「列宽数学」和「padding」两处，所以必须是同一份常量 ——
+    // 两边各写一个字面量，改一处忘一处就会横向溢出或者最后一行被工具条压住。
+
+    /// 网格内容的左右内缩。取 `DS.s2`(8) 是为了和 `GalleryPageHeader` 对齐
+    ///（那一行由 GalleryView 加了 `.padding(.horizontal, DS.s2)`）：卡片已经没有
+    /// 卡面了，图片的左边界**就是**内容的左边界，大标题和第一张图必须落在同一条竖线上。
+    /// 旧值是 `DS.s4`(16)，那时候图片还缩在卡面里面 4pt，视觉左边界正好对得上。
+    private static let contentInset: CGFloat = DS.s2
+
+    /// 悬浮工具条：设计稿 §5 的 540 × 56。宽度是**上限**不是定值 ——
+    /// 窗口收到最小宽（1000）时中栏只剩 350 上下，写死 540 会横向溢出。
+    private static let toolbarWidth: CGFloat = 540
+    private static let toolbarHeight: CGFloat = 56
+
+    /// 网格内容底部要让出的高度 = 工具条高 + 它离网格底边的距离 + 一档呼吸位。
+    /// 悬浮工具条**不占布局位置**（它压在内容之上），少了这一档最后一行会被盖住。
+    private static let contentBottomInset: CGFloat = toolbarHeight + 2 * DS.s3
+
     /// 列数由**外层稳定宽度**显式算出，绝不用 `.adaptive` ——
     /// 接实体鼠标时 macOS 显示常驻滚动条：内容超高 → 滚动条挤窄内容区 →
     /// adaptive 重排少一列 → 内容变矮 → 滚动条消失 → 变宽 → 翻回来……
     /// 自持振荡，表现为尾部卡片无输入也一直闪。列数只看外层宽度就稳了。
     private func resolvedColumnCount(for width: CGFloat) -> Int {
-        var count = max(1, Int((width - 2 * DS.s4 + DS.s4) / (zoom + DS.s4)))
+        var count = max(1, Int((width - 2 * Self.contentInset + DS.s4) / (zoom + DS.s4)))
         // 常驻滚动条那 16pt 的保护**留在列数公式里**：滚动条一出会把最后一列
         // 挤到明显窄于缩放档（< 60%）时，主动少排一列 —— 由我们显式决定，
         // 而不是让布局自己去反推（那就是上面那场振荡）。
-        let usable = width - 2 * DS.s4 - 16 - CGFloat(count - 1) * DS.s4
+        let usable = width - 2 * Self.contentInset - 16 - CGFloat(count - 1) * DS.s4
         if usable < CGFloat(count) * zoom * 0.6 { count = max(1, count - 1) }
         return count
     }
@@ -133,7 +160,7 @@ struct GalleryGrid: View {
     /// WaterfallLayout 的自然宽度超过提案时会横向溢出（它故意不从 proposal
     /// 反推），列宽宁可小几点也不能大。
     private func quantizedWaterfallColumnWidth(for width: CGFloat, columns: Int) -> CGFloat {
-        let usable = width - 2 * DS.s4 - 16 - CGFloat(columns - 1) * DS.s4
+        let usable = width - 2 * Self.contentInset - 16 - CGFloat(columns - 1) * DS.s4
         let raw = usable / CGFloat(max(1, columns))
         return max(80, (raw / DS.s1).rounded(.down) * DS.s1)
     }
@@ -151,25 +178,41 @@ struct GalleryGrid: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // 工具条**压在内容之上**（设计稿 §5：居中悬浮胶囊，不是贴底通栏），
+        // 所以是 ZStack 而不是 VStack。它不占布局位置，内容底部的让位见
+        // `contentBottomInset`。
+        ZStack(alignment: .bottom) {
             if store.displayShots.isEmpty {
                 emptyState
             } else {
                 grid
             }
 
-            // 网格 ↔ 底栏之间不画 Divider()：底栏的材质边界本身就是分界，
-            // 再叠一条 1px 实线是第二条边，两条线互相削弱（见底栏的 hairline: .top）。
-            bottomBar
+            floatingToolbar
         }
-        // L0 画布：**不透明**。几百张缩略图铺在桌面模糊上是纯粹的视觉噪音，
-        // 而且白付一份 behind-window 采样成本 —— 那份成本是「每窗口」的，
-        // 花在内容层上完全没有回报。Apple 自家 Photos 的网格同样是纯不透明底。
+        // ⚠️ 这里**故意不再铺** L0 画布（原来是一层不透明的 `underPageBackgroundColor`）。
+        // 设计稿里中间区域直接坐在窗口底色上（卡片浮在深底上，没有卡面也没有画布纸）。
+        // 旧注释给出的三条理由逐条核对，现在一条都不成立：
         //
-        // 铺在 VStack 这一层是为了让空态（ContentUnavailableView）也有同一块底 ——
-        // 否则筛不到结果时中栏会露出窗口底色，和有内容时不是一个灰。
-        // ScrollView 自己那份见 `grid`：两者的帧不同，工具栏底下那 52pt 只有它盖得住。
-        .background(Color(nsColor: .underPageBackgroundColor))
+        //  1. 「几百张缩略图不该铺在桌面模糊上，且白付一份 behind-window 采样成本」
+        //     —— 这条的前提是网格底下真有 behind-window 材质。现在网格底下是
+        //     `Color(nsColor: DS.windowBase)`（GalleryView 铺的**不透明**窗口底色，
+        //     窗口本身也没开 `isOpaque = false`）。不透明这条硬要求由那一层满足，
+        //     这里再铺一层只是同一件事做两遍，多一个不必要的图层。
+        //
+        //  2. 「铺在外层让空态也有同一块底，否则筛不到结果时会露出窗口底色，
+        //     和有内容时不是一个灰」—— 现在有内容和空态露出的**都是**窗口底色，
+        //     同一个灰是结构保证的，不再需要靠补一层来对齐。这条理由直接反转了。
+        //
+        //  3. 「ScrollView 那一份要盖住工具栏底下的 52pt，否则 unified 工具栏的材质
+        //     采样到窗口底色、和网格差一档灰」—— unified 工具栏在外壳改版里整个
+        //     取消了（顶栏改成自绘的 GalleryTopBar，它自己不画背景块）。既没有工具栏
+        //     材质要采样，网格的帧也不再伸到窗口顶。这条理由随工具栏一起消失。
+        //
+        // 唯一必须留下的是 `grid` 里的 `.scrollContentBackground(.hidden)`：
+        // macOS 的 ScrollView 自带一层不透明 `windowBackgroundColor`，不关掉的话
+        // 它会盖住窗口底色，露出第二种灰 —— 那和画布归属无关，是 ScrollView 自己的默认值。
+        //
         // 宽度感知：测量点是**本视图的根帧**（= 网格列的容器帧，滚动条在它内部），
         // 和它历史上待的位置（GalleryView 里 `.background(gridWidthReader)`）是同一层几何，
         // 只是写的 state 从三栏共同父层挪进了网格子树。
@@ -298,28 +341,25 @@ struct GalleryGrid: View {
                             }
                         }
                     }
-                    .padding(.horizontal, DS.s4)
-                    .padding(.bottom, DS.s3)
+                    .padding(.horizontal, Self.contentInset)
+                    .padding(.bottom, Self.contentBottomInset)
                 }
             }
             // ScrollView 在 macOS 上自带一层不透明底（windowBackgroundColor）。
-            // 不关掉的话它会盖住上面那层 underPageBackgroundColor 画布，
-            // 两种灰打架，且侧边栏 / 底栏的材质会显得对不上底色。
+            // **画布交还窗口底色之后这一行反而更要紧了**：以前它盖住的是我们自己铺的
+            // 画布色（两种灰打架），现在它会直接盖住 `DS.windowBase`，
+            // 中栏就成了一块和窗口不同色的方纸。
             .scrollContentBackground(.hidden)
-            // 画布色再铺一份到 ScrollView 自己身上：它的帧一直伸到窗口顶（工具栏底下），
-            // 而外层 VStack 的帧是从工具栏下沿才开始的。少了这一份，
-            // unified 工具栏的材质采样到的是窗口底色而不是画布色，工具栏会和网格差一档灰。
-            .background(Color(nsColor: .underPageBackgroundColor))
             //
-            // ⚠️ 这里**故意不挂** `.scrollEdgeMask(topInset:)`，原因是实测出来的，不是取舍：
+            // ⚠️ 这里**故意不挂** `.scrollEdgeMask(topInset:)`。
             //
-            // 本窗口是 fullSizeContentView + unified 工具栏，SwiftUI 给这个 ScrollView
-            // 的 NSScrollView 设了 contentInsets.top = 52（工具栏高度），于是
-            //   · 内容**不会**露在工具栏底下（52pt 那条带子里只有画布色，没有可「化开」的东西）；
-            //   · 吸顶分组头 pin 的位置 = SwiftUI 侧 ScrollView 帧的顶边 y = 52，
-            //     和 mask 渐变带的起点**完全重合**。
-            // 结果就是渐变带整条压在吸顶头上，把分组头本身淡成半透明（实测：
-            // 28pt 渐变让 .title3 的分组头顶部 2/3 透出底下的画布色）。
+            // 旧注释里的第一条理由（unified 工具栏给 NSScrollView 设了
+            // contentInsets.top = 52）随工具栏取消一起失效了，但**结论不变**，
+            // 因为第二条理由是结构性的、与工具栏无关：
+            //   吸顶分组头 pin 的位置 = ScrollView 帧的顶边，
+            //   而 mask 渐变带的起点也是 ScrollView 帧的顶边 —— 两者永远重合。
+            // 于是渐变带整条压在吸顶头上，把分组头自己淡成半透明（实测：28pt 渐变
+            // 让 .title3 的分组头顶部 2/3 透出底下的底色）。
             // 规格要的是「卡片滑进标题时化开」，不是「标题自己化没」。
             //
             // 冻结的 `ScrollEdgeMask` 只有 topInset、没有「渐变带起点下移」的参数，
@@ -368,8 +408,8 @@ struct GalleryGrid: View {
                 }
             }
         }
-        .padding(.horizontal, DS.s4)
-        .padding(.bottom, DS.s3)
+        .padding(.horizontal, Self.contentInset)
+        .padding(.bottom, Self.contentBottomInset)
     }
 
     /// 瀑布卡片的缩略图高度 = **可用图宽** / 图片长宽比。
@@ -377,18 +417,20 @@ struct GalleryGrid: View {
     /// 缩略图生成是等比缩放（ImageCodec.resized），CachedImage 的 .fit
     /// 在这个高度下正好铺满，不裁切也不留边。
     ///
-    /// 可用图宽 = 列宽 − 2×`DS.s1`：卡片的缩略图在卡面内左右各内缩 4pt
-    ///（同心圆角要求：内圆角 = 10 − 4 = 6）。按整个列宽算高会多算 4~5pt，
-    /// `.fit` 之下就变成上下各留一条空边 —— 瀑布模式「等宽不裁切、完整贴合」的
-    /// 全部意义就在于没有这条边。
+    /// 可用图宽 = **整个列宽**。卡面取消之后缩略图不再内缩（旧版是卡面内左右各 4pt，
+    /// 为的是同心圆角 10 − 4 = 6），图片自己就是单元格的左右边界。
+    /// 这个数必须和 `ShotCard` 的实际图宽严格一致：多算几点，`.fit` 之下就会在
+    /// 上下各留一条空边 —— 瀑布模式「等宽不裁切、完整贴合」的全部意义就在于没有这条边。
     private func waterfallHeight(for shot: Shot, columnWidth: CGFloat) -> CGFloat {
         let pixelWidth = CGFloat(max(1, shot.pixelWidth))
         let pixelHeight = CGFloat(max(1, shot.pixelHeight))
-        let imageWidth = max(1, columnWidth - 2 * DS.s1)
-        return imageWidth * pixelHeight / pixelWidth
+        return max(1, columnWidth) * pixelHeight / pixelWidth
     }
 
     /// 吸顶分组标题：「今天 · 12」，垫 .bar 材质盖住滚过的卡片。
+    ///
+    /// 不再加水平内缩：标题要和第一张卡片的**图片左边界**对齐（卡片没有卡面了，
+    /// 图片边界就是单元格边界）。材质带宽度 = 网格内容宽度，正好盖住滚上来的卡片。
     private func sectionHeader(for section: ShotSection) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.s2) {
             Text(section.title)
@@ -398,7 +440,6 @@ struct GalleryGrid: View {
                 .foregroundStyle(.secondary)
             Spacer()
         }
-        .padding(.horizontal, DS.s4)
         .padding(.vertical, DS.s2)
         .background(.bar)
     }
@@ -543,59 +584,112 @@ struct GalleryGrid: View {
         return store.searchText.isEmpty ? "按 ⌃⌘A 开始截图" : "换个关键词，或清除侧边栏筛选"
     }
 
-    private var bottomBar: some View {
+    // MARK: - 底部悬浮工具条（设计稿 §5）
+
+    /// 居中悬浮的圆角胶囊，不再是贴底通栏。左边显示模式分段控件、右边缩放滑杆，
+    /// 中间留空（只有语义搜索状态会临时占用那段空白，见 `semanticStatus`）。
+    ///
+    /// 三个落地取舍：
+    ///
+    /// 1. **圆角用 `DS.radiusPanel`(14) 而不是设计稿的 16。** DS 的圆角阶梯是
+    ///    6 / 10 / 14 / 18 五档，没有 16 那一档，而 GalleryShell 的 `floatingPanel`
+    ///    文档本来就写着「小面板（图标轨、悬浮胶囊）用 `DS.radiusPanel`(14)」——
+    ///    为了 2pt 新开一档 token 不值得（而且 DesignTokens 这一轮不许改）。
+    ///
+    /// 2. **`level: .overlay`。** 这块是压在内容之上的，不是坐在窗口底色上：
+    ///    底色亮一档、浅色下阴影更重，两者都是「它离用户更近」的线索。
+    ///
+    /// 3. **只有两个图标，不是设计稿画的三个。** 理由见 `layoutPicker`。
+    private var floatingToolbar: some View {
         HStack(spacing: DS.s3) {
-            if store.isSemanticSearching {
+            layoutPicker
+            Spacer(minLength: DS.s2)
+            semanticStatus
+            Spacer(minLength: DS.s2)
+            zoomSlider
+        }
+        .padding(.horizontal, DS.s4)
+        .frame(height: Self.toolbarHeight)
+        .frame(maxWidth: Self.toolbarWidth)
+        .floatingPanel(radius: DS.radiusPanel, level: .overlay)
+        // 12 + GalleryView 给中栏的 12(`DS.Shell.windowMargin`) = 距窗底 24（设计稿）。
+        .padding(.bottom, DS.s3)
+    }
+
+    /// 显示模式分段控件。
+    ///
+    /// **设计稿画了三个图标（网格 / 分栏 / 列表），这里只有两个** —— 本项目真实存在的
+    /// 布局就是网格与瀑布两种，为了凑数量摆一个点了没反应（或者和网格几乎一样）的
+    /// 第三个图标是欺骗性 UI，比少一个图标糟得多。
+    ///
+    /// 「真的实现一个列表模式」在这一轮也做不成：`GalleryLayoutKind` 定义在
+    /// `GalleryTopBar.swift`，加一个 case 会同时打断那个文件里 `symbol` / `title`
+    /// 两个穷尽 switch，而那个文件本轮不在可改范围内。等它开放时再补，
+    /// 届时顶栏的分段控件会自动多出一格（它是 `ForEach(allCases)` 驱动的）。
+    ///
+    /// 布局切换是「整片内容重排」，用 standard（0.35 / 0.85）：比系统默认的 0.55 利落，
+    /// 又不像 micro 那样快到读不出内容是怎么挪的。动画包在 setter 的事务里而不是给网格
+    /// 挂常驻 `.animation(value:)` —— 后者会让网格里任何一次尺寸变化（比如缩放滑杆）
+    /// 都被顺带动画掉。
+    private var layoutPicker: some View {
+        Picker("显示模式", selection: Binding(
+            get: { layoutMode },
+            set: { newValue in
+                withAnimation(DS.Motion.standard(reduced: reduceMotion)) { layoutMode = newValue }
+            }
+        )) {
+            ForEach(GalleryLayoutKind.allCases, id: \.self) { kind in
+                Image(systemName: kind.symbol).tag(kind)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("网格：整齐等高，超出裁切；瀑布：等宽不裁切，完整显示长图")
+    }
+
+    /// 缩放滑杆：左端小图标、中间滑杆、右端大图标（设计稿 §5）。
+    /// 两个图标是「更多列 / 更少列」的图示，不是按钮 —— 语义上它们是滑杆两端的标尺。
+    private var zoomSlider: some View {
+        HStack(spacing: DS.s2) {
+            Image(systemName: "square.grid.3x3")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+            // maxWidth 而不是 width：窗口窄到中栏只剩几百点时，滑杆先让位，
+            // 而不是把分段控件挤出胶囊。
+            Slider(value: $zoom, in: 140...320)
+                .frame(maxWidth: 200)
+                .controlSize(.small)
+                .accessibilityLabel("缩略图大小")
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 13))
+                .foregroundStyle(.tertiary)
+        }
+        .help("缩略图大小")
+    }
+
+    /// 语义搜索状态。设计稿的胶囊里没有这一段，但**它是唯一能报告「正在跑语义搜索」
+    /// 的地方**，删不得（设计稿没画的功能不许删）。占的是两组控件之间那段留白 ——
+    /// 平时空着，有话说时才出现，不改变两组控件的位置。
+    ///
+    /// 旧底栏那句「N 张截图」没有搬过来：`GalleryPageHeader` 的「N 个项目」是同一个
+    /// `store.displayShots.count`，同屏两处报同一个数是冗余。
+    @ViewBuilder
+    private var semanticStatus: some View {
+        if store.isSemanticSearching {
+            HStack(spacing: DS.s2) {
                 ProgressView().controlSize(.mini)
                 Text("语义搜索中…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if store.semanticMode, store.semanticResults != nil {
-                Text("语义搜索：最相关的 \(store.displayShots.count) 张")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("\(store.displayShots.count) 张截图")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Spacer()
-            // 布局切换是「整片内容重排」，用 standard（0.35 / 0.85）：
-            // 比系统默认的 0.55 利落，又不像 micro 那样快到读不出内容是怎么挪的。
-            // 动画包在 setter 的事务里而不是给网格挂常驻 .animation(value:) ——
-            // 后者会让网格里任何一次尺寸变化（比如缩放滑杆）都被顺带动画掉。
-            Picker("显示模式", selection: Binding(
-                get: { layoutMode },
-                set: { newValue in withAnimation(DS.Motion.standard) { layoutMode = newValue } }
-            )) {
-                Image(systemName: "square.grid.2x2")
-                    .tag(GalleryLayoutMode.grid)
-                Image(systemName: "square.grid.3x1.below.line.grid.1x2")
-                    .tag(GalleryLayoutMode.waterfall)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(.small)
-            .fixedSize()
-            .help("网格：整齐等高，超出裁切；瀑布：等宽不裁切，完整显示长图")
-            Image(systemName: "square.grid.3x3")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            Slider(value: $zoom, in: 140...320)
-                .frame(width: 140)
-                .controlSize(.small)
-            Image(systemName: "square.grid.2x2")
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
+        } else if store.semanticMode, store.semanticResults != nil {
+            Text("语义搜索：最相关的 \(store.displayShots.count) 张")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-        .padding(.horizontal, DS.s3)
-        .padding(.vertical, DS.s2)
-        // L2 chrome：材质边界代替 Divider()。发丝线只画顶边一条 ——
-        // 深色 white 0.10 是「顶边接光」，浅色 black 0.09 是「底边自遮挡」，
-        // 方向和卡片描边渐变同源（全 App 只有一个光源方向）。
-        // .withinWindow 而不是 .behindWindow：底栏下面是自家的不透明画布，
-        // 没有桌面可借，而 behindWindow 的成本是每窗口的，一份要留给侧边栏。
-        .glassPanel(.headerView, blending: .withinWindow, hairline: .top)
     }
 
     @ViewBuilder

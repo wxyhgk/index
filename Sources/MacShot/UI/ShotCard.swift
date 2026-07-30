@@ -3,8 +3,19 @@ import UniformTypeIdentifiers
 
 // MARK: - 卡片
 //
-// 网格里的一张缩略图卡片（悬停、选中描边、收藏星、分类胶囊、标注角标），
+// 网格里的一张缩略图（悬停抬升、选中蓝框 + 勾选徽章、收藏星、分类胶囊、标注角标），
 // 以及它拖出去时用的 Transferable 载荷（对外一份成品 PNG / 对内一串截图 ID）。
+//
+// ⚠️ 结构在 2026-07 的改版里变了：**卡片没有卡面了**。
+// 以前是「一整块表面（缩略图 + 文字条）走 spatialCard：填充 + 描边 + 阴影」，
+// 现在是设计稿的样子 —— 图片直接浮在窗口深底上，文字是图下方的裸文字，
+// 卡片级的填充 / 描边 / 阴影全部取消。三条收益，都不是纯审美：
+//   · 每张卡少一次 `.shadow()` 的离屏合成（几百张时这是最贵的一项）；
+//   · 深色下本来就该靠亮度分层，而一块 `white 0.045` 的卡面压在 #0D0D0F 上
+//     只是把缩略图周围糊一圈灰，读不出高度；
+//   · 缩略图不再需要为「露出一圈卡面」而内缩 4pt，瀑布模式的等宽贴合更准。
+// 深度线索只剩两件，也够了：缩略图边缘那条渐变发丝线（“边缘比表面重要”），
+// 和悬停时的 1.02 / −3pt 抬升。
 
 extension UTType {
     /// 应用内截图引用（一串截图 ID）。反向域名与 bundle id `com.wxyhgk.macshot` 对齐，
@@ -97,7 +108,9 @@ struct ShotCard: View {
     var isPressed: Bool = false
     let onToggleFavorite: () -> Void
 
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var isHovering = false
     /// 悬停 0.3s 后才浮出尺寸条 —— 快速扫过不打扰。
     @State private var showsDimensions = false
@@ -106,28 +119,35 @@ struct ShotCard: View {
     // 订阅了会导致任何 store 变化都重建全部缩略图。
     private var thumbnailURL: URL { ShotStore.shared.thumbnailURL(for: shot) }
 
-    /// 卡片四态。缩放只受悬停控制、选中只加光 —— 两者正交，
-    /// 「选中」和「鼠标在这张上」必须能同时读出（HIG：焦点与选中各自独立可见）。
-    private var cardState: SpatialCardState {
-        SpatialCardState(isHovering: isHovering, isSelected: isSelected, isPressed: isPressed)
-    }
-
     var body: some View {
-        // spacing 用 s1：缩略图自己已经内缩了 s1，两段相加正好是 s2 的视觉间隙。
-        VStack(alignment: .leading, spacing: DS.s1) {
+        // 单元格 = 缩略图 + 图下方左对齐的两行文字。s2 的间隙：卡面取消之后
+        // 图和字之间没有「卡片内缩」帮忙撑开了，得自己留出这一档。
+        VStack(alignment: .leading, spacing: DS.s2) {
             thumbnail
             caption
         }
-        // 热区跟着卡片形状走，四个角外的三角区不再吃点击。
-        .contentShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
-        // ⚠️ 悬停判定必须挂在 spatialCard（scale 1.02 / offset −3）**之前**：
+        // 热区跟着单元格形状走，四个角外的三角区不再吃点击。
+        .contentShape(cellShape)
+        // ⚠️ 悬停判定必须挂在形变（scale 1.02 / offset −3）**之前**：
         // 挂在形变之后，卡片一悬停就上移，底边下的指针会掉出热区 →
         // 「悬停→位移→脱离→复位→再悬停」的自激抖动。
+        //（以前这条形变在 `spatialCard` 里，现在写在本文件下面几行，约束不变。）
         .onHover { isHovering = $0 }
-        // 表面填充 / 边缘高光 / 阴影 / 选中环 + 光晕 + 色调 / 四态动效，一次给全。
-        // 卡片背景是纯填充 + 描边，**没有任何 Material** —— 内容层不上玻璃，
-        // 也是性能红线（每张卡一个 NSVisualEffectView 必炸）。
-        .spatialCard(cardState)
+        // 选中框包住**整个单元格**（含文字），所以画在这一层而不是缩略图上。
+        // 放在形变之前 = 框跟着卡片一起抬升，不会在悬停时和内容错开。
+        .overlay { selectionRing }
+        // 四态形变。缩放只受悬停控制、选中只加框 —— 两者正交，
+        // 「选中」和「鼠标在这张上」必须能同时读出（HIG：焦点与选中各自独立可见）。
+        //
+        // ⚠️ 这里**没有** `.shadow()`：卡片没有卡面，也就没有可投影的表面。
+        // 深色下阴影落在 #0D0D0F 上读不出高度（那是亮度阶梯的活），
+        // 而每卡一次阴影就是每卡一次离屏合成 —— 几百张时这是最贵的一项。
+        // 抬升的可读性由缩略图边缘那条 rim 在悬停时加浓来补（见 `thumbnailRim`）。
+        .scaleEffect(scaleValue)
+        .offset(y: isHovering && !reduceMotion ? DS.Lift.hoverY : 0)
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: isPressed)
+        .animation(DS.Motion.standard(reduced: reduceMotion), value: isSelected)
         .task(id: isHovering) {
             guard isHovering else {
                 showsDimensions = false
@@ -140,19 +160,28 @@ struct ShotCard: View {
         }
     }
 
-    /// 缩略图内圆角 = 卡片外圆角 10 − 内缩 s1(4) = 6（正好落在 radiusSmall 上）。
-    /// 同心才能让缩略图与卡片边缘的缝隙在整圈上恒定 —— 不同心的话拐角处会被
-    /// 「掐细」或张成喇叭口，那种视觉张力就是廉价感的来源。
-    private var innerShape: RoundedRectangle {
-        RoundedRectangle(
-            cornerRadius: DS.radiusInner(outer: DS.radiusCard, inset: DS.s1),
-            style: .continuous
-        )
+    private var scaleValue: CGFloat {
+        if isPressed { return DS.Lift.pressScale }
+        return isHovering ? DS.Lift.hoverScale : 1
     }
+
+    /// 圆角 10（`DS.radiusCard`，设计稿 §4 明确的那一档）。两个用途共用一份：
+    /// 缩略图的裁切/填充/描边，以及整个单元格的点击热区（`cellShape`）。
+    ///
+    /// 卡面取消之后不再有「外圆角 − 内缩」的同心换算要做 —— 图片自己就是最外层，
+    /// 唯一还要同心的是选中框（见 `selectionRing`：10 + 2 = 12）。
+    private var thumbShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
+    }
+
+    /// 单元格热区。和缩略图同一个圆角：真正需要削掉的是**顶部**那两个角外的
+    /// 三角区（那里视觉上是圆的、却会吃到点击），底部两角在文字下方，
+    /// 削或不削肉眼无差 —— 用同一个形状换来的是「只有一处圆角常量」。
+    private var cellShape: RoundedRectangle { thumbShape }
 
     private var thumbnail: some View {
         ZStack {
-            innerShape.fill(.quaternary.opacity(0.5))
+            thumbShape.fill(.quaternary.opacity(0.5))
             CachedImage(url: thumbnailURL, key: shot.sha256)
                 // 视差只给当前悬停的那张卡开：未悬停时 unit vector 是 .zero，
                 // `.visualEffect` 闭包退化成 identity 变换，成本近似为零。
@@ -163,43 +192,90 @@ struct ShotCard: View {
         .frame(height: height)
         // 尺寸浮条盖在底边，先叠再裁 —— 让浮条跟着缩略图圆角走。
         .overlay(alignment: .bottom) { dimensionBar }
-        .clipShape(innerShape)
-        .overlay(alignment: .topLeading) { selectionBadge }
+        .clipShape(thumbShape)
+        .overlay { thumbnailRim }
+        // 四个角各一件，互不重叠（徽章与收藏星的位置安排见 favoriteButton 的注释）。
+        .overlay(alignment: .topLeading) { favoriteButton }
+        .overlay(alignment: .topTrailing) { selectionBadge }
         .overlay(alignment: .bottomLeading) { categoryBadge }
         .overlay(alignment: .bottomTrailing) { annotationBadge }
-        .overlay(alignment: .topTrailing) { favoriteButton }
-        // 内缩 s1：卡片表面在缩略图四周露出一圈，深度才有落脚点。
-        .padding(DS.s1)
-        // 只剩角标出没需要动画（描边/阴影/缩放/选中环都归 spatialCard 管了）：
-        // 悬停角标走 micro，选中角标走 standard —— 替换掉原来的两条 .easeOut(0.12)。
+        // rim 在深色下走 `.plusLighter`，混合模式**必须**有 compositingGroup 做边界，
+        // 否则它会和任意兄弟视图混合 —— 在网格里就是和邻居卡片混。
+        // 官方说法是这个修饰器「开销极小，只重排效果的应用时机，不做栅格化」，
+        // 和被禁的 `drawingGroup()` 不是一回事。
+        .compositingGroup()
+        // 角标出没 + rim 加浓：悬停走 micro，选中走 standard。
         .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
         .animation(DS.Motion.standard(reduced: reduceMotion), value: isSelected)
     }
 
-    /// 左上角选中角标。图块选中的通用解是「发光环 + 角标」（Photos / Google Photos / Windows 一致）：
-    /// 多选时密集网格里的光环容易被邻居的环淹没，角标才是一眼可数的那个线索。
+    /// 缩略图边缘的渐变发丝线。**卡面取消之后它是唯一的常驻深度线索**，
+    /// 也是「深色的暗截图不至于糊进 #0D0D0F 的窗底」的唯一保证 ——
+    /// 设计稿说的「没有外框」指的是没有卡片框，不是让图片边界消失。
     ///
-    /// 尺寸复用 favoriteButton 的约定：24pt 材质圆底（材质只出现在这种小件上，
-    /// 卡片表面依然零材质），净内缩 8pt 与右上角的星形对称。
-    /// palette 渲染让「白勾 + accent 圆盘」两层分开上色 —— 单色模式下勾是镂空的，
-    /// 落在亮缩略图上会糊掉。角标不参与点击（选中由父级的点击手势负责）。
+    /// 常态取 `.content` 那一档（深色 顶 0.14 / 底 0.035），悬停切到 `.raised`
+    /// 且带 hovering 加浓（深色 顶 0.28 / 底 0.05）—— 抬起来的表面接光更多，
+    /// 边缘对比理应更强。这比给悬停加一层阴影更省，也更准（深色阴影读不出）。
+    private var thumbnailRim: some View {
+        let rim = DS.rim(isHovering ? .raised : .content, scheme, hovering: isHovering)
+        return thumbShape
+            .strokeBorder(rim.gradient, lineWidth: rim.lineWidth)
+            .blendMode(reduceTransparency ? .normal : rim.blend)
+            .allowsHitTesting(false)
+    }
+
+    /// 选中框：包住整个单元格的 2px 强调蓝圆角框，外扩 2pt（设计稿 §4）。
+    ///
+    /// 同心换算走 `DS.radiusOuter`：外扩量和圆角增量必须是**同一个数**，
+    /// 所以框圆角 = 缩略图 10 + 外扩 2 = 12，「比缩略图大一档」正是这么来的。
+    /// 2px 是 WCAG 2.4.13 Focus Appearance 的下限，也是 1x 屏上不发虚的宽度。
+    ///
+    /// 这里**不再**画 `spatialCard` 那套「光晕 + accent 色调」：
+    ///   · 色调是垫在卡面上的染色玻璃，没有卡面就等于直接染在缩略图上 —— 脏；
+    ///   · 光晕是一次 `.blur(9)`，只为「更醒目」而付一次离屏渲染，
+    ///     而 2px 实框 + 右上角 22pt 实心徽章在密集网格里已经一眼可辨。
+    @ViewBuilder
+    private var selectionRing: some View {
+        if isSelected {
+            RoundedRectangle(
+                cornerRadius: DS.radiusOuter(inner: DS.radiusCard, offset: DS.Glow.ringOffset),
+                style: .continuous
+            )
+            .strokeBorder(
+                Color.accentColor.opacity(DS.Glow.ringOpacity(scheme)),
+                lineWidth: DS.Glow.ringWidth
+            )
+            .padding(-DS.Glow.ringOffset)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    /// **右上角**勾选徽章：直径 22 的强调蓝实心圆 + 白勾（设计稿 §4，旧版在左上角）。
+    ///
+    /// 为什么框之外还要一个徽章：多选时密集网格里全是相邻的蓝框，边框会互相淹没，
+    /// 徽章才是「一眼数出选了几张」的那个线索（Photos / Google Photos / Windows 一致）。
+    ///
+    /// 实心 accent 圆盘直接压在缩略图上，所以补一圈 1pt 白色发丝环：
+    /// 截图内容本身就可能是一片蓝（浏览器、系统设置），没有这圈分隔环，
+    /// 徽章会和背景糊成一块。不用材质圆底（旧版那样）—— 设计稿要的是实心，
+    /// 而实心正好也省掉这一件小材质。徽章不参与点击（选中由父级的点击手势负责）。
     @ViewBuilder
     private var selectionBadge: some View {
         if isSelected {
-            ZStack {
-                Circle()
-                    .fill(.ultraThinMaterial)
-                    .frame(width: 24, height: 24)
-                Image(systemName: "checkmark.circle.fill")
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, Color.accentColor)
-                    // 18pt：比 24pt 圆底小一圈，留出材质做「光晕」，边缘不至于齐平割手。
-                    .font(.system(size: 18, weight: .semibold))
-            }
-            .frame(width: 24, height: 24)
-            .padding(DS.s2)
-            .transition(.scale(scale: 0.6).combined(with: .opacity))
-            .allowsHitTesting(false)
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(Color.accentColor, in: Circle())
+                .overlay {
+                    Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1)
+                }
+                // s2 = 8：与左上角收藏星的可视圆心内缩（4pt padding + 32pt 热区里
+                // 那颗 24pt 圆）对齐，两个角上的圆看起来在同一条内缩线上。
+                .padding(DS.s2)
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                .allowsHitTesting(false)
         }
     }
 
@@ -246,7 +322,17 @@ struct ShotCard: View {
         }
     }
 
-    /// 悬停浮出星形按钮；已收藏则常显实心黄星。材质圆底 + ≥32pt 热区。
+    /// **左上角**收藏星：悬停浮出，已收藏则常显实心黄星。材质圆底 + ≥32pt 热区。
+    ///
+    /// 从右上角搬到左上角，因为设计稿把勾选徽章放在了右上角，两者会重叠。
+    /// 三种排法里选了这个：
+    ///   · ~~星留在右上、选中时让位~~ —— 选中一张就点不到它的收藏星，
+    ///     而「先选中再收藏」恰好是最常走的路径；
+    ///   · ~~星挪到右上角偏下~~ —— 位置会随选中态跳动，肌肉记忆全废；
+    ///   · **星固定左上角** —— 位置永不变动，和右上的徽章、左下的分类胶囊、
+    ///     右下的标注角标各占一角，四件互不重叠，也不需要任何条件让位。
+    /// 代价是左上角这颗星比旧版更显眼一点（它现在压在图片的左上而不是右上），
+    /// 但它本来就只在悬停或已收藏时出现，不是常驻噪音。
     @ViewBuilder
     private var favoriteButton: some View {
         if isHovering || isFavorite {
@@ -269,19 +355,27 @@ struct ShotCard: View {
         }
     }
 
+    /// 缩略图下方左对齐的两行：App 名 12pt / 时间 11pt 灰（设计稿 §4）。
+    ///
+    /// 字号写死而不是用 `.caption`/`.caption2`：那两档在 macOS 上都是 10pt，
+    /// 设计稿给的是 12/11 —— 文字从卡面上搬到画布上之后确实需要大一档才压得住，
+    /// 而 DS 头部那份「卡片主行用 .caption」的字阶约定就是为「字在卡面上」写的。
+    /// 冲突处以设计稿为准（redesign-target 开头的规矩）。
+    ///
+    /// **水平内缩 0**：图片就是单元格的左边界，文字要和它对在同一条竖线上。
+    /// 字形本身的左边距（left side bearing）会让文字看起来正好比图片边缘退进
+    /// 半个像素 —— 这是光学对齐想要的结果，再加 padding 就成了明显的缩进。
     private var caption: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(shot.appName ?? "未知 App")
-                .font(.caption.weight(.medium))
+                .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
             Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())
-                .font(.caption2)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-        // 文字现在长在卡片表面上（不再是卡片外的裸文字），得有自己的内缩：
-        // 水平 s2 比缩略图的 s1 多 4pt —— 文字的视觉左边界在字形之外，
-        // 和图像同数内缩会显得往外顶。底部同样 s2，与顶部（s1 + 卡片圆角）配平。
-        .padding(.horizontal, DS.s2)
-        .padding(.bottom, DS.s2)
+        // 底部留 s1：选中框外扩 2pt 画在单元格外沿，这 4pt 让它不至于贴着字底。
+        .padding(.bottom, DS.s1)
     }
 }

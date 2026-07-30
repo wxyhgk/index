@@ -34,8 +34,10 @@ struct WaterfallLayout: Layout {
     }
 
     /// 贪心算法本体：按子视图顺序放入当前最矮的列（并列取最左），
-    /// 高度用子视图在固定列宽下的自适应高度（ShotCard 的缩略图高度
-    /// 已按图片长宽比算好传入，这里量到的是「缩略图 + 文字条」的整卡高度）。
+    /// 高度用子视图在固定列宽下的自适应高度（ShotCard 的缩略图高度已按图片长宽比
+    /// 算好传入，这里量到的是「缩略图 + 图下方两行文字」的整个单元格高度 ——
+    /// 卡面在 2026-07 的改版里取消了，量的不再是一块卡片的高度，但对布局没有区别：
+    /// 要的一直只是「这个子视图在这个列宽下有多高」）。
     private func computePlacement(subviews: Subviews) -> Placement {
         let columns = max(1, columnCount)
         var columnHeights = [CGFloat](repeating: 0, count: columns)
