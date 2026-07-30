@@ -22,7 +22,7 @@ enum LayerRenderer {
         let pixelated = layers.filter { $0.kind == .pixelate }
         var working = base
         if !pixelated.isEmpty {
-            working = applyPixelate(to: base, regions: pixelated.map(\.rect.cg)) ?? base
+            working = applyPixelate(to: base, layers: pixelated) ?? base
         }
 
         let width = working.width
@@ -678,10 +678,10 @@ enum LayerRenderer {
     }
 
     /// 把整张小图马赛克化。覆盖层用它给每个马赛克图层预先算好贴片。
-    static func pixelated(_ image: CGImage) -> CGImage? {
+    static func pixelated(_ image: CGImage, blockScale: Double = 1) -> CGImage? {
         let width = CGFloat(image.width)
         let height = CGFloat(image.height)
-        let blockSize = max(6, min(width, height) / 12)
+        let blockSize = max(6, min(width, height) / 12 * blockScale)
 
         guard let filter = CIFilter(name: "CIPixellate") else { return nil }
         filter.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
@@ -904,9 +904,14 @@ enum LayerRenderer {
         let canvas = ctx.boundingBoxOfClipPath
         guard !canvas.isEmpty else { return }
 
+        // 压暗程度是**画布级**属性而非单层属性（只有一次整体填充），
+        // 多个聚光灯时以最后画的那个为准 —— 「我刚调的那个说了算」最好预期。
+        // 旧图层没有 dim 字段（nil）→ 0.55 → 与从前一致。
+        let dim = spotlights.last?.dim ?? 0.55
+
         ctx.saveGState()
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        ctx.setFillColor(CGColor(gray: 0, alpha: 0.55))
+        ctx.setFillColor(CGColor(gray: 0, alpha: dim))
         ctx.fill(canvas)
         ctx.setBlendMode(.destinationOut)
         ctx.setFillColor(CGColor(gray: 0, alpha: 1))
@@ -1008,12 +1013,12 @@ enum LayerRenderer {
 
     // MARK: - 马赛克
 
-    private static func applyPixelate(to image: CGImage, regions: [CGRect]) -> CGImage? {
+    private static func applyPixelate(to image: CGImage, layers: [Layer]) -> CGImage? {
         let extentHeight = CGFloat(image.height)
         var current = CIImage(cgImage: image)
 
-        for region in regions {
-            let r = region.integral
+        for layer in layers {
+            let r = layer.rect.cg.integral
             guard r.width >= 2, r.height >= 2 else { continue }
 
             // CIImage 是左下原点，图层坐标是左上原点，这里翻过来。
@@ -1024,7 +1029,8 @@ enum LayerRenderer {
                 height: r.height
             )
 
-            let scale = max(6, min(r.width, r.height) / 12)
+            // blockScale 是相对默认颗粒的倍率；旧图层没有这个字段（nil）→ 1.0 → 与从前一致。
+            let scale = max(6, min(r.width, r.height) / 12 * (layer.blockScale ?? 1))
             guard let filter = CIFilter(name: "CIPixellate") else { continue }
             filter.setValue(current, forKey: kCIInputImageKey)
             filter.setValue(scale, forKey: kCIInputScaleKey)

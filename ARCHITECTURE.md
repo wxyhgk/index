@@ -48,7 +48,7 @@
 
 | 禁止 | 现存违例（2026-07 对账） |
 |---|---|
-| 领域层引用 App 配置 | `Annotation/AnnotationState.init` 读 `AppSettings.shared`（取默认颜色）；效果层水印描述符读 `AppSettings`（开关语义，`CapturePostProcessor.isEnabled` 同款先例，可辩护但记录在案） |
+| 领域层引用 App 配置 | `Annotation/AnnotationState` 读写 `AppSettings.shared`（init 取种子默认值 + `setStyleIndex` 落盘单工具样式）；效果层水印描述符读 `AppSettings`（开关语义，`CapturePostProcessor.isEnabled` 同款先例，可辩护但记录在案） |
 | 各层散读 `AppSettings` | `Storage/StorageJanitor`、`Platform/ImageExporter`、`Capture/OverlayView` 等 5 处（轻，逐步随重构下沉为注入参数） |
 | ~~界面层绕过注册表~~ | **已清零**（2026-07）：pin 直调与 `UploadAction()` 直接实例化都已迁回 `CaptureActionRegistry`。全仓再无界面层绕过注册表的地方 |
 | 平台副作用散落 | `NSCursor` 5 个文件各自 set；`NSWorkspace` 2 处（取图标 / 开系统设置）。低优先级，暂不收敛 |
@@ -59,7 +59,7 @@
 
 ## 2. 扩展点契约
 
-系统现有**五个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
+系统现有**六个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
 
 ### 2.1 入口：`CaptureSource` —— 像素怎么进来
 
@@ -126,7 +126,32 @@ protocol CaptureAction {
 **记录在案的膨胀风险**：Live Text 往 `ToolbarContext` 加了 `isLiveTextActive` / `toggleLiveText` 一对宿主回调 —— 「每个要宿主配合的控件加一对闭包」是注册制的经典逃生门。**第二个**同类控件出现之前，必须把它们收敛成一个 `hostCapabilities` 结构。
 （`MoreActionsControl` 的折叠策略原先写在注册表的 `.capture` 分支里，**已于 2026-07 收敛**：折叠对所有场景一视同仁，注册表不再认识具体场景。）
 
-### 2.5 效果层：`EffectDescriptor` —— 整图效果怎么加（2026-07 新增）
+### 2.5 工具样式：`ToolDescriptor` —— 一个工具有哪些可调参数（2026-07 新增）
+
+从前所有工具共用**一份**全局 `colorIndex` / `widthIndex`，字号还是从线宽派生的
+（`线宽 × 4 + 8`）；高亮透明度、马赛克颗粒、聚光灯压暗则是彻底硬编码。
+现收敛为描述符 + 注册表（`Annotation/ToolStyle.swift`）：
+
+```swift
+struct ToolDescriptor {
+    let tool: AnnotationTool
+    let axes: [ToolStyleAxis]     // 声明顺序即工具条顺序；只有这里列出的轴才会出现
+    let defaultStyle: ToolStyle
+}
+```
+
+**规范**：加一种工具 = 在 `ToolRegistry.descriptors` 补一条。
+工具条**不许**自己判断该显示哪些样式控件，一律问 `annotation.styleAxes`
+（`ColorControl` / `ToolParamControl` 的 `isVisible` 就是这么写的）——
+马赛克/聚光灯/裁剪的渲染根本不读 `layer.color`，从前却照样给它们摆一排色块。
+每个工具的样式各存一份并持久化（`AppSettings.toolStyles`，JSON）；
+设置页那两个全局默认降级为**首次使用的种子**。
+
+新增的单工具参数落到图层上时**必须用可选字段**（`Layer.blockScale` / `Layer.dim`）：
+`Layer` 的 Codable 是合成的，而合成的解码器不会使用默认值 ——
+加一个非可选字段会让所有旧修订的 JSON 直接解不出来。渲染器遇到 nil 退回旧的硬编码值。
+
+### 2.6 效果层：`EffectDescriptor` —— 整图效果怎么加（2026-07 新增）
 
 水印 / 美化 / 外壳 / 捕获信息四个「单例语义、不参与命中、导出期套用」的效果层曾靠四段同构 API + 四份手维护黑名单镜像维持，并产生过一次真实漂移（`ResizeHandle` 漏排除 captureInfo）。现收敛为契约（`Annotation/EffectLayer.swift`）：
 

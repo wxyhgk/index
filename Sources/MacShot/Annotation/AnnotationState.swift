@@ -28,8 +28,10 @@ final class AnnotationState {
     /// 钉图/编辑器没有中性态概念，默认 true 维持现状。
     var pointerEngaged: Bool = true
 
-    var colorIndex: Int
-    var widthIndex: Int
+    /// 每个工具各记各的样式（键是 `AnnotationTool.id`）。
+    /// 旧版本这里是全局的一份 colorIndex/widthIndex，所有工具共用 ——
+    /// 拿箭头选了红色粗线，切到文字就是红色粗体。见 `ToolStyle`。
+    private var toolStyles: [String: ToolStyle] = [:]
 
     /// 画布空间相对屏幕点的倍率。笔宽和字号按它换算，
     /// 这样不管画布怎么缩放，画出来的线在屏幕上都是同样粗细。
@@ -108,16 +110,71 @@ final class AnnotationState {
     }
 
     init() {
+        // 先铺描述符声明的默认样式，再用用户存下来的偏好覆盖。
+        // 设置页里那两个全局默认（颜色/粗细）作为**首次使用**的种子，
+        // 只作用于还没有单独偏好的工具。
         let settings = AppSettings.shared
-        colorIndex = Self.palette.indices.contains(settings.defaultColorIndex)
+        let seedColor = Self.palette.indices.contains(settings.defaultColorIndex)
             ? settings.defaultColorIndex : 0
-        widthIndex = Self.widths.indices.contains(settings.defaultWidthIndex)
+        let seedWidth = Self.widths.indices.contains(settings.defaultWidthIndex)
             ? settings.defaultWidthIndex : 1
+
+        for descriptor in ToolRegistry.descriptors {
+            var style = descriptor.defaultStyle
+            if descriptor.axes.contains(.color) { style.colorIndex = seedColor }
+            if descriptor.axes.contains(.width) { style.widthIndex = seedWidth }
+            toolStyles[descriptor.tool.id] = style
+        }
+        for (id, saved) in settings.toolStyles {
+            toolStyles[id] = saved
+        }
     }
 
-    var color: LColor { Self.palette[colorIndex] }
-    var lineWidth: Double { Self.widths[widthIndex] * strokeScale }
-    var fontSize: Double { (Self.widths[widthIndex] * 4 + 8) * strokeScale }
+    // MARK: - 当前样式
+    //
+    // 「当前」指的是**正在用的那个工具**；指针模式下选中了图层时，
+    // 指的是那一层对应的工具 —— 点中一个箭头再点色块，改的是箭头的样式。
+
+    /// 样式归属的工具。工具条按它决定显示哪些轴。
+    var styleTool: AnnotationTool? {
+        if let tool { return tool }
+        guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return nil }
+        return AnnotationTool(kind: layers[index].kind)
+    }
+
+    /// 当前工具声明的样式轴。没有工具（纯指针、未选中）时为空 —— 工具条不摆任何样式控件。
+    var styleAxes: [ToolStyleAxis] {
+        guard let styleTool else { return [] }
+        return ToolRegistry.descriptor(for: styleTool).axes
+    }
+
+    var currentStyle: ToolStyle {
+        guard let styleTool else { return ToolStyle() }
+        return toolStyles[styleTool.id] ?? ToolRegistry.descriptor(for: styleTool).defaultStyle
+    }
+
+    func styleIndex(for axis: ToolStyleAxis) -> Int { currentStyle.index(for: axis) }
+
+    /// 改当前工具某根轴的档位，并落盘。返回是否真的变了。
+    @discardableResult
+    func setStyleIndex(_ index: Int, for axis: ToolStyleAxis) -> Bool {
+        guard let styleTool else { return false }
+        var style = currentStyle
+        guard style.index(for: axis) != index else { return false }
+        style.setIndex(index, for: axis)
+        toolStyles[styleTool.id] = style
+        // 与 init 里读 AppSettings 是同一处妥协（见 ARCHITECTURE §1 违例表）：
+        // 样式偏好本质上是用户设置，落盘通道只有这一条。
+        AppSettings.shared.toolStyles[styleTool.id] = style
+        return true
+    }
+
+    var color: LColor {
+        let index = currentStyle.colorIndex
+        return Self.palette.indices.contains(index) ? Self.palette[index] : Self.palette[0]
+    }
+    var lineWidth: Double { currentStyle.value(for: .width) * strokeScale }
+    var fontSize: Double { currentStyle.value(for: .fontSize) * strokeScale }
 
     var isEmpty: Bool { layers.isEmpty }
     var isDrawing: Bool { dragStart != nil }
@@ -145,16 +202,28 @@ final class AnnotationState {
     }
 
     private func makeLayer(tool: AnnotationTool, from a: CGPoint, to b: CGPoint) -> Layer {
-        var c = color
-        if tool == .highlight { c.a = 0.4 }
+        // 用**这个工具自己**的样式，而不是当前 styleTool 的 ——
+        // 两者通常一致，但选中图层时 styleTool 指向被选中那层的工具。
+        let style = toolStyles[tool.id] ?? ToolRegistry.descriptor(for: tool).defaultStyle
+        let axes = ToolRegistry.descriptor(for: tool).axes
+
+        var c = Self.palette.indices.contains(style.colorIndex)
+            ? Self.palette[style.colorIndex] : Self.palette[0]
+        if axes.contains(.opacity) { c.a = style.value(for: .opacity) }
+
         var layer = Layer(
             kind: tool.layerKind,
             rect: LRect(from: a, to: b),
             color: c,
-            lineWidth: lineWidth,
+            lineWidth: style.value(for: .width) * strokeScale,
             text: "",
-            fontSize: fontSize
+            fontSize: style.value(for: .fontSize) * strokeScale
         )
+        // 只给声明了这两根轴的工具烤参数，其余保持 nil ——
+        // 渲染器遇到 nil 走旧的硬编码默认，旧图层因此行为不变。
+        if axes.contains(.blockSize) { layer.blockScale = style.value(for: .blockSize) }
+        if axes.contains(.dim) { layer.dim = style.value(for: .dim) }
+
         if tool == .dimension {
             prepareDimension(&layer)
         }
@@ -258,7 +327,7 @@ final class AnnotationState {
         guard r.width >= 2 || r.height >= 2 else { return false }
 
         if layer.kind == .pixelate {
-            pixelatePreviews[layer.id] = pixelSource(r).flatMap(LayerRenderer.pixelated)
+            pixelatePreviews[layer.id] = pixelSource(r).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
         }
         // 裁剪同时只允许存在一个：旧的记成可撤销的删除，再落新的。
         if layer.kind == .crop {
@@ -305,7 +374,7 @@ final class AnnotationState {
         clear()
         layers = Layers<CanvasSpace>(source.elements)
         for layer in layers.elements where layer.kind == .pixelate {
-            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap(LayerRenderer.pixelated)
+            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
         }
     }
 
@@ -381,7 +450,7 @@ final class AnnotationState {
         guard let moveID, let index = layers.firstIndex(id: moveID) else { return false }
         let layer = layers[index]
         if layer.kind == .pixelate {
-            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap(LayerRenderer.pixelated)
+            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
         }
         // 原地点了一下没有位移，不算一次操作。
         if let from = moveFromRect, from != layer.rect {
@@ -505,7 +574,7 @@ final class AnnotationState {
         guard layer != original else { return true }
 
         if layer.kind == .pixelate {
-            pixelatePreviews[resizeID] = pixelSource(layer.rect.cg).flatMap(LayerRenderer.pixelated)
+            pixelatePreviews[resizeID] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
             record(.move(
                 id: resizeID,
                 from: original.rect,
@@ -578,7 +647,10 @@ final class AnnotationState {
     func applyColorToSelection() -> Bool {
         guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return false }
         var c = color
-        if layers[index].kind == .highlight { c.a = 0.4 }
+        // 高亮的透明度是它自己那根轴，不再是写死的 0.4。
+        if layers[index].kind == .highlight {
+            c.a = currentStyle.value(for: .opacity)
+        }
         let before = layers[index]
         layers[index].color = c
         if before != layers[index] {
@@ -587,13 +659,26 @@ final class AnnotationState {
         return true
     }
 
-    /// 把当前粗细（和随之派生的字号）应用到选中的图层。
+    /// 把某根样式轴的当前档位应用到选中的图层。
+    ///
+    /// 「点中一层再点样式」是最直觉的改样式方式，所以每根轴都支持 ——
+    /// 唯独 `.blockSize` 例外：马赛克的显示靠预先算好的贴片，重算需要原始像素，
+    /// 而工具条控件手上没有像素来源。把取样闭包存进状态机会让「视图 → 状态机 →
+    /// 闭包 → 视图」成环，不值得为此冒内存泄漏的风险。改颗粒因此只影响新画的马赛克。
     @discardableResult
-    func applyWidthToSelection() -> Bool {
+    func applyStyleToSelection(_ axis: ToolStyleAxis) -> Bool {
         guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return false }
         let before = layers[index]
-        layers[index].lineWidth = lineWidth
-        layers[index].fontSize = fontSize
+
+        switch axis {
+        case .color:     return applyColorToSelection()
+        case .width:     layers[index].lineWidth = lineWidth
+        case .fontSize:  layers[index].fontSize = fontSize
+        case .opacity:   layers[index].color.a = currentStyle.value(for: .opacity)
+        case .dim:       layers[index].dim = currentStyle.value(for: .dim)
+        case .blockSize: return false   // 见上
+        }
+
         if before != layers[index] {
             record(.style(id: selectedID, before: before, after: layers[index]))
         }

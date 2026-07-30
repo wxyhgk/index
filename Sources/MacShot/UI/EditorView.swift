@@ -207,22 +207,25 @@ struct EditorView: View {
 
             Spacer(minLength: DS.s2)
 
-            // 颜色 / 粗细保持小控件，靠右紧凑放。
-            HStack(spacing: 4) {
-                ForEach(AnnotationState.palette.indices, id: \.self) { index in
-                    colorButton(index)
+            // 样式控件靠右紧凑放，**只显示当前工具声明的轴**
+            // （见 ToolStyle：马赛克没有颜色轴，裁剪一根轴都没有）。
+            if annotation.styleAxes.contains(.color) {
+                HStack(spacing: 4) {
+                    ForEach(AnnotationState.palette.indices, id: \.self) { index in
+                        colorButton(index)
+                    }
                 }
+                Divider().frame(height: 18)
             }
 
-            Divider().frame(height: 18)
-
-            HStack(spacing: 4) {
-                ForEach(AnnotationState.widths.indices, id: \.self) { index in
-                    widthButton(index)
+            ForEach(annotation.styleAxes.filter { $0 != .color }, id: \.self) { axis in
+                HStack(spacing: 4) {
+                    ForEach(axis.steps.indices, id: \.self) { index in
+                        paramButton(axis, index)
+                    }
                 }
+                Divider().frame(height: 18)
             }
-
-            Divider().frame(height: 18)
 
             Button {
                 performUndo()
@@ -326,9 +329,9 @@ struct EditorView: View {
 
     private func colorButton(_ index: Int) -> some View {
         let c = AnnotationState.palette[index]
-        let selected = annotation.colorIndex == index
+        let selected = annotation.styleIndex(for: .color) == index
         return Button {
-            annotation.colorIndex = index
+            annotation.setStyleIndex(index, for: .color)
             annotation.applyColorToSelection()
             annotationTick += 1
         } label: {
@@ -348,12 +351,14 @@ struct EditorView: View {
         .help("颜色 \(index + 1)")
     }
 
-    private func widthButton(_ index: Int) -> some View {
-        let diameter = CGFloat(AnnotationState.widths[index]) + 3
-        let selected = annotation.widthIndex == index
+    /// 数值型样式轴的档位按钮（粗细 / 字号 / 透明度 / 颗粒 / 压暗）。
+    /// 圆点直径按档位递增，够表达「三档由小到大」；具体语义靠 help 文案区分。
+    private func paramButton(_ axis: ToolStyleAxis, _ index: Int) -> some View {
+        let diameter = 5 + CGFloat(index) * 4
+        let selected = annotation.styleIndex(for: axis) == index
         return Button {
-            annotation.widthIndex = index
-            annotation.applyWidthToSelection()
+            annotation.setStyleIndex(index, for: axis)
+            annotation.applyStyleToSelection(axis)
             annotationTick += 1
         } label: {
             Circle()
@@ -362,7 +367,7 @@ struct EditorView: View {
                 .frame(width: 20, height: 20)
         }
         .buttonStyle(.plain)
-        .help("粗细 \(index + 1)")
+        .help("\(axis.title) \(index + 1)")
     }
 
     // MARK: - 效果面板（右侧「效果」tab）

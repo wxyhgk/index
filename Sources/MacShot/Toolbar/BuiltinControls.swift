@@ -90,11 +90,14 @@ struct ColorControl: ToolbarControl {
     var group: ToolbarGroup { .style }
     var order: Int { index }
 
-    /// 拿着画笔、或选中了已画的图层时才有意义，其余时候不占位置。
+    /// 只有**声明了颜色轴**的工具才显示色块。马赛克 / 聚光灯 / 裁剪的渲染
+    /// 根本不读 `layer.color` —— 从前它们照样摆一排点了没反应的色块。
     func isVisible(_ context: ToolbarContext) -> Bool {
-        context.annotation.tool != nil || context.annotation.selectedID != nil
+        context.annotation.styleAxes.contains(.color)
     }
-    func isSelected(_ context: ToolbarContext) -> Bool { context.annotation.colorIndex == index }
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.styleIndex(for: .color) == index
+    }
     func width(_ context: ToolbarContext) -> CGFloat { ToolbarStyle.swatchWidth }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
@@ -110,41 +113,100 @@ struct ColorControl: ToolbarControl {
     }
 
     func activate(_ context: ToolbarContext) {
-        context.annotation.colorIndex = index
+        context.annotation.setStyleIndex(index, for: .color)
         // 有选中图层时顺带改它的颜色 —— 「点中再点色」是最直觉的改色方式。
         context.annotation.applyColorToSelection()
     }
 }
 
-struct WidthControl: ToolbarControl {
+/// 数值型样式轴的档位控件（粗细 / 字号 / 透明度 / 颗粒 / 压暗）。
+///
+/// 一根轴三档，登记处按 `ToolStyleAxis` × 档位注册一遍；**只有当前工具声明了
+/// 这根轴时才出现**。从前只有「粗细」一个控件，而字号是从粗细派生的
+/// （`线宽 × 4 + 8`）——调矩形边框粗细会顺手改掉文字大小。
+struct ToolParamControl: ToolbarControl {
+    let axis: ToolStyleAxis
     let index: Int
 
-    var id: String { "width.\(index)" }
+    var id: String { "param.\(axis.rawValue).\(index)" }
     var scopes: Set<ActionScope> { [.capture, .pinned] }
     var group: ToolbarGroup { .style }
-    /// 排在颜色后面。
-    var order: Int { 100 + index }
+    var order: Int { axis.order + index }
 
     func isVisible(_ context: ToolbarContext) -> Bool {
-        context.annotation.tool != nil || context.annotation.selectedID != nil
+        context.annotation.styleAxes.contains(axis)
     }
-    func isSelected(_ context: ToolbarContext) -> Bool { context.annotation.widthIndex == index }
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.styleIndex(for: axis) == index
+    }
     func width(_ context: ToolbarContext) -> CGFloat { 24 }
 
+    /// 每根轴用自己的视觉语言表达「三档」，光看图标就知道在调什么：
+    /// 粗细 = 圆点由小到大；字号 = 字母 A 由小到大；透明度 = 同色不同浓淡；
+    /// 颗粒 = 方格由密到疏；压暗 = 灰度由浅到深。
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
-        let radius = CGFloat(AnnotationState.widths[index]) / 2 + 1.5
-        NSColor.white.setFill()
-        NSBezierPath(ovalIn: NSRect(
-            x: frame.midX - radius,
-            y: frame.midY - radius,
-            width: radius * 2,
-            height: radius * 2
-        )).fill()
+        switch axis {
+        case .color:
+            break   // 颜色不走这里，见 ColorControl
+
+        case .width:
+            let radius = CGFloat(axis.steps[index]) / 2 + 1.5
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: NSRect(
+                x: frame.midX - radius, y: frame.midY - radius,
+                width: radius * 2, height: radius * 2
+            )).fill()
+
+        case .fontSize:
+            let size = 9 + CGFloat(index) * 3
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: size, weight: .semibold),
+                .foregroundColor: NSColor.white
+            ]
+            let text = "A" as NSString
+            let bounds = text.size(withAttributes: attrs)
+            text.draw(
+                at: NSPoint(x: frame.midX - bounds.width / 2, y: frame.midY - bounds.height / 2),
+                withAttributes: attrs
+            )
+
+        case .opacity:
+            NSColor.white.withAlphaComponent(axis.steps[index]).setFill()
+            NSBezierPath(ovalIn: NSRect(
+                x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12
+            )).fill()
+
+        case .blockSize:
+            // 格数随档位递减：密 → 疏，正好对应颗粒由细到粗。
+            let counts = [4, 3, 2]
+            let n = counts[min(index, counts.count - 1)]
+            let side: CGFloat = 12
+            let cell = side / CGFloat(n)
+            NSColor.white.setFill()
+            for row in 0..<n where row % 2 == 0 || true {
+                for col in 0..<n where (row + col) % 2 == 0 {
+                    NSBezierPath(rect: NSRect(
+                        x: frame.midX - side / 2 + CGFloat(col) * cell,
+                        y: frame.midY - side / 2 + CGFloat(row) * cell,
+                        width: cell, height: cell
+                    )).fill()
+                }
+            }
+
+        case .dim:
+            NSColor.black.withAlphaComponent(axis.steps[index]).setFill()
+            let dot = NSRect(x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12)
+            NSBezierPath(ovalIn: dot).fill()
+            NSColor.white.withAlphaComponent(0.5).setStroke()
+            let ring = NSBezierPath(ovalIn: dot)
+            ring.lineWidth = 1
+            ring.stroke()
+        }
     }
 
     func activate(_ context: ToolbarContext) {
-        context.annotation.widthIndex = index
-        context.annotation.applyWidthToSelection()
+        context.annotation.setStyleIndex(index, for: axis)
+        context.annotation.applyStyleToSelection(axis)
     }
 }
 
@@ -343,7 +405,11 @@ extension ToolbarRegistry {
 
         registry.register(LiveTextControl())
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
-        AnnotationState.widths.indices.forEach { registry.register(WidthControl(index: $0)) }
+        // 数值轴 × 三档全部注册；哪些真正出现在条上由当前工具的描述符决定
+        // （`ToolParamControl.isVisible` → `ToolRegistry.descriptor(for:).axes`）。
+        for axis in ToolStyleAxis.allCases where axis != .color {
+            axis.steps.indices.forEach { registry.register(ToolParamControl(axis: axis, index: $0)) }
+        }
         registry.register(EffectToggleControl(
             id: "backdrop", order: 300, symbolName: "sparkles", kind: .backdrop
         ))

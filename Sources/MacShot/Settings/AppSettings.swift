@@ -64,6 +64,7 @@ final class AppSettings: ObservableObject {
         static let enterBehavior = "enterBehavior"
         static let defaultColorIndex = "defaultColorIndex"
         static let defaultWidthIndex = "defaultWidthIndex"
+        static let toolStyles = "toolStyles"
         static let captureDelay = "captureDelay"
         static let captureShortcut = "captureShortcut"
         static let galleryShortcut = "galleryShortcut"
@@ -197,6 +198,19 @@ final class AppSettings: ObservableObject {
 
     @Published var defaultWidthIndex: Int {
         didSet { defaults.set(defaultWidthIndex, forKey: Keys.defaultWidthIndex) }
+    }
+
+    /// 每个工具单独记住的样式（键是 `AnnotationTool.id`）。
+    ///
+    /// 上面那两个全局默认降级为**首次使用的种子**：只作用于还没有单独偏好的工具。
+    /// 存成 JSON 而不是逐项开一个 UserDefaults 键 —— 工具 × 样式轴是二维的，
+    /// 摊平会变成几十个键，加一根轴就要改一次注册表。
+    /// 解不出来（格式变更 / 手工改坏）就退回空字典，让描述符的默认值兜底。
+    @Published var toolStyles: [String: ToolStyle] {
+        didSet {
+            guard let data = try? JSONEncoder().encode(toolStyles) else { return }
+            defaults.set(String(data: data, encoding: .utf8), forKey: Keys.toolStyles)
+        }
     }
 
     // MARK: - 水印
@@ -365,6 +379,9 @@ final class AppSettings: ObservableObject {
             .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish
         defaultColorIndex = defaults.integer(forKey: Keys.defaultColorIndex)
         defaultWidthIndex = defaults.integer(forKey: Keys.defaultWidthIndex)
+        toolStyles = defaults.string(forKey: Keys.toolStyles)
+            .flatMap { $0.data(using: .utf8) }
+            .flatMap { try? JSONDecoder().decode([String: ToolStyle].self, from: $0) } ?? [:]
         watermarkText = defaults.string(forKey: Keys.watermarkText) ?? ""
         watermarkMode = defaults.string(forKey: Keys.watermarkMode)
             .flatMap(WatermarkMode.init(rawValue:)) ?? .corner

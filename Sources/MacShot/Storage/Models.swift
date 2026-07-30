@@ -147,6 +147,17 @@ struct Layer: Codable, Identifiable, Equatable {
     var lineWidth: Double = 4
     var text: String = ""
     var fontSize: Double = 28
+
+    // —— 单工具参数（见 `ToolStyle`）。
+    //
+    // **必须是可选的**：Layer 的 Codable 是合成的，而合成的解码器**不会**使用默认值 ——
+    // 加一个非可选字段会让所有旧修订的 JSON 直接解不出来。可选字段走 decodeIfPresent，
+    // 旧数据解出 nil，渲染器据此退回硬编码默认值，行为与从前一模一样。
+
+    /// 马赛克颗粒相对默认值的倍率。nil = 旧图层，用默认公式。
+    var blockScale: Double?
+    /// 聚光灯区域外的压暗程度（0…1）。nil = 旧图层，用 0.55。
+    var dim: Double?
 }
 
 // MARK: - 截图记录（原图不可变）
