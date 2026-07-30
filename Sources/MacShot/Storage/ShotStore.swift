@@ -577,6 +577,37 @@ final class ShotStore: ObservableObject {
                     LIMIT 500
                     """, arguments: StatementArguments(arguments))
             }
+            // ⚠️ **trigram 分词器搜不了少于 3 个字符的词**（SQLite 的既定行为：
+            // 索引的是三字符片段，两字符的 MATCH 永远返回空）。中文里两字词是绝对
+            // 主力 —— 文档、报告、终端、代码、微信……全都搜不到，实测「文档」在库里
+            // 有 5 张却 0 命中。所以短查询绕开 FTS，改用 LIKE 全表子串扫。
+            //
+            // 只有短查询走 LIKE：长查询继续吃 FTS 的索引，不牺牲大库的速度。
+            // LIKE 扫的列与两张 FTS 虚表建表时的列一一对应，两条路径的可搜范围一致。
+            if query.count < 3 {
+                // `%` `_` 是 LIKE 的通配符，用户搜它们时得转义，否则「50%」会变成万能匹配。
+                let escaped = query
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "%", with: "\\%")
+                    .replacingOccurrences(of: "_", with: "\\_")
+                arguments["like"] = "%\(escaped)%"
+                return try Shot.fetchAll(db, sql: """
+                    SELECT shot.* FROM shot
+                    WHERE (
+                        shot.appName LIKE :like ESCAPE '\\'
+                        OR shot.windowTitle LIKE :like ESCAPE '\\'
+                        OR shot.sourceURL LIKE :like ESCAPE '\\'
+                        OR shot.ocrText LIKE :like ESCAPE '\\'
+                        OR shot.id IN (
+                            SELECT shotID FROM shotAttribute
+                            WHERE text LIKE :like ESCAPE '\\'
+                        )
+                    ) \(filterClause)
+                    ORDER BY shot.capturedAt DESC
+                    LIMIT 500
+                    """, arguments: StatementArguments(arguments))
+            }
+
             // trigram 分词器下用带引号的原始串做子串匹配。
             let escaped = query.replacingOccurrences(of: "\"", with: "\"\"")
             arguments["pattern"] = "\"\(escaped)\""

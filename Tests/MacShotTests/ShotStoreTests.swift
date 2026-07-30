@@ -309,4 +309,80 @@ final class ShotStoreTests: XCTestCase {
             "查询计划应命中复合索引，实际为：\(plan)"
         )
     }
+
+    // MARK: - 搜索
+
+    /// **两字词必须能搜到。** FTS5 的 trigram 分词器索引的是三字符片段，
+    /// 少于 3 个字符的 MATCH 永远返回空 —— 而中文里两字词是绝对主力
+    /// （文档、报告、终端、代码…）。短查询要绕开 FTS 走 LIKE 兜底。
+    func testShortQueryFallsBackToLikeSearch() throws {
+        let (store, _) = try makeStore()
+
+        var doc = CaptureMetadata()
+        doc.appName = "预览"
+        doc.windowTitle = "季度文档汇总"
+        _ = try store.save(image: makeImage(gray: 0.1), metadata: doc)
+
+        var other = CaptureMetadata()
+        other.appName = "Xcode"
+        other.windowTitle = "ContentView.swift"
+        _ = try store.save(image: makeImage(gray: 0.2), metadata: other)
+
+        // 两个汉字：走 LIKE。
+        store.searchText = "文档"
+        store.reload()
+        XCTAssertEqual(store.shots.count, 1, "两字词搜不到 —— trigram 的 3 字符下限没兜住")
+        XCTAssertEqual(store.shots.first?.windowTitle, "季度文档汇总")
+
+        // 两个 ASCII 字符同理。
+        store.searchText = "预览"
+        store.reload()
+        XCTAssertEqual(store.shots.count, 1)
+
+        // 三个字符以上继续走 FTS，行为不变。
+        store.searchText = "ContentView"
+        store.reload()
+        XCTAssertEqual(store.shots.count, 1)
+        XCTAssertEqual(store.shots.first?.appName, "Xcode")
+    }
+
+    /// 短查询里的 `%` `_` 是 LIKE 的通配符，必须转义 ——
+    /// 否则搜「%」会把整个库都匹配出来。
+    func testShortQueryEscapesLikeWildcards() throws {
+        let (store, _) = try makeStore()
+
+        var withPercent = CaptureMetadata()
+        withPercent.windowTitle = "CPU 90% 占用"
+        _ = try store.save(image: makeImage(gray: 0.1), metadata: withPercent)
+
+        var plain = CaptureMetadata()
+        plain.windowTitle = "普通标题"
+        _ = try store.save(image: makeImage(gray: 0.2), metadata: plain)
+
+        store.searchText = "0%"
+        store.reload()
+        XCTAssertEqual(store.shots.count, 1, "通配符没转义，把不含 % 的也匹配了")
+        XCTAssertEqual(store.shots.first?.windowTitle, "CPU 90% 占用")
+    }
+
+    /// 短查询也要受侧边栏筛选收窄，不能绕开筛选条件。
+    func testShortQueryStillHonorsFilter() throws {
+        let (store, _) = try makeStore()
+
+        var a = CaptureMetadata()
+        a.appName = "预览"
+        let shotA = try store.save(image: makeImage(gray: 0.1), metadata: a)
+
+        var b = CaptureMetadata()
+        b.appName = "预览"
+        _ = try store.save(image: makeImage(gray: 0.2), metadata: b)
+
+        store.toggleFavorite(shotA)
+
+        store.searchText = "预览"
+        store.filter = .favorites
+        store.reload()
+        XCTAssertEqual(store.shots.count, 1, "短查询绕开了收藏筛选")
+        XCTAssertEqual(store.shots.first?.id, shotA.id)
+    }
 }
