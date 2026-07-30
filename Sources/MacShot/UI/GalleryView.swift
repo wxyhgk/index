@@ -20,8 +20,17 @@ struct GalleryView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var modelStore = CLIPModelStore.shared
 
-    /// 网格列的稳定宽度（外层量取，不受常驻滚动条挤压），列数由它算。
-    @State private var gridWidth: CGFloat = 900
+    // ⚠️ 这里**没有**任何宽度状态，这是有意的。本视图是三栏的共同父层，
+    // 在这一层放一个「随网格宽度每帧变化」的 @State（曾经的 gridWidth），
+    // 拖 NavigationSplitView 的分隔条时每一帧都会重算 GalleryView.body，代价是：
+    //   · `inspectorPane` 是 ViewBuilder 参数，**急切求值** ——
+    //     `multiSelectedShots` / `selectedShot` 的三趟全列表扫描每帧各跑一遍；
+    //   · 整条 searchable / toolbar / inspector 修饰器链每帧重建；
+    //   · 最贵的一项：网格的入参每帧都不同 → GalleryGrid.body 必定重算 →
+    //     每张可见卡片的 contextMenu 内容、draggable 载荷、preview 闭包
+    //     跟着逐帧重求值（这几样都是急切求值的，见 GalleryGrid.cardBody）。
+    // 宽度感知现在住在 GalleryGrid 内部（见 GalleryGrid.widthReader），
+    // 失效范围收缩到网格子树，拖动分隔条时本视图的 body 一次都不重算。
 
     /// 详情栏（inspector）开关，跨启动记住。
     @AppStorage("galleryInspectorShown") private var showInspector = true
@@ -79,8 +88,7 @@ struct GalleryView: View {
             GallerySidebar()
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } detail: {
-            GalleryGrid(width: gridWidth)
-                .background(gridWidthReader)
+            GalleryGrid()
         }
         .inspector(isPresented: $showInspector) {
             inspectorPane
@@ -156,16 +164,5 @@ struct GalleryView: View {
     private func closeEditorIfShotDeleted() {
         guard mode.isEditing, mode.resolveEditingShot() == nil else { return }
         mode.returnToGallery()
-    }
-
-    /// 把网格列的实际宽度报给键盘导航（上下键 = ±列数，列数从宽度反推）。
-    private var gridWidthReader: some View {
-        GeometryReader { proxy in
-            Color.clear
-                .onChange(of: proxy.size.width, initial: true) { _, width in
-                    GalleryKeyboard.shared.gridWidth = width
-                    gridWidth = width
-                }
-        }
     }
 }

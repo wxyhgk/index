@@ -48,9 +48,6 @@ private enum GalleryLayoutMode: String {
 
 struct GalleryGrid: View {
 
-    /// 外层（不受滚动条出没影响的）可用宽度，列数由它显式算出。
-    let width: CGFloat
-
     @ObservedObject private var store = ShotStore.shared
     @ObservedObject private var selection = GallerySelection.shared
     /// 只为一个开关订阅：逐卡滚动深度（`galleryScrollDepth`）。
@@ -74,25 +71,77 @@ struct GalleryGrid: View {
     @State private var timelineShot: Shot?
     @State private var similarShot: Shot?
 
-    /// 列布局用**固定列宽**，由外层稳定宽度显式算出，绝不用 .adaptive ——
+    // MARK: 宽度派生状态
+    //
+    // 这两个是全部的「宽度派生状态」，都住在**网格自己**这一层（历史上它们在
+    // GalleryView 里，那是三栏的共同父层 —— 于是拖 NavigationSplitView 的分隔条
+    // 每一帧都会重算 GalleryView.body，把侧边栏和详情栏一起拖下水。见 `widthReader`）。
+
+    /// 网格列数。**离散量**：拖分隔条时只在跨阈值那一下变一次，
+    /// 中间的几十帧一次 state 都不写 → GalleryGrid.body 也就不重算。
+    /// 默认 4 = 默认窗宽（900）在默认缩放档（200）下的列数，首帧不跳。
+    @State private var columnCount = 4
+
+    /// 瀑布模式的**数值**列宽（网格模式不用，见 `gridItems`）。
+    @State private var waterfallColumnWidth: CGFloat = 200
+
+    /// 列数由**外层稳定宽度**显式算出，绝不用 `.adaptive` ——
     /// 接实体鼠标时 macOS 显示常驻滚动条：内容超高 → 滚动条挤窄内容区 →
     /// adaptive 重排少一列 → 内容变矮 → 滚动条消失 → 变宽 → 翻回来……
     /// 自持振荡，表现为尾部卡片无输入也一直闪。列数只看外层宽度就稳了。
-    private func columnMetrics(for width: CGFloat) -> (itemWidth: CGFloat, count: Int) {
+    private func resolvedColumnCount(for width: CGFloat) -> Int {
         var count = max(1, Int((width - 2 * DS.s4 + DS.s4) / (zoom + DS.s4)))
-        // 给常驻滚动条预留：列宽按可用宽扣除 16pt 计算，列数不受它出没影响。
+        // 常驻滚动条那 16pt 的保护**留在列数公式里**：滚动条一出会把最后一列
+        // 挤到明显窄于缩放档（< 60%）时，主动少排一列 —— 由我们显式决定，
+        // 而不是让布局自己去反推（那就是上面那场振荡）。
         let usable = width - 2 * DS.s4 - 16 - CGFloat(count - 1) * DS.s4
         if usable < CGFloat(count) * zoom * 0.6 { count = max(1, count - 1) }
-        let itemWidth = max(80, (width - 2 * DS.s4 - 16 - CGFloat(count - 1) * DS.s4) / CGFloat(count))
-        return (itemWidth, count)
+        return count
     }
 
-    private func fixedColumns(for width: CGFloat) -> (items: [GridItem], count: Int) {
-        let metrics = columnMetrics(for: width)
-        return (
-            Array(repeating: GridItem(.fixed(metrics.itemWidth), spacing: DS.s4), count: metrics.count),
-            metrics.count
+    /// 网格模式的列：**固定列数** × `.flexible`，列宽交给 SwiftUI 平分。
+    ///
+    /// ⚠️ `.flexible` **不是**退回 `.adaptive`，两者的区别就是上面那场事故的成因：
+    ///   · `.adaptive` 自己从**可用宽度反推列数** —— 可用宽度含滚动条挤压，
+    ///     于是「列数 → 内容高度 → 滚动条 → 可用宽度 → 列数」闭成一个环。
+    ///   · `.flexible` **不碰列数**：列数是 `resolvedColumnCount(for:)` 从外层
+    ///     稳定宽度算好的常量，它只负责把这几列拉开填满。滚动条出没带来的
+    ///     十几点宽度抖动只会让列宽微变、**列数不变**，环断了，是良性的。
+    /// 换成 `.flexible` 的收益：列宽不再是需要每帧写进 @State 的数值，
+    /// 宽度派生状态收缩成一个离散的列数（见 `applyMetrics`）。
+    ///
+    /// minimum 用 80（老的 `itemWidth` 下限同一个数）而不是 zoom：
+    /// `.flexible` 的 minimum 是硬下限，填 zoom 会在窄窗口下撑出横向溢出。
+    private var gridItems: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(minimum: 80), spacing: DS.s4),
+            count: max(1, columnCount)
         )
+    }
+
+    /// 瀑布模式的数值列宽。自定义 `Layout` 拿不到「交给 SwiftUI 拉伸」这条路
+    /// （它必须自己摆位置），所以这一份数值躲不掉 —— 但可以把抖动**量化**掉：
+    /// 向下取整到 4pt 的整数倍。
+    ///
+    /// 用量化而不是「变化超过阈值才写」：量化是「宽度 → 列宽」的纯函数，
+    /// 同一个窗口宽度永远得到同一个列宽；阈值法带滞后，结果取决于拖动路径，
+    /// 同样的窗宽可能停在不同列宽上，换个模式重新量取时还会跳一下。
+    /// 代价是右侧最多多留 4pt × 列数的空白 —— 列从左边界起排（`.leading`），
+    /// 富余全落在右侧，和滚动条预留的那 16pt 是同一侧、同一种留白。
+    ///
+    /// **向下**取整而不是四舍五入，且这里保留 16pt 的滚动条预留：
+    /// WaterfallLayout 的自然宽度超过提案时会横向溢出（它故意不从 proposal
+    /// 反推），列宽宁可小几点也不能大。
+    private func quantizedWaterfallColumnWidth(for width: CGFloat, columns: Int) -> CGFloat {
+        let usable = width - 2 * DS.s4 - 16 - CGFloat(columns - 1) * DS.s4
+        let raw = usable / CGFloat(max(1, columns))
+        return max(80, (raw / DS.s1).rounded(.down) * DS.s1)
+    }
+
+    /// 键盘导航拿到的列数。瀑布模式各列行高不齐，「上下 = ±列数」的网格假设失效 ——
+    /// 报 1，上下键退化为顺序前后（和左右一致）。
+    private var keyboardColumnCount: Int {
+        layoutMode == .waterfall ? 1 : columnCount
     }
 
     /// 网格内容的重算触发器：模式切换或数据变化都要重新分组。
@@ -121,6 +170,15 @@ struct GalleryGrid: View {
         // 否则筛不到结果时中栏会露出窗口底色，和有内容时不是一个灰。
         // ScrollView 自己那份见 `grid`：两者的帧不同，工具栏底下那 52pt 只有它盖得住。
         .background(Color(nsColor: .underPageBackgroundColor))
+        // 宽度感知：测量点是**本视图的根帧**（= 网格列的容器帧，滚动条在它内部），
+        // 和它历史上待的位置（GalleryView 里 `.background(gridWidthReader)`）是同一层几何，
+        // 只是写的 state 从三栏共同父层挪进了网格子树。
+        .background(widthReader)
+        // 列数是键盘导航（上下键 = ±列数）唯一需要知道的东西，网格算好直接喂。
+        // 空列表时网格不渲染，这里也照样上报（值无害，且列表回来时不用等首帧）。
+        .onChange(of: keyboardColumnCount, initial: true) { _, count in
+            GalleryKeyboard.shared.gridColumnCount = count
+        }
         .task(id: GridKey(semanticMode: store.semanticMode, shots: store.displayShots)) {
             // 语义结果本身就是排序（相似度降序），按时间分组会打乱它 —— 单段平铺。
             if store.semanticMode, let results = store.semanticResults {
@@ -185,12 +243,39 @@ struct GalleryGrid: View {
         }
     }
 
+    /// 宽度感知。落在**网格自己**这一层：拖 NavigationSplitView 的分隔条时，
+    /// 每帧变化的宽度只写进这棵子树的 state，侧边栏与详情栏的 body 不跟着重算。
+    ///
+    /// 测量点必须留在这个容器帧上（滚动条在它**内部**），
+    /// **绝不能挪进 ScrollView 的内容里** —— 那是滚动条挤压振荡的来源
+    ///（见 `resolvedColumnCount(for:)` 与 WaterfallLayout 顶部的注释）。
+    private var widthReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onChange(of: proxy.size.width, initial: true) { _, width in
+                    applyMetrics(width: width)
+                }
+                // 缩放滑杆和模式切换不改容器宽度，但都会改列数 / 列宽 ——
+                // 在这里各补一遍（proxy 给的是当前帧的宽度）。
+                .onChange(of: zoom) { _, _ in applyMetrics(width: proxy.size.width) }
+                .onChange(of: layoutMode) { _, _ in applyMetrics(width: proxy.size.width) }
+        }
+    }
+
+    /// 宽度 → 状态。**值没变就不写**，这是本文件里唯一挡住「每帧失效」的地方。
+    private func applyMetrics(width: CGFloat) {
+        guard width > 0 else { return }
+        let count = resolvedColumnCount(for: width)
+        if count != columnCount { columnCount = count }
+        // 数值列宽只有瀑布模式读（网格模式交给 `.flexible`），
+        // 所以网格模式下连量化后的那几次写也省掉。
+        guard layoutMode == .waterfall else { return }
+        let columnWidth = quantizedWaterfallColumnWidth(for: width, columns: count)
+        if columnWidth != waterfallColumnWidth { waterfallColumnWidth = columnWidth }
+    }
+
     private var grid: some View {
-        let layout = fixedColumns(for: width)
-        // 瀑布模式各列行高不齐，「上下 = ±列数」的网格假设失效 ——
-        // 键盘列数报 1，上下键退化为顺序前后（和左右一致）。
-        let keyboardColumns = layoutMode == .waterfall ? 1 : layout.count
-        return ScrollViewReader { proxy in
+        ScrollViewReader { proxy in
             ScrollView {
                 if layoutMode == .waterfall {
                     waterfall
@@ -198,7 +283,7 @@ struct GalleryGrid: View {
                     // 单层 LazyVGrid + Section：嵌套懒容器（LazyVStack>LazyVGrid）
                     // 在内容尾部有已知的重排抖动，扁平化后吸顶头由网格自己管。
                     LazyVGrid(
-                        columns: layout.items,
+                        columns: gridItems,
                         alignment: .leading,
                         spacing: DS.s4,
                         pinnedViews: [.sectionHeaders]
@@ -240,9 +325,7 @@ struct GalleryGrid: View {
             // 冻结的 `ScrollEdgeMask` 只有 topInset、没有「渐变带起点下移」的参数，
             // 在有 pinnedViews 的容器上无解 —— 这条已写进交付报告，等底座补 API。
             // 顶部边缘的「化开」当前由逐卡 `scrollDepth()` 承担（见 card(for:)）。
-            .onChange(of: keyboardColumns, initial: true) { _, count in
-                GalleryKeyboard.shared.columnCountOverride = count
-            }
+
             // 时间线 / 相似 sheet 里选中某张后要能真的滚到它。
             // anchor 用 nil = 最小滚动：目标已可见就一动不动 ——
             // 普通点击选中不能抢走用户的滚动位置（用 .center 会每点一下拽到中间）。
@@ -261,17 +344,22 @@ struct GalleryGrid: View {
     /// 这是「懒容器套非懒容器」—— 和出过事的 LazyVStack>LazyVGrid 双懒嵌套不同，
     /// Layout 是确定性布局，没有内层懒实例化与吸顶 pin 的竞态。
     private var waterfall: some View {
-        let metrics = columnMetrics(for: width)
-        return LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+        LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
             ForEach(sections) { section in
                 Section {
                     WaterfallLayout(
-                        columnCount: metrics.count,
-                        columnWidth: metrics.itemWidth,
+                        columnCount: columnCount,
+                        columnWidth: waterfallColumnWidth,
                         spacing: DS.s4
                     ) {
                         ForEach(section.shots) { shot in
-                            card(for: shot, height: waterfallHeight(for: shot, columnWidth: metrics.itemWidth))
+                            card(
+                                for: shot,
+                                height: waterfallHeight(
+                                    for: shot,
+                                    columnWidth: waterfallColumnWidth
+                                )
+                            )
                         }
                     }
                     .padding(.bottom, DS.s4)

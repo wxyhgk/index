@@ -13,8 +13,16 @@ final class GalleryKeyboard {
 
     static let shared = GalleryKeyboard()
 
-    /// 网格内容列的当前宽度，由 GalleryView 挂 GeometryReader 报告，算列数用。
-    var gridWidth: CGFloat = 0
+    /// 网格**实际使用**的列数，由 GalleryGrid 算好上报（`columnCount()` 的唯一来源）。
+    /// 瀑布模式下网格会上报 1 —— 各列行高不齐，「上下 = ±列数」的假设失效。
+    ///
+    /// 这里刻意**不**存宽度再自己算一遍列数：那是第二份列数真相，
+    /// 和网格的公式一旦漂移，上下键就会跳错行（网格改成 `.flexible` 列宽之后，
+    /// 从宽度反推更是根本推不回来）。
+    ///
+    /// 普通 `var`，不是 `@Published`：它只是给键盘导航读的一个数，
+    /// 赋值不该触发任何视图重绘（网格每次跨列数阈值都会写它）。
+    var gridColumnCount = 1
 
     private var monitor: Any?
 
@@ -131,21 +139,10 @@ final class GalleryKeyboard {
         selection.selectRange(to: targetID, in: shots.compactMap(\.id))
     }
 
-    /// 从网格容器宽度和缩放档反推当前列数。
-    ///
-    /// GalleryGrid 用 .adaptive(minimum: zoom, spacing: DS.s4) + 水平外边距 DS.s4：
-    /// 放得下 n 列的条件是 n·zoom + (n-1)·s4 ≤ width - 2·s4，
-    /// 解出 n = floor((width - 2·s4 + s4) / (zoom + s4))。
-    /// 超出 minimum 的富余只会拉宽已有列（maximum = 1.5×），不会改变列数。
-    /// 网格实际使用的列数（fixedColumns 算好上报）。有它就不再反推。
-    var columnCountOverride: Int?
-
+    /// 上下键的步长 = 网格当前列数。值由网格上报（见 `gridColumnCount`），
+    /// 这里只做一次下限保护 —— 步长为 0 会让上下键变成「原地不动」。
     func columnCount() -> Int {
-        if let count = columnCountOverride { return count }
-        var zoom = UserDefaults.standard.double(forKey: "galleryZoom")
-        if zoom <= 0 { zoom = 200 } // @AppStorage("galleryZoom") 的默认值
-        let available = gridWidth - 2 * DS.s4 + DS.s4
-        return max(1, Int(available / (zoom + DS.s4)))
+        max(1, gridColumnCount)
     }
 
     private func selectedShot() -> Shot? {
