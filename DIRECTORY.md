@@ -64,17 +64,24 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 - `PinImageView` — 图像、标注、Live Text、悬停时浮现的工具条
 - `PinKeyboard` — 按键分发（工具键消费 `AnnotationTool` 的公共快捷键表）
 
-## UI/ — 图库与编辑器（24 文件 / 6571 行）
+## UI/ — 图库与编辑器（29 文件 / 9210 行）
 
 同一个窗口的两个模式：图库（浏览、搜索、多选、标签）和编辑器（标注、图层、效果）。编辑器曾做成独立窗口，因为割裂感又并回了图库窗口。
 
-- `GalleryView` — 三栏布局（侧边栏 / 网格 / 详情栏）、卡片、批量操作、相似 sheet
+图库是**定制 chrome**：没有系统工具栏，红绿灯浮在自绘顶栏上，各功能区是浮在窗口底色上的圆角面板。
+
+- `GalleryView` — 窗口壳：模式分支 + 浮动面板装配。**刻意只依赖模式与详情栏开关两个状态**，任何每帧变化的量（尤其宽度）都不许放这一层，否则整窗每帧重建（有过这个性能事故）
+- `GalleryShell` — 浮动面板容器与通用控件：`floatingPanel` / `ShellIconButtonStyle` / `PanelCloseButton` / `GalleryInspectorPanel`
+- `GalleryTopBar` / `GalleryPageHeader` — 自绘顶栏（logo、⌘K 搜索胶囊、语义搜索 scope 菜单、筛选/视图/设置）与页面头部（大标题、项目数、筛选胶囊）
+- `GalleryRail` / `GallerySidebar` — 左侧图标轨（图标 + 计数 + 高频分类）与可折叠的全量筛选面板
+- `GalleryGrid` / `ShotCard` / `WaterfallLayout` — 网格与卡片（无底色，图片直接浮在窗底上）、底部悬浮胶囊工具条
+- `ShotDetailPane` / `ShotInfoPage` / `InspectorControls` / `MultiSelectionPane` / `TagSection` — 详情面板的摘要页与「全部信息」下钻页
 - `EditorView` — Snagit 风格编辑器：工具栏、画布、图层与效果面板、胶片条
 - `GalleryWindowMode` — 窗口处于哪个模式（存截图 ID 而非快照）+ `GalleryKeyContext` 统一按键让位判定
 - `GalleryKeyboard` / `QuickLookController` / `EditorCanvasScrollView` — 三处事件处理，靠上面那个共享判定协调
-- `LayerCanvas` / `ThumbnailImage` / `WaterfallLayout` / `TimelineView` / `TagSection` / `DesignTokens`
+- `DesignTokens` / `SpatialModifiers` / `LayerCanvas` / `ThumbnailImage` / `TimelineView`
 
-图库部分已按「空间 UI」设计语言改版：`DesignTokens`（`extension DS`）定义深度层、渐变描边、发光、动效四档等 token，`SpatialModifiers` 提供 `spatialCard` / `glassPanel` / `parallaxThumbnail` 等修饰器。改视觉时**先读 `docs/spatial-ui-spec.md`**——里面每个数值都有出处，尤其"内容层不上玻璃""深色靠亮度阶梯不靠阴影"两条铁律，违反了会浑浊或卡顿。
+改视觉前**先读 `docs/gallery-chrome-spec.md`**（目标设计的逐块拆解）与 `docs/spatial-ui-spec.md`（原则、数值出处、性能红线）。两条最容易被无意推翻的铁律：**卡片不许加回底色/材质**（几百张卡的图层数会炸），**面板不许加 Material**（每窗只允许一个 behindWindow 材质，且窗底不透明、材质只会采样自家底色）。
 
 > **现存债务**：`EditorView` 1194 行装了 6 种职责，靠 26 处手动 `annotationTick` 驱动重绘，是下一批拆分对象。`ShotDetailPane` 里的 `maskSensitiveRegions` 是业务逻辑，待下沉到存储层。
 
