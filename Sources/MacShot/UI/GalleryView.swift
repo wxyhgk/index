@@ -97,18 +97,14 @@ struct GalleryView: View {
         .frame(minWidth: 1000, minHeight: 600)
     }
 
-    /// 左侧面板。**这一轮只是把现有侧边栏放进浮动卡片里**，它的内部结构
-    ///（设计稿 §2 的图标轨 + §3 的可折叠标签面板）归下一批改。
+    /// 左侧：图标轨（设计稿 §2）+ 可折叠标签面板（§3）。
     ///
-    /// `.scrollContentBackground(.hidden)`：`GallerySidebar` 是 `List(.sidebar)`，
-    /// 离开 `NavigationSplitView` 之后它自带的那层底会盖住面板的底色。
-    /// 这行必须写在**外面** —— 侧边栏文件这一轮不许改。
+    /// 这一层**只负责把它摆在最左**，一个尺寸都不给：宽度（56 / 168 / 缝）、
+    /// 折叠状态、两块各自的 `.floatingPanel()` 全在 `GalleryLeftPanels` 里 ——
+    /// 展开与收起会让整块的宽度从 232 变成 56，把宽度写在这里就等于要求外壳
+    /// 知道折叠状态，那是本视图刻意不订阅的东西（见上面关于 @State 的注释）。
     private var sidebarPanel: some View {
-        GallerySidebar()
-            .scrollContentBackground(.hidden)
-            .frame(width: DS.Shell.sidebarWidth)
-            .frame(maxHeight: .infinity)
-            .floatingPanel()
+        GalleryLeftPanels()
     }
 
     /// 中间内容区：页头（大标题 + 计数 + 筛选胶囊）+ 网格。
