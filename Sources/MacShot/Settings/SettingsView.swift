@@ -17,7 +17,9 @@ struct SettingsView: View {
             StorageSettings()
                 .tabItem { Label("存储", systemImage: "internaldrive") }
         }
-        .frame(width: 500)
+        // 宽度由宿主决定 —— 它现在嵌在图库窗口里（`GalleryView.settingsMode`），
+        // 而不是从前那个固定 500pt 的独立窗口。只留一个下限防止分栏被压扁。
+        .frame(minWidth: 460)
     }
 }
 

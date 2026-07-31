@@ -43,11 +43,13 @@ struct GalleryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        // 单窗口双模式（Snagit 的 Editor/Library）：编辑模式时整窗切到编辑器，
+        // 单窗口多模式：图库 / 编辑器 / 设置，整窗切换而不是弹窗。
         // 返回图库 = `mode.returnToGallery()`（选中状态原样保留）。
         // Shot 值按 ID **现查** —— store 更新后编辑器拿到的永远是最新值。
         Group {
-            if let shot = mode.resolveEditingShot() {
+            if mode.isSettings {
+                settingsMode
+            } else if let shot = mode.resolveEditingShot() {
                 EditorView(shot: shot)
                     // 换图 = 换 editingShotID；靠 identity 变化整个重建编辑器
                     // （重新走 onAppear → load，清撤销栈，与重开行为一致）。
@@ -61,6 +63,43 @@ struct GalleryView: View {
             // 正在编辑的 shot 被删（自动清理等）时退回图库。
             DispatchQueue.main.async { closeEditorIfShotDeleted() }
         }
+    }
+
+    /// 设置模式：与编辑器同样的整窗切换，左上角一个返回按钮。
+    /// 顶栏那一条留给标题与返回，红绿灯的避让沿用 `DS.Shell.trafficLightInset`。
+    private var settingsMode: some View {
+        ZStack(alignment: .top) {
+            Color(nsColor: DS.windowBase).ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                HStack(spacing: DS.s3) {
+                    Button {
+                        mode.returnToGallery()
+                    } label: {
+                        Label("图库", systemImage: "chevron.left")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    // Esc 也能退，与编辑器一致。
+                    .keyboardShortcut(.escape, modifiers: [])
+
+                    Text("设置")
+                        .font(.system(size: 15, weight: .semibold))
+
+                    Spacer()
+                }
+                .padding(.leading, DS.Shell.trafficLightInset)
+                .padding(.trailing, DS.Shell.windowMargin)
+                .frame(height: DS.Shell.topBarHeight)
+
+                SettingsView()
+                    .frame(maxWidth: 720, maxHeight: .infinity)
+                    .padding(.horizontal, DS.Shell.windowMargin)
+                    .padding(.bottom, DS.Shell.windowMargin)
+            }
+        }
+        .ignoresSafeArea(.container, edges: .top)
+        .frame(minWidth: 1000, minHeight: 600)
     }
 
     private var gallery: some View {

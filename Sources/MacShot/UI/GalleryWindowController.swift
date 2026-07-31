@@ -47,18 +47,21 @@ final class GalleryWindowController: NSWindowController {
 
         GalleryKeyboard.shared.install()
 
-        // 单窗口双模式（Editor/Library）：编辑中把标题换成「标注 — 出处」，
-        // 返回图库时恢复；进入编辑瞬间若 Quick Look 面板开着，顺手收掉 ——
+        // 单窗口多模式（图库 / 编辑器 / 设置）：标题跟着模式走；
+        // 进入编辑瞬间若 Quick Look 面板开着，顺手收掉 ——
         // 编辑器有自己的空格语义，面板留着只会盖住画布。
-        // 模式模型只存 ID，来源摘要按 ID 现查（$editingShotID 发布的是新值，
+        // 模式模型只存 ID，来源摘要按 ID 现查（$mode 发布的是新值，
         // 此刻属性本身还没写入，不能经由 resolveEditingShot 取）。
-        editingCancellable = GalleryWindowMode.shared.$editingShotID
-            .sink { [weak self] id in
-                let summary = id
-                    .flatMap { GalleryWindowMode.resolveShot(id: $0) }?
-                    .sourceSummary
-                self?.window?.title = summary.map { "标注 — \($0)" } ?? "MacShot 图库"
-                if id != nil {
+        editingCancellable = GalleryWindowMode.shared.$mode
+            .sink { [weak self] mode in
+                switch mode {
+                case .library:
+                    self?.window?.title = "MacShot 图库"
+                case .settings:
+                    self?.window?.title = "MacShot 设置"
+                case .editing(let id):
+                    let summary = GalleryWindowMode.resolveShot(id: id)?.sourceSummary
+                    self?.window?.title = summary.map { "标注 — \($0)" } ?? "MacShot 图库"
                     QuickLookController.shared.close()
                 }
             }

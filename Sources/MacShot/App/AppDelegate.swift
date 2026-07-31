@@ -295,8 +295,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 设置不再是独立窗口，而是图库窗口的一个模式 —— 弹出图库并切过去。
+    /// 与「单窗口多模式」的整体设计一致，也省掉一个要管生命周期的窗口。
     @objc private func openSettings() {
-        SettingsWindowController.shared.show()
+        GalleryWindowController.shared.show()
+        GalleryWindowMode.shared.openSettings()
     }
 
     // MARK: - 服务菜单

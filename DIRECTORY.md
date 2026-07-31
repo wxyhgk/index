@@ -80,7 +80,7 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 - `GalleryGrid` / `ShotCard` / `WaterfallLayout` — 网格与卡片（无底色，图片直接浮在窗底上）、底部悬浮胶囊工具条
 - `ShotDetailPane` / `ShotInfoPage` / `InspectorControls` / `MultiSelectionPane` / `TagSection` — 详情面板的摘要页与「全部信息」下钻页
 - `EditorView` — Snagit 风格编辑器：工具栏、画布、图层与效果面板、胶片条
-- `GalleryWindowMode` — 窗口处于哪个模式（存截图 ID 而非快照）+ `GalleryKeyContext` 统一按键让位判定
+- `GalleryWindowMode` — 窗口处于哪个模式：图库 / 编辑器（存截图 ID 而非快照）/ 设置，整窗切换不是弹窗；`GalleryKeyContext` 是两个按键 monitor 的统一让位判定
 - `GalleryKeyboard` / `QuickLookController` / `EditorCanvasScrollView` — 三处事件处理，靠上面那个共享判定协调
 - `DesignTokens` / `SpatialModifiers` / `LayerCanvas` / `ThumbnailImage` / `TimelineView`
 
@@ -88,9 +88,11 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 
 > **现存债务**：`EditorView` 1194 行装了 6 种职责，靠 26 处手动 `annotationTick` 驱动重绘，是下一批拆分对象。`ShotDetailPane` 里的 `maskSensitiveRegions` 是业务逻辑，待下沉到存储层。
 
-## Settings/ — 应用内设置（5 文件 / 1319 行）
+## Settings/ — 应用内设置（4 文件）
 
 `AppSettings` 是所有配置的单一真相（UserDefaults 支撑），`ShortcutRecorder` 支持热键重绑，设置页的按键说明从 `AnnotationTool` 的快捷键表生成而不是手写。
+
+设置**没有自己的窗口**：它是图库窗口的第三个模式（`GalleryWindowMode.Mode.settings`，与图库/编辑器并列），所以 `SettingsView` 的宽度由宿主决定。独立设置窗口曾经存在，与「单窗口多模式」的设计不一致，用起来也割裂——改个默认颜色要跳出去再跳回来。
 
 ## Shelf/ — 暂存架（3 文件 / 483 行）
 

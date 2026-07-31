@@ -327,7 +327,8 @@ struct GalleryRail: View {
 
     private var settingsButton: some View {
         Button {
-            NSApp.sendAction(#selector(GalleryRailSettingsAction.openSettings), to: nil, from: nil)
+            // 设置是本窗口的一个模式，直接切；不再绕响应链去开独立窗口。
+            GalleryWindowMode.shared.openSettings()
         } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: 16, weight: .medium))
@@ -336,15 +337,6 @@ struct GalleryRail: View {
         .help("设置")
         .accessibilityLabel("设置")
     }
-}
-
-/// 只用来取一个编译期检查过拼写的 selector（和 GalleryTopBar 里那个同一条路：
-/// 设置窗口归 `AppDelegate` 开，UI/ 不许直接碰 Settings/ 的窗口控制器）。
-///
-/// 名字带 `GalleryRail` 前缀是必须的：`@objc` 协议名会原样注册进 ObjC 运行时，
-/// 同一个二进制里出现两个都叫 `SettingsAction` 的协议是重复定义。
-@objc private protocol GalleryRailSettingsAction {
-    func openSettings()
 }
 
 // ============================================================

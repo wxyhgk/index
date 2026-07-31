@@ -43,15 +43,6 @@ enum GalleryLayoutKind: String, CaseIterable {
     }
 }
 
-/// 只用来取一个编译期检查过拼写的 selector。
-///
-/// 设置窗口归 `AppDelegate` 打开（状态栏菜单里那个「设置…」就是它）。
-/// 界面层「彼此不认识」是 ARCHITECTURE 的硬规矩：UI/ 不许直接碰 Settings/ 的
-/// 窗口控制器，所以这里走 AppKit 的响应链 —— 和那个菜单项完全同一条路。
-@objc private protocol SettingsAction {
-    func openSettings()
-}
-
 struct GalleryTopBar: View {
 
     /// 详情栏开关。真相在 GalleryView 的 @AppStorage 上，这里只是它的一个入口。
@@ -357,8 +348,10 @@ struct GalleryTopBar: View {
         store.reload()
     }
 
-    /// 走响应链把「设置…」交给 AppDelegate，理由见 `SettingsAction`。
+    /// 设置是本窗口的一个模式（不再是独立窗口），所以直接切模式 ——
+    /// 此前要绕 AppKit 响应链去找 AppDelegate 开窗，那条路连同两个
+    /// 只为取 selector 的 @objc 协议一起删掉了。
     private func openSettings() {
-        NSApp.sendAction(#selector(SettingsAction.openSettings), to: nil, from: nil)
+        GalleryWindowMode.shared.openSettings()
     }
 }

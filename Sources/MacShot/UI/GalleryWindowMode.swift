@@ -12,24 +12,44 @@ final class GalleryWindowMode: ObservableObject {
 
     static let shared = GalleryWindowMode()
 
-    /// 正在编辑的截图 ID。非 nil 时图库窗口整体切到编辑器视图，nil = 图库模式。
-    /// 整窗切换，不是 sheet；胶片条换图 = 换成目标 ID（EditorView 按 id 重建）。
-    @Published private(set) var editingShotID: Int64?
+    /// 窗口整体处于哪个视图。三者互斥，整窗切换（不是 sheet）。
+    /// 设置也在这里 —— 它此前是一个独立窗口，与「单窗口多模式」的设计不一致，
+    /// 用起来也割裂（改个默认颜色要跳出去再跳回来）。
+    enum Mode: Equatable {
+        case library
+        /// 胶片条换图 = 换成目标 ID（EditorView 按 id 重建）。
+        case editing(Int64)
+        case settings
+    }
+
+    @Published private(set) var mode: Mode = .library
 
     private init() {}
 
     var isEditing: Bool { editingShotID != nil }
+    var isSettings: Bool { mode == .settings }
+
+    /// 正在编辑的截图 ID；不在编辑模式时为 nil。
+    var editingShotID: Int64? {
+        if case .editing(let id) = mode { return id }
+        return nil
+    }
 
     /// 进入编辑器。id 为 nil（未入库的 Shot 值）时忽略 ——
     /// 编辑器一定对应库里的一条记录。
     func openEditor(shotID: Int64?) {
         guard let shotID else { return }
-        editingShotID = shotID
+        mode = .editing(shotID)
+    }
+
+    /// 进入设置。
+    func openSettings() {
+        mode = .settings
     }
 
     /// 返回图库模式（选中状态原样保留，那是 GallerySelection 的事）。
     func returnToGallery() {
-        editingShotID = nil
+        mode = .library
     }
 
     /// 正在编辑的截图，按 ID 现查。nil = 没在编辑，或记录已被删除。
@@ -68,6 +88,13 @@ enum GalleryKeyContext {
               window.attachedSheet == nil,
               !(window.firstResponder is NSTextView)
         else { return .none }
-        return GalleryWindowMode.shared.isEditing ? .editor : .library
+
+        switch GalleryWindowMode.shared.mode {
+        case .library:  return .library
+        case .editing:  return .editor
+        // 设置页里全是输入控件，空格/方向键/回车都该留给它们 ——
+        // 焦点不在文本框时也不能让图库的网格导航接管。
+        case .settings: return .none
+        }
     }
 }
