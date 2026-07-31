@@ -418,8 +418,8 @@ extension DS {
         static let windowMargin: CGFloat = DS.s3
         /// 面板之间的缝。缝就是深度线索本身 —— 不要为了「多点内容」把它压到 8 以下。
         static let panelGap: CGFloat = DS.s3
-        /// 左侧面板宽度（设计稿：图标轨 56 + 标签面板 168 + 缝）。
-        static let sidebarWidth: CGFloat = 232
+        // 曾经还有一个 `sidebarWidth`(232)。顶层选项从左侧栏搬到顶栏的分段控件之后，
+        // 左边整栏消失，这个 token 随之没有了使用者。
         /// 右侧详情面板宽度（设计稿 370）。
         static let inspectorWidth: CGFloat = 370
         /// 搜索胶囊的最大宽度（设计稿 460）。窗口窄时它先让位。

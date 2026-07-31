@@ -47,6 +47,10 @@ struct GalleryTopBar: View {
 
     /// 详情栏开关。真相在 GalleryView 的 @AppStorage 上，这里只是它的一个入口。
     @Binding var showInspector: Bool
+    /// 当前选中的顶层选项 id。真相在 `GalleryView` 的 @AppStorage 上。
+    @Binding var destinationID: String
+
+    @Environment(\.colorScheme) private var colorScheme
 
     @ObservedObject private var store = ShotStore.shared
     // 语义模式切换只在「开关已开 + 模型已就绪」时出现，所以要订阅这两个。
@@ -67,9 +71,7 @@ struct GalleryTopBar: View {
 
     var body: some View {
         HStack(spacing: DS.s3) {
-            Text("MacShot")
-                .font(.system(size: 17, weight: .semibold))
-                .fixedSize()
+            destinationTabs
 
             // minLength 让搜索框在窄窗口下先让位，而不是把右侧控件挤出窗口。
             Spacer(minLength: DS.s3)
@@ -94,6 +96,41 @@ struct GalleryTopBar: View {
         .onChange(of: store.semanticMode) { _, semantic in
             if !semantic { store.clearSemanticResults() }
         }
+    }
+
+    // MARK: - 顶层选项
+
+    /// 顶层选项（截图库 / 应用 / …）。**曾经是左侧一整条侧边栏**，
+    /// 换到这里的账很直白：那条栏占 232pt + 12pt 缝，而卡片宽度约 228pt ——
+    /// 它正好吃掉整整一列缩略图，永久地，换来的是两三个低频入口。
+    /// 图库这类应用里横向空间是最稀缺的资源，而顶栏本来就在那儿，增量成本约等于零。
+    ///
+    /// 也顺手去掉了原来那个「MacShot」文字标 —— 它不提供任何信息，纯占位。
+    ///
+    /// 呈现方式换了，**契约没换**：仍然遍历同一份 `GalleryDestinationRegistry`，
+    /// 每个选项的 `content()` / `inspector()` 一个字都没动。这正是把它抽成注册表的回报。
+    ///
+    /// 数量红线：分段控件在 5 个以内舒服，超过 6 个标签会挤成图标、可读性掉下去。
+    /// 真到那一步该换回侧边栏 —— 同样只是换一个呈现，契约照旧。
+    private var destinationTabs: some View {
+        HStack(spacing: 2) {
+            ForEach(GalleryDestinationRegistry.shared.ordered(), id: \.id) { destination in
+                DestinationTab(
+                    title: destination.title,
+                    symbol: destination.symbol,
+                    isSelected: destinationID == destination.id
+                ) {
+                    destinationID = destination.id
+                }
+            }
+        }
+        .padding(2)
+        .background(tabTrayFill, in: Capsule())
+        .fixedSize()
+    }
+
+    private var tabTrayFill: Color {
+        colorScheme == .dark ? .white.opacity(0.06) : .black.opacity(0.05)
     }
 
     // MARK: - 搜索胶囊
@@ -303,5 +340,53 @@ struct GalleryTopBar: View {
     /// 只为取 selector 的 @objc 协议一起删掉了。
     private func openSettings() {
         GalleryWindowMode.shared.openSettings()
+    }
+}
+
+// MARK: - 单个选项标签
+
+/// 顶栏上的一个选项。选中态用**实心的浅色底**（不是 accent 实心）：
+/// 同屏只允许一处上强调色，而那一处归网格里的选中卡片
+/// （见 docs/spatial-ui-spec.md §7.1）。图标 + 文字并排，不缩成纯图标 ——
+/// 顶层导航要一眼可读，省下来的那点宽度不值。
+private struct DestinationTab: View {
+
+    let title: String
+    let symbol: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.s1) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .medium))
+                Text(title)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+            }
+            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+            .padding(.horizontal, DS.s3)
+            .frame(height: 28)
+            .background(fill, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: hovering)
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: isSelected)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    /// 亮度阶梯那一套：深色加白、浅色加白（选中片浮在托盘底上，浅色下用纯白最清楚）。
+    private var fill: Color {
+        if isSelected {
+            return scheme == .dark ? .white.opacity(0.13) : .white
+        }
+        guard hovering else { return .clear }
+        return scheme == .dark ? .white.opacity(0.06) : .black.opacity(0.04)
     }
 }

@@ -76,7 +76,7 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 - `GalleryView` — 窗口壳：模式分支 + 浮动面板装配。**刻意只依赖模式与详情栏开关两个状态**，任何每帧变化的量（尤其宽度）都不许放这一层，否则整窗每帧重建（有过这个性能事故）
 - `GalleryShell` — 浮动面板容器与通用控件：`floatingPanel` / `ShellIconButtonStyle` / `PanelCloseButton` / `GalleryInspectorPanel`
 - `GalleryTopBar` / `GalleryPageHeader` — 自绘顶栏（logo、⌘K 搜索胶囊、语义搜索 scope 菜单、筛选/视图/设置）与页面头部（大标题、项目数、筛选胶囊）
-- `GalleryRail` / `GallerySidebar` — 左侧图标轨（图标 + 计数 + 高频分类）与可折叠的全量筛选面板
+- `GalleryDestination` / `BuiltinDestinations` — **顶层选项**契约与注册表（第七个扩展点）：一个选项自带 `content()` 与 `inspector()`，加一个 = 新建实现 + 注册一行。首批两个：截图库、应用。选项呈现为顶栏的分段控件——左侧曾有一整条 232pt 侧边栏放它们，那正好吃掉一列缩略图
 - `GalleryGrid` / `ShotCard` / `WaterfallLayout` — 网格与卡片（无底色，图片直接浮在窗底上）、底部悬浮胶囊工具条
 - `ShotDetailPane` / `ShotInfoPage` / `InspectorControls` / `MultiSelectionPane` / `TagSection` — 详情面板的摘要页与「全部信息」下钻页
 - `EditorView` — Snagit 风格编辑器：工具栏、画布、图层与效果面板、胶片条

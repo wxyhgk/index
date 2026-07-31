@@ -59,7 +59,7 @@
 
 ## 2. 扩展点契约
 
-系统现有**六个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
+系统现有**七个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
 
 ### 2.1 入口：`CaptureSource` —— 像素怎么进来
 
@@ -167,6 +167,24 @@ struct EffectDescriptor {
 **规范**：新增效果 = 一个描述符 + 注册一行 + `Layer.Kind` 一个 case（`isEffect` 返回 true）。
 排除逻辑（命中测试、控制点、矢量绘制、图层面板列表）一律从 `kind.isEffect` 派生，**不许再写按 kind 枚举的黑名单**。元数据注入统一走 `EffectContext` 值对象，三宿主各一处赋值。Spec 序列化类型住在 `Annotation/EffectSpecs.swift`，与渲染分离。
 
+### 2.7 顶层导航：`GalleryDestination` —— 图库窗口的一个「选项」（2026-08 新增）
+
+```swift
+protocol GalleryDestination {
+    var id: String { get }          // 稳定标识；选中状态按它持久化，插新选项不会让位置漂移
+    var title: String { get }
+    var symbol: String { get }
+    var order: Int { get }
+    func badge() -> Int?            // 可选计数
+    func content() -> AnyView       // 中间内容
+    func inspector() -> AnyView?    // 右侧面板；nil = 不要右侧栏，宽度让给中间
+}
+```
+
+**规范**：新增顶层功能（录屏、暂存、回收站…）= 一个实现 + 注册一行。容器、布局、选中态不动。
+
+立这个扩展点的起因：侧边栏此前把四组筛选行硬编码在一个 500 行的视图里，加一组要改视图 + 加计数 + 加折叠状态 + 改布局，而且列表长度随库里的数据在 4 到 20 行之间浮动。**筛选行是数据的切片，选项是功能的入口**——把后者抽出来之后，导航的**呈现方式**（顶栏分段控件 / 左侧栏）成了容器的实现细节，换过一次只动了十几行，两个内建选项一个字没改。
+
 ---
 
 ## 3. 类型层面的约定（已全部落地，v0.0.8）
@@ -234,7 +252,7 @@ struct EffectDescriptor {
 **拆巨文件（进行中）**：`GalleryView` 已于 2026-07 拆成 9 个文件（壳 171 行，最大的 `GalleryGrid` 548 行），拆分为纯搬家、逐行对账过。
 剩余：`maskSensitiveRegions` 业务逻辑仍留在 `ShotDetailPane` 待下沉；`EditorView`（1194 行）切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。
 
-**图库视觉规范（2026-07）**：图库采用**定制 chrome**——自绘顶栏（无系统工具栏）+ 左侧图标轨 + 浮在窗口底色上的圆角面板 + 无底色卡片。目标设计的逐块拆解见 `docs/gallery-chrome-spec.md`（**冲突时以它为准**）；`docs/spatial-ui-spec.md` 仍是原则与数值的来源（铁律、视差上限、同心圆角、动效令牌、性能红线），其中已被改版取代的条目在文件开头逐条列明。
+**图库视觉规范（2026-07）**：图库采用**定制 chrome**——自绘顶栏（无系统工具栏，含顶层选项分段控件）+ 浮在窗口底色上的圆角面板 + 无底色卡片。顶层导航由 `GalleryDestination` 注册表驱动（§2.7），呈现方式（顶栏 tab / 侧边栏）可以换，契约不动。目标设计的逐块拆解见 `docs/gallery-chrome-spec.md`（**冲突时以它为准**）；`docs/spatial-ui-spec.md` 仍是原则与数值的来源（铁律、视差上限、同心圆角、动效令牌、性能红线），其中已被改版取代的条目在文件开头逐条列明。
 
 token 与容器在 `UI/DesignTokens.swift`（`extension DS` + `DS.Shell`）、`UI/GalleryShell.swift`（`floatingPanel` / `ShellIconButtonStyle` / `PanelCloseButton`）、`UI/SpatialModifiers.swift`（视差等）。三条不可违反的铁律：**内容层不上材质**（卡片现在干脆没有底色）；**每窗口最多一个 `behindWindow` 材质**——面板一律用 `DS.panelFill` 纯色 + rim 描边，因为窗底本来不透明，材质只会采样自家底色；**深色的深度是亮度阶梯与发丝线，不是阴影**。
 

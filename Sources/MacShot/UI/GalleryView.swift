@@ -1,25 +1,27 @@
 import SwiftUI
 import AppKit
 
-// MARK: - 浮动面板布局：自绘顶栏 / 侧栏 / 网格 / 详情栏
+// MARK: - 窗口壳：自绘顶栏 / 中间内容 / 右侧详情栏
 //
-// 布局参考用户提供的设计稿：**全定制窗口 chrome + 浮在深底上的圆角面板**。
-// 顶栏自绘（GalleryTopBar），侧栏与详情栏是浮起的卡片（floatingPanel），
-// 面板之间留出可见的缝，缝里露出的是窗口底色（`DS.windowBase`）。
+// 布局是**全定制窗口 chrome**：红绿灯之外没有任何系统 chrome。
+// 顶栏自绘（GalleryTopBar，含顶层选项、搜索、视图控制），中间和右侧由
+// **当前选中的那个选项**提供（见 GalleryDestination），详情栏是浮起的圆角卡片，
+// 它与内容之间留出可见的缝，缝里露出的是窗口底色（`DS.windowBase`）。
 //
-// 为什么放弃 `NavigationSplitView` + `.inspector`：那两个 API 给的是**齐平分栏**
-//（系统材质、系统分隔线、栏与栏之间没有间隙），而设计稿要的是彼此分离的浮起面板。
-// 代价与收获都要说清楚：
+// 为什么不用 `NavigationSplitView` + `.inspector`：那两个 API 给的是**齐平分栏**
+//（系统材质、系统分隔线、栏与栏之间没有间隙），而这里要的是彼此分离的浮起面板。
+// 代价与收获：
 //   · 丢掉：系统侧边栏材质与 vibrancy、可拖的分隔条、系统 inspector 动画。
-//     侧边栏宽度改成固定值（`DS.Shell.sidebarWidth`）—— 顺手也就没有了
-//     「拖分隔条时每帧重算」这条老路。
+//     顺带也就没有了「拖分隔条时每帧重算」这条老路。
 //   · 丢掉：`.searchable` 桥进窗口工具栏那条路（工具栏整个取消了）。
 //     搜索改为自绘，实现在 GalleryTopBar，功能一件不少（见那边的文件注释）。
-//   · 换来：外壳完全由我们自己排版，红绿灯之外没有任何系统 chrome。
+//   · 换来：外壳完全由我们自己排版。
 //
-// 本文件只剩窗口壳：模式分支（图库 / 编辑器）+ 四块的位置关系。
-// 各块的实现在 GalleryTopBar / GalleryPageHeader / GallerySidebar / GalleryGrid /
-// GalleryShell（浮动面板容器 + GalleryInspectorPanel）。
+// 左侧曾经有一整条侧边栏放顶层选项，后来搬到了顶栏的分段控件 ——
+// 232pt 的固定栏正好吃掉整整一列缩略图，而顶栏本来就在那儿（理由见
+// `GalleryTopBar.destinationTabs`）。
+//
+// 本文件只剩窗口壳：模式分支（图库 / 编辑器 / 设置）+ 三块的位置关系。
 
 struct GalleryView: View {
 
@@ -116,13 +118,14 @@ struct GalleryView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                GalleryTopBar(showInspector: $showInspector)
+                GalleryTopBar(showInspector: $showInspector, destinationID: $destinationID)
 
-                // 左侧固定选项 │ 中间内容 │ 右侧面板 —— 后两块都由**选中的那个选项**
-                // 提供（见 GalleryDestination）。容器不认识任何一个具体选项装了什么。
+                // 中间内容 │ 右侧面板 —— 两块都由**选中的那个选项**提供
+                // （见 GalleryDestination）。容器不认识任何一个具体选项装了什么。
+                //
+                // 顶层选项从左侧一整条侧边栏搬到了顶栏（理由见 GalleryTopBar
+                // 的 `destinationTabs`），于是这一行少了一栏，中间直接从窗口左边缘开始。
                 HStack(alignment: .top, spacing: DS.Shell.panelGap) {
-                    sidebarPanel
-
                     let destination = GalleryDestinationRegistry.shared.resolve(id: destinationID)
 
                     (destination?.content() ?? AnyView(EmptyView()))
@@ -149,13 +152,6 @@ struct GalleryView: View {
         .frame(minWidth: 1000, minHeight: 600)
     }
 
-    /// 左侧：固定的选项列表。宽度写在这里（它现在是定值，不再有折叠态）。
-    private var sidebarPanel: some View {
-        GallerySidebar(selection: $destinationID)
-            .frame(width: DS.Shell.sidebarWidth)
-            .frame(maxHeight: .infinity)
-            .floatingPanel()
-    }
 
     /// 正在编辑的记录已不存在（图库外的删除 / 清理）→ 退回图库模式。
     /// 编辑一条已删除的记录没有意义，保存也无处可去。
