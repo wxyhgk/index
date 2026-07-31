@@ -43,12 +43,9 @@ struct GalleryPageHeader: View {
         switch store.filter {
         case .all:                  return "全部截图"
         case .favorites:            return "收藏"
-        case .today:                return "今天"
-        case .thisWeek:             return "本周"
         case .untagged:             return "未加标签"
         case .annotated:            return "已标注"
         case .category(let name):   return name
-        case .app(let name):        return name
         case .tag(let name):        return name
         }
     }
@@ -78,14 +75,9 @@ struct GalleryPageHeader: View {
 
 // MARK: - 筛选维度取值
 
-/// 三个「带参数」的筛选各自的值。写成计算属性而不是在视图里 switch 三遍：
-/// 胶囊、标题、命中判定都要问同一个问题，问法只该有一种。
+/// 两个「带参数」的筛选各自的值。写成计算属性而不是在视图里 switch：
+/// 标题、命中判定都要问同一个问题，问法只该有一种。
 extension ShotStore.GalleryFilter {
-
-    var appName: String? {
-        if case .app(let name) = self { return name }
-        return nil
-    }
 
     var categoryName: String? {
         if case .category(let name) = self { return name }

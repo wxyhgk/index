@@ -146,88 +146,10 @@ final class ShotStoreTests: XCTestCase {
         return store.shots.compactMap(\.id)
     }
 
-    /// `.today`：边界是「今天 00:00」，昨天 23:59 不算今天。
-    /// 边界由 `Calendar.dateInterval(of: .day)` 给出，不是「现在减 86400」。
-    func testTodayFilterExcludesYesterdayJustBeforeMidnight() throws {
-        let (store, dbQueue) = try makeStore()
-        let today = ShotStore.dayInterval()
-
-        let justAfterMidnight = try store.save(image: makeImage(gray: 0.1),
-                                               metadata: CaptureMetadata())
-        let justBeforeMidnight = try store.save(image: makeImage(gray: 0.2),
-                                                metadata: CaptureMetadata())
-        let lastWeek = try store.save(image: makeImage(gray: 0.3), metadata: CaptureMetadata())
-
-        try backdate([justAfterMidnight.id!],
-                     to: today.start.addingTimeInterval(1), in: dbQueue)
-        // 昨天 23:59:59 —— 与今天起点只差一秒，是最容易写错的那个边界。
-        try backdate([justBeforeMidnight.id!],
-                     to: today.start.addingTimeInterval(-1), in: dbQueue)
-        try backdate([lastWeek.id!],
-                     to: today.start.addingTimeInterval(-7 * 86_400), in: dbQueue)
-
-        XCTAssertEqual(filteredIDs(store, .today), [justAfterMidnight.id],
-                       "只有今天 00:00 之后拍的进「今天」")
-        XCTAssertEqual(store.todayCount(), 1)
-    }
-
-    /// `.thisWeek`：周起始跟随 `Calendar.firstWeekday`（地区设置），不硬编码周一或周日；
-    /// 上一周的最后一秒不算本周。
-    func testThisWeekFilterUsesLocaleWeekStart() throws {
-        let (store, dbQueue) = try makeStore()
-        let week = ShotStore.weekInterval()
-        let calendar = Calendar.current
-
-        XCTAssertEqual(
-            calendar.component(.weekday, from: week.start), calendar.firstWeekday,
-            "周起始日必须来自地区设置，不能硬编码"
-        )
-
-        let atWeekStart = try store.save(image: makeImage(gray: 0.1), metadata: CaptureMetadata())
-        let beforeWeekStart = try store.save(image: makeImage(gray: 0.2),
-                                             metadata: CaptureMetadata())
-        let midWeek = try store.save(image: makeImage(gray: 0.3), metadata: CaptureMetadata())
-
-        try backdate([atWeekStart.id!], to: week.start, in: dbQueue)
-        try backdate([beforeWeekStart.id!],
-                     to: week.start.addingTimeInterval(-1), in: dbQueue)
-        // 本周内、今天之前的某一刻（就算今天正好是周起始日也仍落在区间里）。
-        try backdate([midWeek.id!], to: week.start.addingTimeInterval(60), in: dbQueue)
-
-        XCTAssertEqual(Set(filteredIDs(store, .thisWeek)), [atWeekStart.id!, midWeek.id!],
-                       "上一周最后一秒不算本周；周起点当刻算本周")
-        XCTAssertEqual(store.thisWeekCount(), 2)
-        XCTAssertEqual(filteredIDs(store, .today).count, store.todayCount(),
-                       "同一份数据下筛选结果数与徽章计数必须一致")
-    }
-
-    /// 时间筛选和搜索词是叠加的：搜索决定候选集，筛选再收窄一次。
-    func testTodayFilterCombinesWithSearchText() throws {
-        let (store, dbQueue) = try makeStore()
-        let today = ShotStore.dayInterval()
-
-        var safari = CaptureMetadata()
-        safari.appName = "Safari"
-        var xcode = CaptureMetadata()
-        xcode.appName = "Xcode"
-
-        let todaySafari = try store.save(image: makeImage(gray: 0.1), metadata: safari)
-        let todayXcode = try store.save(image: makeImage(gray: 0.2), metadata: xcode)
-        let oldSafari = try store.save(image: makeImage(gray: 0.3), metadata: safari)
-
-        try backdate([todaySafari.id!, todayXcode.id!],
-                     to: today.start.addingTimeInterval(1), in: dbQueue)
-        try backdate([oldSafari.id!],
-                     to: today.start.addingTimeInterval(-86_400), in: dbQueue)
-
-        store.searchText = "Safari"
-        defer { store.searchText = "" }
-
-        // 只搜索：两张 Safari 都在，时间倒序（今天那张在前）。
-        XCTAssertEqual(filteredIDs(store, .all), [todaySafari.id!, oldSafari.id!])
-        XCTAssertEqual(filteredIDs(store, .today), [todaySafari.id],
-                       "搜索 + 今天：两个条件同时生效")
-    }
+    // 这里曾经有三条测试盯着 `.today` / `.thisWeek` 的时间边界（今天 00:00 的
+    // 前后一秒、周起始跟随地区设置、时间筛选与搜索叠加）。那两个筛选在
+    // 「简化侧边栏」时连同 UI 一起删掉了 —— 网格本来就按日期分组、最新在最上，
+    // 「今天」等于滚到顶。测试随被测能力一起移除，而不是留着测不存在的东西。
 
     /// `.untagged`：打了标签就离开「未整理」，标签删掉之后要重新算作未整理。
     func testUntaggedFilterRecountsAfterTagRemoval() throws {

@@ -82,22 +82,11 @@ final class GalleryFilterCounts: ObservableObject {
         var id: String { name }
     }
 
-    /// 应用行多一个 bundleID —— 真实 App 图标靠它解析。
-    struct AppEntry: Identifiable, Hashable {
-        let name: String
-        let bundleID: String?
-        let count: Int
-        var id: String { name }
-    }
-
     @Published private(set) var total = 0
-    @Published private(set) var today = 0
-    @Published private(set) var thisWeek = 0
     @Published private(set) var untagged = 0
     @Published private(set) var annotated = 0
     @Published private(set) var categories: [Entry] = []
     @Published private(set) var tags: [Entry] = []
-    @Published private(set) var apps: [AppEntry] = []
 
     /// 轨上放的「高频分类」。
     ///
@@ -118,18 +107,14 @@ final class GalleryFilterCounts: ObservableObject {
     /// 留在 body 里现读（它只是个 `Set.count`，不是查询），SwiftUI 重绘发生在
     /// 赋值之后，永远是新的。
     ///
-    /// 八个 `@Published` 连续赋值不会引发八轮重绘：SwiftUI 把同一轮 runloop 里的
-    /// 变更合并成一次更新。
+    /// 连续赋值不会引发多轮重绘：SwiftUI 把同一轮 runloop 里的变更合并成一次更新。
     func refresh() {
         let store = ShotStore.shared
         total = store.totalCount
-        today = store.todayCount()
-        thisWeek = store.thisWeekCount()
         untagged = store.untaggedCount()
         annotated = store.annotatedCount()
         categories = store.categories().map { Entry(name: $0.name, count: $0.count) }
         tags = store.allTags().map { Entry(name: $0.name, count: $0.count) }
-        apps = store.apps().map { AppEntry(name: $0.name, bundleID: $0.bundleID, count: $0.count) }
     }
 }
 

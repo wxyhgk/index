@@ -26,18 +26,19 @@ final class ShotStore: ObservableObject {
     enum GalleryFilter: Hashable {
         case all
         case favorites
-        /// 拍摄时间落在「今天」。边界每次查询现算，见 `dayInterval()`。
-        case today
-        /// 拍摄时间落在「本周」。周起始日跟随用户地区设置，见 `weekInterval()`。
-        case thisWeek
         /// 一个 `tag` 属性行都没有的截图 —— 「想整理时从这里开始」。
         case untagged
         /// 真的画过标注的截图。口径与卡片右下角的铅笔角标
         /// （`annotatedShotIDs`）完全一致：修订数 > 1。
         case annotated
         case category(String)
-        case app(String)
         case tag(String)
+
+        // 曾经还有 `today` / `thisWeek` / `app(String)` 三个 case。删掉的理由：
+        //   · 今天 / 本周 —— 网格本来就按日期分组、最新在最上，「今天」等于滚到顶；
+        //   · 按应用 —— 与「分类」是同一维度的两种粒度（分类就是从来源 App 推出来的），
+        //     而且长尾极重；应用名进了全文索引，搜 App 名即可达。
+        // 侧边栏里对应的行一并删除，不留够不着的枚举分支。
     }
 
     @Published var filter: GalleryFilter = .all
@@ -517,18 +518,6 @@ final class ShotStore: ObservableObject {
                         SELECT shotID FROM shotAttribute WHERE key = 'favorite'
                     )
                     """
-            // 时间筛选的边界在这里现算，绝不缓存成静态属性 —— 跨零点 / 跨周
-            // 之后缓存值就是错的。半开区间 [start, end)，走 shot.capturedAt 索引。
-            case .today:
-                let interval = Self.dayInterval()
-                filterClause = "AND shot.capturedAt >= :rangeStart AND shot.capturedAt < :rangeEnd"
-                arguments["rangeStart"] = interval.start
-                arguments["rangeEnd"] = interval.end
-            case .thisWeek:
-                let interval = Self.weekInterval()
-                filterClause = "AND shot.capturedAt >= :rangeStart AND shot.capturedAt < :rangeEnd"
-                arguments["rangeStart"] = interval.start
-                arguments["rangeEnd"] = interval.end
             // ⚠️ 技术债：本文件里 `.favorites` / `.category` 以及 `cleanupCandidates`
             // 的 SQL 仍写着 'favorite' / 'category' / 'tag' 裸字符串，与
             // `AttributeKey` 常量脱钩（2026-07 审计记录在案）。新增查询一律改用
@@ -555,9 +544,6 @@ final class ShotStore: ObservableObject {
                         WHERE key = 'category' AND text = :filterValue
                     )
                     """
-                arguments["filterValue"] = name
-            case .app(let name):
-                filterClause = "AND shot.appName = :filterValue"
                 arguments["filterValue"] = name
             case .tag(let name):
                 filterClause = """
@@ -650,37 +636,6 @@ final class ShotStore: ObservableObject {
     // 必须各是一条聚合 SQL —— 把行取回来再在 Swift 里 count（`relatedShots`
     // 那种全表拉取）在这个调用频率下是不可接受的。
 
-    /// 「今天」的半开时间区间 `[start, end)`。
-    ///
-    /// 每次调用现算，**不缓存**：缓存成静态属性的话，应用跨过零点之后
-    /// 边界就永远停在昨天。用 `Calendar.dateInterval` 而不是自己减 86400 ——
-    /// 夏令时切换那天只有 23 或 25 小时，手算会漏 / 多一小时。
-    static func dayInterval(containing date: Date = Date(),
-                            calendar: Calendar = .current) -> DateInterval {
-        calendar.dateInterval(of: .day, for: date)
-            ?? DateInterval(start: date, duration: 0)
-    }
-
-    /// 「本周」的半开时间区间 `[start, end)`。
-    ///
-    /// 周起始日由 `Calendar.firstWeekday` 决定，跟随用户的地区设置 ——
-    /// 中国大陆 / 欧洲是周一，美国是周日，这里不硬编码任何一个。
-    static func weekInterval(containing date: Date = Date(),
-                             calendar: Calendar = .current) -> DateInterval {
-        calendar.dateInterval(of: .weekOfYear, for: date)
-            ?? DateInterval(start: date, duration: 0)
-    }
-
-    /// 今天拍的截图数。侧边栏徽章用。
-    func todayCount() -> Int {
-        capturedCount(in: Self.dayInterval())
-    }
-
-    /// 本周拍的截图数。侧边栏徽章用。
-    func thisWeekCount() -> Int {
-        capturedCount(in: Self.weekInterval())
-    }
-
     /// 一个标签都没打过的截图数。侧边栏徽章用。
     ///
     /// `NOT EXISTS` 相关子查询走 (shotID, key) 复合索引，每张图一次索引探测；
@@ -712,17 +667,6 @@ final class ShotStore: ObservableObject {
         }) ?? 0
     }
 
-    /// 拍摄时间落在半开区间 `[interval.start, interval.end)` 的截图数。
-    /// 走 shot.capturedAt 索引（v1 建表时就有）。
-    private func capturedCount(in interval: DateInterval) -> Int {
-        (try? dbQueue.read { db in
-            try Int.fetchOne(db, sql: """
-                SELECT COUNT(*) FROM shot
-                WHERE capturedAt >= ? AND capturedAt < ?
-                """, arguments: [interval.start, interval.end]) ?? 0
-        }) ?? 0
-    }
-
     /// 全库时间倒序，**不受** `searchText` / `filter` 影响（`shots` 是筛选后的列表）。
     /// 编辑器胶片条用：换图的心智是「库里最近截了什么」，不跟图库窗口的筛选联动。
     /// 上限与图库一致（500），避免超大库一次性拉全表。
@@ -750,23 +694,6 @@ final class ShotStore: ObservableObject {
                 GROUP BY text
                 ORDER BY count DESC, name ASC
                 """).map { (name: $0["name"] as String, count: $0["count"] as Int) }
-        }) ?? []
-    }
-
-    /// 截图来源 App 及数量，按数量降序。图库侧边栏用；bundleID 用来取真实 App 图标。
-    func apps() -> [(name: String, bundleID: String?, count: Int)] {
-        (try? dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT appName AS name, MAX(appBundleID) AS bundleID, COUNT(*) AS count
-                FROM shot
-                WHERE appName IS NOT NULL
-                GROUP BY appName
-                ORDER BY count DESC, name ASC
-                """).map {
-                    (name: $0["name"] as String,
-                     bundleID: $0["bundleID"] as String?,
-                     count: $0["count"] as Int)
-                }
         }) ?? []
     }
 

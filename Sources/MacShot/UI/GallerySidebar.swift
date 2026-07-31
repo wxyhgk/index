@@ -44,24 +44,12 @@ struct GallerySidebar: View {
     @AppStorage("sidebarLibraryExpanded") private var libraryExpanded = true
     @AppStorage("sidebarCategoriesExpanded") private var categoriesExpanded = true
     @AppStorage("sidebarTagsExpanded") private var tagsExpanded = true
-    @AppStorage("sidebarAppsExpanded") private var appsExpanded = true
 
-    /// 应用组内部的「只显示前 5 个」。和上面的分组开合是两回事：
-    /// 分组开合表达「我关不关心应用这一类」，这个表达「一次看几个」，
-    /// 是一次性的浏览动作，不进偏好。
-    @State private var appsShowingAll = false
     /// 右键「重命名」弹窗的目标标签，非 nil 即弹窗。
     @State private var renamingTag: String?
     @State private var renameText = ""
     /// 右键「删除」确认的目标标签。
     @State private var deletingTag: String?
-
-    /// 应用组是否需要内部截断（8 个以内没必要）。
-    private var appsCollapsible: Bool { counts.apps.count > 8 }
-
-    private var visibleApps: [GalleryFilterCounts.AppEntry] {
-        appsCollapsible && !appsShowingAll ? Array(counts.apps.prefix(5)) : counts.apps
-    }
 
     var body: some View {
         ScrollView {
@@ -69,7 +57,6 @@ struct GallerySidebar: View {
                 librarySection
                 categoriesSection
                 tagsSection
-                appsSection
             }
             .padding(.vertical, DS.s3)
         }
@@ -122,8 +109,9 @@ struct GallerySidebar: View {
         // 入口 —— 「未加标签」是从哪开始整理，「已标注」是找加工过的图。
         section("资料库", isExpanded: $libraryExpanded) {
             filterRow(.all, title: "全部截图", symbol: "square.grid.2x2", count: counts.total)
-            filterRow(.today, title: "今天", symbol: "clock", count: counts.today)
-            filterRow(.thisWeek, title: "本周", symbol: "calendar", count: counts.thisWeek)
+            // 这里曾经还有「今天 / 本周」两行。删掉的理由：网格本来就按日期分组
+            // （今天 / 昨天 / 更早的段头）并且最新在最上 —— 「今天」等于滚到顶，
+            // 它多出来的只是「把更早的藏起来」，不值一个常驻行位。
             filterRow(
                 .favorites, title: "收藏", symbol: "star",
                 tint: .yellow, count: store.favoriteCount()
@@ -178,19 +166,14 @@ struct GallerySidebar: View {
         }
     }
 
-    @ViewBuilder
-    private var appsSection: some View {
-        if !counts.apps.isEmpty {
-            section("应用", isExpanded: $appsExpanded) {
-                ForEach(visibleApps) { app in
-                    row(.app(app.name), title: app.name, count: app.count) {
-                        AppIconView(bundleID: app.bundleID)
-                    }
-                }
-                if appsCollapsible { appsToggle }
-            }
-        }
-    }
+    // 这里曾经有一个「应用」分组，按来源 App 逐个列出来。删掉的理由有三条：
+    //   · 它和「分类」是同一个维度的两种粒度 —— 分类本来就是从来源 App 推出来的，
+    //     两组并排等于把同一件事说两遍（这正是上一轮清掉的那类重复）；
+    //   · 长尾极重：实测一个真实库里 17 个应用、大多数只有 1 张截图，
+    //     为此还得配一个「显示全部（N 个）」的截断开关；
+    //   · 能力没丢 —— 应用名进了全文索引，搜「Edge」就是按应用筛。
+    // 连带删掉的还有侧边栏专用的那份 App 图标缓存（详情面板另有一份，
+    // 两份 NSCache 各存一份 NSImage 是记录在案的债）。
 
     /// 一个可折叠分组：头（标题 + 三角）+ 行。
     ///
@@ -274,34 +257,6 @@ struct GallerySidebar: View {
                 Image(systemName: symbol)
             }
         }
-    }
-
-    /// 应用组内部的「多看几行」。
-    /// 图标刻意不用 chevron：分组头上的三角归「折叠整组」，这里是
-    /// 「同一组里多看几行」，两件事不该共用一个符号。
-    private var appsToggle: some View {
-        Button {
-            // 展开/收起是一次列表布局切换（一次进出好几行），按 §6 归 standard 档；
-            // micro 太快会让新行「闪」出来。
-            withAnimation(DS.Motion.standard(reduced: reduceMotion)) {
-                appsShowingAll.toggle()
-            }
-        } label: {
-            HStack(spacing: DS.s2) {
-                Image(systemName: appsShowingAll ? "chevron.up" : "ellipsis")
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(width: 18)
-                Text(appsShowingAll ? "收起" : "显示全部（\(counts.apps.count) 个）")
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, DS.s2)
-            .frame(height: RailMetrics.rowHeight)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - 校验
@@ -508,101 +463,6 @@ enum GalleryDropActions {
     }
 }
 
-// MARK: - App 图标
-
-/// 面板里的真实 App 图标。按 bundleID 解析一次后缓存。
-private struct AppIconView: View {
-    let bundleID: String?
-
-    @State private var icon: NSImage?
-
-    var body: some View {
-        Group {
-            if let icon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 16, height: 16)
-            } else {
-                Image(systemName: "app.dashed")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-            }
-        }
-        .task(id: bundleID) {
-            // 命中缓存这条路径**没有 await**：同一次 runloop 里就赋上值，
-            // 已解析过的图标不会先闪一下占位符再变出来。
-            if let hit = AppIconCache.shared.cached(bundleID) {
-                icon = hit
-                return
-            }
-            icon = await AppIconCache.shared.icon(for: bundleID)
-        }
-    }
-}
-
-/// NSImage 不是 Sendable。这里的实例是 detached task 里现造的，造完就交出去、
-/// 自己不再持有也不再改 —— 是一次所有权转移而不是共享。用盒子把这件事讲明白，
-/// 而不是在调用处埋一个静默的 @unchecked。
-private struct AppIconBox: @unchecked Sendable {
-    let image: NSImage?
-}
-
-@MainActor
-private final class AppIconCache {
-    static let shared = AppIconCache()
-
-    /// 换掉原来的 `[String: NSImage]`：那份字典永不淘汰，
-    /// 一台装了几百个 App 的机器上只会一直涨。NSCache 有条数上限，
-    /// 且系统内存吃紧时会自己放手。
-    private let cache = NSCache<NSString, NSImage>()
-    /// 同一个 bundleID 的并发解析只跑一次 —— 面板刷新时几十行会同时发起。
-    private var inflight: [String: Task<AppIconBox, Never>] = [:]
-
-    private init() {
-        cache.countLimit = 128
-    }
-
-    /// 同步取缓存。只命中，不解析 —— 给视图做「无闪烁」快路径用。
-    func cached(_ bundleID: String?) -> NSImage? {
-        guard let bundleID else { return nil }
-        return cache.object(forKey: bundleID as NSString)
-    }
-
-    /// 解析并缓存。
-    ///
-    /// `NSWorkspace.icon(forFile:)` 要去 App bundle 里读 .icns，是一次同步磁盘 IO；
-    /// 原来它按行在主线程上串行跑，装的应用一多首屏就顿一下。挪进 detached task
-    /// 之后主线程只剩一次赋值。
-    ///
-    /// 取舍：`NSWorkspace` 的这两个查询走 LaunchServices，实践上可以离开主线程；
-    /// Apple 没有白纸黑字的保证，但代价（首屏卡顿）是确定的。
-    /// 另外**不再改 `icon.size`** —— 显示尺寸由 `.resizable().frame()` 决定，
-    /// 那行赋值本来就是多余的，而 `icon(forFile:)` 返回的实例有可能是 AppKit
-    /// 内部共享的，在后台线程上改它的属性是没必要冒的险。
-    func icon(for bundleID: String?) async -> NSImage? {
-        guard let bundleID else { return nil }
-        if let hit = cache.object(forKey: bundleID as NSString) { return hit }
-
-        let task: Task<AppIconBox, Never>
-        if let running = inflight[bundleID] {
-            task = running
-        } else {
-            task = Task.detached(priority: .userInitiated) {
-                guard let url = NSWorkspace.shared
-                    .urlForApplication(withBundleIdentifier: bundleID) else {
-                    return AppIconBox(image: nil)
-                }
-                return AppIconBox(image: NSWorkspace.shared.icon(forFile: url.path))
-            }
-            inflight[bundleID] = task
-        }
-
-        let image = await task.value.image
-        inflight[bundleID] = nil
-        if let image {
-            cache.setObject(image, forKey: bundleID as NSString)
-        }
-        return image
-    }
-}
+// App 图标的解析与缓存曾经在这里也有一份（面板的「应用」分组用）。
+// 那个分组删掉之后，全项目只剩详情面板那一份 `AppIconProvider` ——
+// 「两份 NSCache 各存一份 NSImage」这笔记录在案的债顺带清了。
