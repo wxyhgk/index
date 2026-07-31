@@ -2,44 +2,37 @@ import SwiftUI
 
 // MARK: - 内容区页头
 //
-// 设计稿 §4 的前两项：大标题（随当前筛选变化）+ 右侧「N 个项目」，
-// 下面一行筛选胶囊（最近 ▾ / 应用 ▾ / 类型 ▾ / 标签 ▾）。
+// 大标题（随当前筛选变化）+ 右侧「N 个项目」+ 当前筛选的可清除标记。
 //
-// 胶囊和侧边栏读写的是**同一个** `store.filter`：这边选「浏览器」，侧边栏的
-// 分类行同时高亮；侧边栏点「收藏」，这边的大标题跟着变成「收藏」。
-// 两边互相反映不是 bug —— 那本来就是一份状态的两个入口。
+// **这里只显示状态，不做选择。** 曾经这一行是四个常驻下拉胶囊
+// （最近 ▾ / 应用 ▾ / 类型 ▾ / 标签 ▾），而侧边栏面板里同样列着分类、标签、
+// 应用、今天/本周，顶栏还有一个漏斗菜单 —— 同一个 `store.filter` 被画了三四遍，
+// 屏幕上到处是重复入口，这正是「侧边栏显得杂」的根源。
+//
+// 收敛后的分工：**选择归侧边栏，状态归页头**。没有筛选时这一行完全不出现。
 
 struct GalleryPageHeader: View {
 
     @ObservedObject private var store = ShotStore.shared
 
-    // 三份聚合查询的结果。**绝不放进 body** —— 那是每帧三条 GROUP BY。
-    // 刷新时机与侧边栏完全一致（见 refresh()）。
-    @State private var apps: [(name: String, bundleID: String?, count: Int)] = []
-    @State private var categories: [(name: String, count: Int)] = []
-    @State private var tags: [(name: String, count: Int)] = []
+    // 这里从前还存着 apps / categories / tags 三份聚合查询，只为填四个下拉胶囊的菜单。
+    // 胶囊删掉之后它们一并消失 —— 顺带省掉了每次 store 变更都要跑的三条 GROUP BY
+    // （侧边栏本来就在算同样的三份，那是第二次重复）。
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.s3) {
-            HStack(alignment: .firstTextBaseline, spacing: DS.s3) {
-                Text(title)
-                    .font(.largeTitle.weight(.bold))
-                    .lineLimit(1)
-                Spacer(minLength: DS.s2)
-                // displayShots 是内存里的数组，count 是 O(1)，可以留在 body 里。
-                Text("\(store.displayShots.count) 个项目")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .fixedSize()
-            }
-
-            chipRow
+        HStack(alignment: .firstTextBaseline, spacing: DS.s3) {
+            Text(title)
+                .font(.largeTitle.weight(.bold))
+                .lineLimit(1)
+            clearFilterButton
+            Spacer(minLength: DS.s2)
+            // displayShots 是内存里的数组，count 是 O(1)，可以留在 body 里。
+            Text("\(store.displayShots.count) 个项目")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .fixedSize()
         }
-        // 聚合是几条小查询，跟着 store 的每一次变更重查一遍 ——
-        // 通知发在写库**之后**，这里直接读库拿到的已是新值（同 GallerySidebar.refresh）。
-        .task { refresh() }
-        .onReceive(store.objectWillChange) { _ in refresh() }
     }
 
     // MARK: - 大标题
@@ -60,192 +53,27 @@ struct GalleryPageHeader: View {
         }
     }
 
-    // MARK: - 筛选胶囊行
+    // MARK: - 清除筛选
 
-    private var chipRow: some View {
-        HStack(spacing: DS.s2) {
-            recentChip
-            appChip
-            categoryChip
-            tagChip
-            Spacer(minLength: 0)
-        }
-    }
-
-    /// 「最近」= 时间维度，对应 `.today` / `.thisWeek` 两个筛选。
-    private var recentChip: some View {
-        chip(dimension: "最近", value: timeValue) {
-            Button("全部时间") { clearDimension(isTime) }
-                .disabled(timeValue == nil)
-            Divider()
-            Button("今天") { select(.today) }
-            Button("本周") { select(.thisWeek) }
-        }
-    }
-
-    private var appChip: some View {
-        chip(dimension: "应用", value: store.filter.appName) {
-            Button("全部应用") { clearDimension(isApp) }
-                .disabled(store.filter.appName == nil)
-            if !apps.isEmpty { Divider() }
-            ForEach(apps, id: \.name) { app in
-                Button("\(app.name)（\(app.count)）") { select(.app(app.name)) }
+    /// 正在筛选时，标题旁边一个「✕」。大标题已经写着筛的是什么，
+    /// 所以这里不再重复那个名字，只提供退出口。
+    @ViewBuilder
+    private var clearFilterButton: some View {
+        if store.filter != .all {
+            Button {
+                store.filter = .all
+                store.reload()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
             }
+            .buttonStyle(.plain)
+            .help("清除筛选，回到全部截图")
+            .accessibilityLabel("清除筛选")
         }
     }
 
-    private var categoryChip: some View {
-        chip(dimension: "类型", value: store.filter.categoryName) {
-            Button("全部类型") { clearDimension(isCategory) }
-                .disabled(store.filter.categoryName == nil)
-            if !categories.isEmpty { Divider() }
-            ForEach(categories, id: \.name) { category in
-                Button("\(category.name)（\(category.count)）") { select(.category(category.name)) }
-            }
-        }
-    }
-
-    private var tagChip: some View {
-        chip(dimension: "标签", value: store.filter.tagName) {
-            Button("全部标签") { clearDimension(isTag) }
-                .disabled(store.filter.tagName == nil)
-            if !tags.isEmpty { Divider() }
-            ForEach(tags, id: \.name) { tag in
-                Button("\(tag.name)（\(tag.count)）") { select(.tag(tag.name)) }
-            }
-        }
-    }
-
-    /// 一个下拉胶囊。未选中显示维度名（「应用」），选中显示所选的值（「Chrome」）
-    /// 并点亮 —— 一行胶囊扫过去就知道现在筛的是什么，不需要再展开确认。
-    private func chip(
-        dimension: String,
-        value: String?,
-        @ViewBuilder menu: () -> some View
-    ) -> some View {
-        Menu {
-            menu()
-        } label: {
-            HStack(spacing: DS.s1) {
-                Text(value ?? dimension)
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .opacity(0.7)
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(FilterChipButtonStyle(isActive: value != nil))
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel(value == nil ? "按\(dimension)筛选" : "\(dimension)：\(value!)")
-    }
-
-    // MARK: - 筛选读写
-    //
-    // `GalleryFilter` 是单选的枚举，胶囊行只是它的四个「维度视图」：
-    // 选任何一项都替换掉整个筛选，「全部 X」只在当前筛的正是这个维度时才有事做
-    // （否则会把别人维度的选择顺手清掉，那是用户没要求的）。
-
-    private func select(_ filter: ShotStore.GalleryFilter) {
-        store.filter = filter
-        store.reload()
-    }
-
-    private func clearDimension(_ belongs: (ShotStore.GalleryFilter) -> Bool) {
-        guard belongs(store.filter) else { return }
-        store.filter = .all
-        store.reload()
-    }
-
-    private var timeValue: String? {
-        switch store.filter {
-        case .today:    return "今天"
-        case .thisWeek: return "本周"
-        default:        return nil
-        }
-    }
-
-    private func isTime(_ filter: ShotStore.GalleryFilter) -> Bool {
-        filter == .today || filter == .thisWeek
-    }
-
-    private func isApp(_ filter: ShotStore.GalleryFilter) -> Bool {
-        filter.appName != nil
-    }
-
-    private func isCategory(_ filter: ShotStore.GalleryFilter) -> Bool {
-        filter.categoryName != nil
-    }
-
-    private func isTag(_ filter: ShotStore.GalleryFilter) -> Bool {
-        filter.tagName != nil
-    }
-
-    // MARK: - 数据
-
-    private func refresh() {
-        apps = store.apps()
-        categories = store.categories()
-        tags = store.allTags()
-    }
-}
-
-// MARK: - 胶囊按钮样式
-
-/// 筛选胶囊：全圆角、13pt、深色底；选中时染 accent（不是填实心 ——
-/// 胶囊里写的是用户选的**值**，实心底会把它压成不可读的白字块）。
-///
-/// `@State` 不能写在 ButtonStyle 上（不是 View，没有视图身份），
-/// 悬停态实现在嵌套的 `Surface` 里 —— 同 ShellIconButtonStyle。
-struct FilterChipButtonStyle: ButtonStyle {
-
-    var isActive: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        Surface(configuration: configuration, isActive: isActive)
-    }
-
-    private struct Surface: View {
-
-        let configuration: ButtonStyleConfiguration
-        let isActive: Bool
-
-        @Environment(\.colorScheme) private var scheme
-        @Environment(\.accessibilityReduceMotion) private var reduceMotion
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-                .padding(.horizontal, DS.s3)
-                .frame(height: DS.Shell.chipHeight)
-                .background(fill, in: Capsule())
-                .overlay {
-                    if isActive {
-                        Capsule().strokeBorder(Color.accentColor.opacity(0.45), lineWidth: 1)
-                    }
-                }
-                .contentShape(Capsule())
-                .scaleEffect(configuration.isPressed ? DS.Lift.pressScale : 1)
-                .onHover { hovering = $0 }
-                .animation(DS.Motion.micro(reduced: reduceMotion), value: hovering)
-                .animation(DS.Motion.micro(reduced: reduceMotion), value: configuration.isPressed)
-        }
-
-        /// 亮度阶梯那一套：深色加白、浅色加黑；选中态换成 accent 的淡染。
-        private var fill: Color {
-            if isActive {
-                return .accentColor.opacity(hovering ? 0.26 : 0.18)
-            }
-            let base = scheme == .dark ? 0.07 : 0.05
-            let boost = hovering ? 0.05 : 0.0
-            return scheme == .dark
-                ? .white.opacity(base + boost)
-                : .black.opacity(base + boost)
-        }
-    }
 }
 
 // MARK: - 筛选维度取值

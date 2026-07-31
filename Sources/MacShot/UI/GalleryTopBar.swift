@@ -65,13 +65,6 @@ struct GalleryTopBar: View {
         settings.semanticSearch && modelStore.isReady
     }
 
-    /// 「现在是不是筛着的」—— 决定漏斗按钮要不要点亮、「清除筛选」要不要可点。
-    private var hasActiveFilter: Bool {
-        store.filter != .all
-            || !store.searchText.isEmpty
-            || (store.semanticMode && store.semanticResults != nil)
-    }
-
     var body: some View {
         HStack(spacing: DS.s3) {
             Text("MacShot")
@@ -241,7 +234,6 @@ struct GalleryTopBar: View {
 
     private var rightControls: some View {
         HStack(spacing: DS.s2) {
-            filterMenu
             layoutPicker
             inspectorToggle
             moreMenu
@@ -249,33 +241,10 @@ struct GalleryTopBar: View {
         .fixedSize()
     }
 
-    /// 漏斗 = 「资料库」那几个不在胶囊行里的智能入口 + 一键清除。
-    /// 与筛选胶囊行（最近 / 应用 / 类型 / 标签）不重复：那四个管维度，这个管整体。
-    private var filterMenu: some View {
-        Menu {
-            Picker("资料库", selection: filterBinding) {
-                Label("全部截图", systemImage: "square.grid.2x2").tag(ShotStore.GalleryFilter.all)
-                Label("收藏", systemImage: "star").tag(ShotStore.GalleryFilter.favorites)
-                Label("未加标签", systemImage: "tag.slash").tag(ShotStore.GalleryFilter.untagged)
-                Label("已标注", systemImage: "pencil").tag(ShotStore.GalleryFilter.annotated)
-            }
-            .pickerStyle(.inline)
-
-            Divider()
-
-            Button("清除筛选") { clearFilters() }
-                .disabled(!hasActiveFilter)
-        } label: {
-            Image(systemName: hasActiveFilter
-                ? "line.3.horizontal.decrease.circle.fill"
-                : "line.3.horizontal.decrease.circle")
-        }
-        .menuStyle(.button)
-        .buttonStyle(.shellIcon(active: hasActiveFilter))
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(hasActiveFilter ? "正在筛选 —— 点开可清除" : "筛选")
-    }
+    // 顶栏曾经还有一个漏斗菜单（全部/收藏/未加标签/已标注 + 清除筛选）。
+    // 那四项在侧边栏「资料库」组里一模一样地列着，是同一份 `store.filter`
+    // 的第三个入口 —— 连同页头那行下拉胶囊一起删掉了。
+    // 现在：选择只在侧边栏，清除在页头标题旁的 ✕。
 
     /// 网格 / 瀑布切换。和网格底栏那个分段控件是**同一个** @AppStorage 键，
     /// 两处任意一处切换，另一处立刻跟上（UserDefaults 是唯一真相）。
@@ -328,25 +297,6 @@ struct GalleryTopBar: View {
     }
 
     // MARK: - 动作
-
-    /// 筛选写回 store 并重查。侧边栏走的是同一个 `store.filter`，
-    /// 所以这里选完侧边栏会跟着高亮 —— 两边是同一个真相，不是两份状态。
-    private var filterBinding: Binding<ShotStore.GalleryFilter> {
-        Binding(
-            get: { store.filter },
-            set: { newValue in
-                store.filter = newValue
-                store.reload()
-            }
-        )
-    }
-
-    private func clearFilters() {
-        store.searchText = ""
-        store.filter = .all
-        store.clearSemanticResults()
-        store.reload()
-    }
 
     /// 设置是本窗口的一个模式（不再是独立窗口），所以直接切模式 ——
     /// 此前要绕 AppKit 响应链去找 AppDelegate 开窗，那条路连同两个

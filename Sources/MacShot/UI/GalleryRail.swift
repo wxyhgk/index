@@ -235,7 +235,13 @@ struct GalleryRail: View {
     var body: some View {
         VStack(spacing: DS.s2) {
             expandToggle
-            entries
+            // 筛选图标**只在面板收起时出现**。展开时它们（全部截图 / 收藏 /
+            // 前几个分类）在右边面板里一模一样地列着 —— 同一个 `store.filter`
+            // 在相距不到 200pt 的地方画两遍，是「侧边栏显得杂」的一部分。
+            // 展开时轨退化成一条只剩「收起」与「设置」的窄边，读起来像面板的手柄。
+            if !expanded {
+                entries
+            }
             // 齿轮固定在底部（设计稿 §2）：它不是筛选，不该混在筛选那一列里。
             Spacer(minLength: DS.s2)
             settingsButton
