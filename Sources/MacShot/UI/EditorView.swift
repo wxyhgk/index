@@ -33,7 +33,13 @@ struct EditorView: View {
 
     /// 未保存检测的基线：最近一次载入 / 保存时的图层数组。
     /// 当前图层与它不等 = 有未保存的标注（换图守卫用，Layer 是 Equatable）。
+    /// 已落库的那一版图层。自动保存靠它和当前画布做**内容比对** ——
+    /// 「画一笔再撤销」回到原样时不会留下一条空修订。
     @State private var baselineLayers: [Layer] = []
+    /// 待落库的节流任务。同一时刻只有一个。
+    @State private var autoSaveTask: Task<Void, Never>?
+    /// 最近一次落库的时刻。底栏那行状态字用它。
+    @State private var savedAt: Date?
 
     /// 拖拽标注时 body 每帧都会重建 —— 修订列表绝不能挂在 body 上做数据库查询。
     @State private var revisions: [Revision] = []
@@ -107,7 +113,15 @@ struct EditorView: View {
             load()
             spaceMonitor.install()
         }
-        .onDisappear { spaceMonitor.remove() }
+        .onDisappear {
+            spaceMonitor.remove()
+            // 视图消失（换图重建、窗口关闭、切到别的顶层选项）时**立即**落库，
+            // 不等节流 —— 节流任务会随视图一起没掉，等不到它自己触发。
+            flushSave()
+        }
+        // 每一次改动都会 tick（画、删、改样式、开效果、撤销重做…），
+        // 所以自动保存挂在它上面就够了，不需要给每个动作各接一次。
+        .onChange(of: annotationTick) { _, _ in scheduleAutoSave() }
         .onChange(of: zoomLevel) { _, newValue in
             // 适应窗口态没有可平移空间，抓手模式随之退场（按钮也已置灰）。
             if newValue == nil { canvasMode = .pointer }
@@ -1054,13 +1068,12 @@ struct EditorView: View {
                 .lineLimit(1)
 
             Spacer()
+            saveStatus
             Button("复制") { copyRendered() }
             Button("导出 PNG") { exportRendered() }
-            Button("保存为新版本") { saveRevision() }
-                .keyboardShortcut("s", modifiers: .command)
-                .buttonStyle(.borderedProminent)
             Button("返回图库") { requestReturnToGallery() }
                 .keyboardShortcut(.cancelAction)
+                .buttonStyle(.borderedProminent)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -1130,72 +1143,95 @@ struct EditorView: View {
         return LayerRenderer.render(base: base, layers: exportedLayers)
     }
 
-    private func saveRevision() {
+    /// 底栏的保存状态。取代原来那个「保存为新版本」按钮 ——
+    /// 自动保存之下按钮没有对象可按，但**人需要知道自己的东西已经安全了**，
+    /// 那份安心感原本是靠离开时那个对话框提供的（用一次打断换一次确认）。
+    @ViewBuilder
+    private var saveStatus: some View {
+        // 读一下 tick，改动时这行会跟着重算（未落库 → 「保存中…」）。
+        let _ = annotationTick
+        let pending = exportedLayers.persisted != baselineLayers
+
+        Label(
+            pending ? "保存中…" : (savedAt == nil ? "已是最新" : "已保存"),
+            systemImage: pending ? "arrow.triangle.2.circlepath" : "checkmark.circle"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help(pending ? "停手约一秒后自动存为新版本" : "改动已存进修订链，原图从未被修改")
+        .accessibilityLabel(pending ? "正在保存" : "已保存")
+    }
+
+    // MARK: - 自动保存
+    //
+    // 编辑器**不需要手动保存**。此前离开画布时会弹一个「有未保存的标注，仍要离开吗？」
+    // 三选一对话框 —— 那是把本该由软件承担的责任推给用户：非破坏式编辑下每次保存
+    // 只是往修订链追加一条，原图从不改动，没有任何「保存失败会毁掉东西」的风险，
+    // 却要求用户在每次离开时做一次决定。现在改成停手就存。
+    //
+    // 节流 1.2 秒：画的过程中每一笔都会 tick，逐笔落库会把修订链撑成流水账；
+    // 停下来一会儿才算一次「改完了」。离开画布（换图 / 回图库 / 视图消失）时
+    // **立即冲一次**，不等节流。
+
+    /// 停手多久算「改完了」。
+    private static let autoSaveDelay: Duration = .milliseconds(1200)
+
+    /// 改动后重新计时。同一时刻只有一个待落库任务。
+    private func scheduleAutoSave() {
+        autoSaveTask?.cancel()
+        autoSaveTask = Task {
+            try? await Task.sleep(for: Self.autoSaveDelay)
+            guard !Task.isCancelled else { return }
+            flushSave()
+        }
+    }
+
+    /// 立即落库。没有实际改动时什么都不做 —— 内容比对（而不是图层数量比对）
+    /// 保证「画一笔再撤销」不会留下一条空修订。
+    private func flushSave() {
+        autoSaveTask?.cancel()
+        autoSaveTask = nil
         annotation.endTextEditing()
-        guard confirmSaveOverNewerRevision() else { return }
+
+        let layers = exportedLayers
+        guard layers.persisted != baselineLayers else { return }
+
         store.appendRevision(
             shot: shot,
-            layers: exportedLayers,
+            layers: layers,
             note: "编辑 \(annotation.layers.count) 层"
         )
         revisions = store.revisions(for: shot)
         loadedRevisionIndex = revisions.count - 1
-        baselineLayers = exportedLayers.persisted
+        baselineLayers = layers.persisted
+        savedAt = Date()
         annotationTick += 1
     }
 
-    /// 胶片条点击换图。未保存守卫通过后直接换 `editingShotID` ——
+    /// 胶片条点击换图。先把当前画布落库，再换 `editingShotID` ——
     /// 宿主（GalleryView）挂了 `.id(shot.id)`，identity 变化即重建本视图完成切换。
     private func requestSwitch(to target: Shot) {
-        guard target.id != shot.id, resolveUnsavedChanges() else { return }
+        guard target.id != shot.id else { return }
+        flushSave()
         GalleryWindowMode.shared.openEditor(shotID: target.id)
     }
 
-    /// 左上「‹ 图库」/ 底部「返回图库」/ Esc：守卫通过后整窗切回图库模式。
+    /// 左上「‹ 图库」/ 底部「返回图库」/ Esc：落库后整窗切回图库模式。
     private func requestReturnToGallery() {
-        guard resolveUnsavedChanges() else { return }
+        flushSave()
         GalleryWindowMode.shared.returnToGallery()
     }
 
-    /// 未保存守卫（返回图库和换图共用）。有未保存的标注时先问一声
-    /// （保存并继续 / 不保存继续 / 取消）；返回 true = 可以离开当前画布。
-    private func resolveUnsavedChanges() -> Bool {
-        annotation.endTextEditing()
-        guard exportedLayers.persisted != baselineLayers else { return true }
-
-        switch AppAlert.confirm(
-            "有未保存的标注，仍要离开吗？",
-            message: "当前画布上的改动还没有保存为新版本，离开后会丢失。",
-            buttons: ["保存并继续", "不保存继续", "取消"]
-        ) {
-        case 0:
-            saveRevision()
-            // 保存可能被并发修订确认（confirmSaveOverNewerRevision）取消 ——
-            // 那样基线不会更新，改动仍未保存，不能走。
-            return exportedLayers.persisted == baselineLayers
-        case 1:
-            return true
-        default:
-            return false
-        }
-    }
-
-    /// 并发保存检测：修订链本身由 appendRevision 的单事务保证线性
-    /// （不会坏链），但后保存的一方是基于打开时的旧图层覆盖式追加 ——
-    /// 图库里已经出现更新的修订（钉图 / 自动脱敏落的）时，
-    /// 先问一声再追加。`revisions` 在打开和每次保存后都会与库同步，
-    /// 它的尾项就是本编辑器所认知的「最新」。
-    private func confirmSaveOverNewerRevision() -> Bool {
-        guard store.latestRevision(for: shot)?.id != revisions.last?.id else { return true }
-
-        return AppAlert.confirm(
-            "图库中已有更新的修订，仍要保存吗？",
-            message: "这张截图在别处（钉图或自动脱敏）"
-                + "已保存了更新的版本。继续保存会把当前画布内容追加为最新修订，"
-                + "历史版本都还在，不会丢失。",
-            buttons: ["仍要保存", "取消"]
-        ) == 0
-    }
+    // 这里曾经还有两个对话框，都随自动保存一起删掉了：
+    //
+    //   · 「有未保存的标注，仍要离开吗？」—— 现在没有「未保存」这个状态了。
+    //
+    //   · 「图库中已有更新的修订，仍要保存吗？」—— 它防的是「编辑期间别处
+    //     （钉图 / 自动脱敏）又落了一版」。但修订链是 append-only 的，追加
+    //     从不覆盖任何东西，那个对话框自己的说明里就写着「历史版本都还在，
+    //     不会丢失」—— 既然不会丢东西，它就只是在打断人。自动保存之下它更会
+    //     在打字打到一半时弹出来。真要更聪明的处理（把两边的图层合并而不是
+    //     各存一版），那是另一件事，不该用一个对话框顶着。
 
     private func copyRendered() {
         guard let image = rendered() else { return }
