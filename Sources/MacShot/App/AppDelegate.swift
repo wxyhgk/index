@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CaptureActionRegistry.registerBuiltins(into: .shared)
         CapturePipeline.registerBuiltins(into: .shared)
         ToolbarRegistry.registerBuiltins(into: .shared)
+        GalleryDestinationRegistry.registerBuiltins(into: .shared)
         registerCaptureSources()
 
         setupStatusItem()

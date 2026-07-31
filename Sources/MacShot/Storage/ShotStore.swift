@@ -33,12 +33,15 @@ final class ShotStore: ObservableObject {
         case annotated
         case category(String)
         case tag(String)
+        /// 按来源 App。侧边栏的主线索（见 `AppsSidebarSection`）。
+        case app(String)
 
-        // 曾经还有 `today` / `thisWeek` / `app(String)` 三个 case。删掉的理由：
-        //   · 今天 / 本周 —— 网格本来就按日期分组、最新在最上，「今天」等于滚到顶；
-        //   · 按应用 —— 与「分类」是同一维度的两种粒度（分类就是从来源 App 推出来的），
-        //     而且长尾极重；应用名进了全文索引，搜 App 名即可达。
-        // 侧边栏里对应的行一并删除，不留够不着的枚举分支。
+        // 曾经还有 `today` / `thisWeek` 两个 case，随侧边栏简化一起删了：
+        // 网格本来就按日期分组、最新在最上，「今天」等于滚到顶。
+        //
+        // `favorites` / `untagged` / `annotated` / `category` / `tag` 目前
+        // **没有对应的侧边栏分区**（那几组按用户要求撤掉了），但保留着 ——
+        // 它们各自的分区是计划中的下一批，届时只需加一个 `SidebarSection` 实现。
     }
 
     @Published var filter: GalleryFilter = .all
@@ -553,6 +556,9 @@ final class ShotStore: ObservableObject {
                     )
                     """
                 arguments["filterValue"] = name
+            case .app(let name):
+                filterClause = "AND shot.appName = :filterValue"
+                arguments["filterValue"] = name
             }
 
             if query.isEmpty {
@@ -683,6 +689,25 @@ final class ShotStore: ObservableObject {
         (try? dbQueue.read { db in
             try Shot.filter(key: id).fetchCount(db) > 0
         }) ?? false
+    }
+
+    /// 截图来源 App 及数量，按数量降序。侧边栏「应用」分区用；
+    /// bundleID 用来取真实 App 图标（`MAX()` 只是为了在 GROUP BY 下取到一个值，
+    /// 同名 App 的 bundleID 实际上是一致的）。
+    func apps() -> [(name: String, bundleID: String?, count: Int)] {
+        (try? dbQueue.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT appName AS name, MAX(appBundleID) AS bundleID, COUNT(*) AS count
+                FROM shot
+                WHERE appName IS NOT NULL
+                GROUP BY appName
+                ORDER BY count DESC, name ASC
+                """).map {
+                    (name: $0["name"] as String,
+                     bundleID: $0["bundleID"] as String?,
+                     count: $0["count"] as Int)
+                }
+        }) ?? []
     }
 
     /// 现有分类及各自的截图数量，按数量降序。图库侧边栏用。

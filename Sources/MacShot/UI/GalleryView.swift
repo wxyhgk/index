@@ -40,6 +40,10 @@ struct GalleryView: View {
     /// 详情栏开关，跨启动记住。顶栏的开关按钮和详情面板右上角的 ✕ 都写它。
     @AppStorage("galleryInspectorShown") private var showInspector = true
 
+    /// 选中的侧边栏选项。存 id 不存序号 —— 插入新选项不会让用户上次停留的位置漂移；
+    /// 解析不到（选项被移除、旧值）时 `resolve` 退回第一个。
+    @AppStorage("galleryDestination") private var destinationID = "destination.library"
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -114,11 +118,20 @@ struct GalleryView: View {
             VStack(spacing: 0) {
                 GalleryTopBar(showInspector: $showInspector)
 
+                // 左侧固定选项 │ 中间内容 │ 右侧面板 —— 后两块都由**选中的那个选项**
+                // 提供（见 GalleryDestination）。容器不认识任何一个具体选项装了什么。
                 HStack(alignment: .top, spacing: DS.Shell.panelGap) {
                     sidebarPanel
-                    content
-                    if showInspector {
-                        GalleryInspectorPanel(isPresented: $showInspector)
+
+                    let destination = GalleryDestinationRegistry.shared.resolve(id: destinationID)
+
+                    (destination?.content() ?? AnyView(EmptyView()))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                    // 选项自己说不需要右侧栏时，整块宽度让给中间 ——
+                    // 不画一块空白板子。
+                    if showInspector, let inspector = destination?.inspector() {
+                        inspector
                             .frame(width: DS.Shell.inspectorWidth)
                             // 从右侧滑入 / 滑出。ReduceMotion 下由下面那条
                             // `.animation(reduced:)` 降级成短 easeOut，不是硬切。
@@ -136,34 +149,12 @@ struct GalleryView: View {
         .frame(minWidth: 1000, minHeight: 600)
     }
 
-    /// 左侧：图标轨（设计稿 §2）+ 可折叠标签面板（§3）。
-    ///
-    /// 这一层**只负责把它摆在最左**，一个尺寸都不给：宽度（56 / 168 / 缝）、
-    /// 折叠状态、两块各自的 `.floatingPanel()` 全在 `GalleryLeftPanels` 里 ——
-    /// 展开与收起会让整块的宽度从 232 变成 56，把宽度写在这里就等于要求外壳
-    /// 知道折叠状态，那是本视图刻意不订阅的东西（见上面关于 @State 的注释）。
+    /// 左侧：固定的选项列表。宽度写在这里（它现在是定值，不再有折叠态）。
     private var sidebarPanel: some View {
-        GalleryLeftPanels()
-    }
-
-    /// 中间内容区：页头（大标题 + 计数 + 筛选胶囊）+ 网格。
-    ///
-    /// **这里对网格什么都不做** —— 它直接坐在窗口底色上，和设计稿一致（卡片浮在
-    /// 深底上，中间区域不是一块浮起的纸）。上一轮为了让网格自铺的那层不透明画布
-    /// 读起来像「浮起的一块」而临时加过一个 `clipShape(radiusFloating)`，
-    /// 网格改版把画布交还窗口底色之后它已经没有对象可裁，删掉了。
-    ///
-    /// 仍然不许破坏的两件事：
-    ///   · 宽度感知在网格内部，父层一个每帧 state 都不写；
-    ///   · 网格底下必须是不透明的 —— 现在由本文件 `gallery` 里那层 `DS.windowBase`
-    ///     负责（窗口也没开 `isOpaque = false`），别在这一层再补一块底色。
-    private var content: some View {
-        VStack(alignment: .leading, spacing: DS.s3) {
-            GalleryPageHeader()
-                .padding(.horizontal, DS.s2)
-            GalleryGrid()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        GallerySidebar(selection: $destinationID)
+            .frame(width: DS.Shell.sidebarWidth)
+            .frame(maxHeight: .infinity)
+            .floatingPanel()
     }
 
     /// 正在编辑的记录已不存在（图库外的删除 / 清理）→ 退回图库模式。

@@ -47,6 +47,7 @@ struct GalleryPageHeader: View {
         case .annotated:            return "已标注"
         case .category(let name):   return name
         case .tag(let name):        return name
+        case .app(let name):        return name
         }
     }
 
