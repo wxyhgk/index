@@ -95,7 +95,10 @@ final class ShotStoreTests: XCTestCase {
     /// 缩略图是 `save()` 时按原图生成、以 sha256 命名的，而 sha 只认原图字节 ——
     /// 加多少标注它都不变。少了这一步，图库网格会一直显示没有标注的那一版
     /// （用户报的「编辑完返回图库图片没更新」）。
-    func testAppendRevisionRefreshesThumbnail() throws {
+    ///
+    /// 重画是**异步**的（整段渲染 + 编码 + 写盘挂在后台，主线程只回来作废缓存 ——
+    /// 同步跑会在编辑时每隔一秒多堵一次主线程），所以这里要等它完成。
+    func testAppendRevisionRefreshesThumbnail() async throws {
         let (store, _) = try makeStore()
         let shot = try store.save(image: makeImage(gray: 0.1), metadata: CaptureMetadata())
 
@@ -112,6 +115,13 @@ final class ShotStoreTests: XCTestCase {
         store.thumbnailInvalidator = { invalidated.append($0.sha256) }
 
         _ = store.appendRevision(shot: shot, layers: Layers(), note: "测试")
+
+        // 轮询等它落地，而不是睡一个固定时长 —— 固定 sleep 在慢机器上会假失败，
+        // 在快机器上白等。上限 2 秒，超时即判定「根本没重画」。
+        let deadline = Date().addingTimeInterval(2)
+        while invalidated.isEmpty, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
 
         let after = try Data(contentsOf: thumbURL)
         XCTAssertNotEqual(before, after, "追加修订后缩略图文件没有被重画")

@@ -492,14 +492,46 @@ final class ShotStore: ObservableObject {
         guard let render = revisionThumbnailRenderer,
               let base = originalImage(for: shot) else { return }
 
-        let composed = render(base, layers)
-        guard let thumb = ImageCodec.resized(composed, maxDimension: 640),
-              let jpg = ImageCodec.jpegData(from: thumb) else { return }
+        // ⚠️ **绝不在主线程上跑**。这条链是「全分辨率渲染 → 缩放 → JPEG 编码 → 写盘」，
+        // 一张 3456×1986 的截图跑一趟是上百毫秒级；而它挂在自动保存后面，
+        // 于是编辑时每隔一秒多就把主线程堵一次 —— 表现为「点按钮有延迟」。
+        //
+        // CGImage 与 LayerRenderer / ImageCodec 都不是 MainActor 隔离的，
+        // 渲染和编码可以整段搬到后台；回主线程的只有一次缓存作废。
+        let url = thumbnailURL(for: shot)
+        let payload = ThumbnailJob(base: base, layers: layers, render: render, url: url)
+        // 作废回调**先取出来**，不要在后台回调里走 `ShotStore.shared` ——
+        // 那样非单例的实例（比如测试用的独立库）通知不到自己的订阅方。
+        let invalidate = thumbnailInvalidator
 
-        try? jpg.write(to: thumbnailURL(for: shot), options: .atomic)
-        // 文件覆盖了还不够：内存缓存的键是 sha256，而 sha 没变 ——
-        // 不主动作废的话界面会继续用缓存里那张旧图。
-        thumbnailInvalidator?(shot)
+        Task.detached(priority: .utility) {
+            guard let jpg = payload.encode() else { return }
+            try? jpg.write(to: payload.url, options: .atomic)
+            await MainActor.run {
+                // 文件覆盖了还不够：内存缓存的键是 sha256，而 sha 没变 ——
+                // 不主动作废的话界面会继续用缓存里那张旧图。
+                invalidate?(shot)
+            }
+        }
+    }
+
+    /// 后台重画缩略图要带走的一整套材料。
+    ///
+    /// 打包成一个 `@unchecked Sendable` 的值而不是在 `Task.detached` 里逐个捕获：
+    /// 这些东西（CGImage、图层数组、渲染闭包）造好之后**没有人再改它们**，
+    /// 是一次所有权转移而不是共享。用一个类型把这件事讲明白，
+    /// 好过在捕获处埋一串静默的 unchecked。
+    private struct ThumbnailJob: @unchecked Sendable {
+        let base: CGImage
+        let layers: Layers<ImageSpace>
+        let render: (CGImage, Layers<ImageSpace>) -> CGImage
+        let url: URL
+
+        func encode() -> Data? {
+            let composed = render(base, layers)
+            guard let thumb = ImageCodec.resized(composed, maxDimension: 640) else { return nil }
+            return ImageCodec.jpegData(from: thumb)
+        }
     }
 
     // MARK: - 刷新合并
