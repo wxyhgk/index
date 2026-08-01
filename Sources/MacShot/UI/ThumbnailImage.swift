@@ -8,14 +8,16 @@ final class ThumbnailCache: ObservableObject {
 
     static let shared = ThumbnailCache()
 
-    /// 作废世代。任何一次作废都 +1 —— `CachedImage` 把它编进 `.task` 的 id 里，
-    /// 于是缓存被清掉时视图会重新去读盘。
+    /// 每个键各自的作废版本号。`CachedImage` 把**自己那一个**编进 `.task` 的 id，
+    /// 于是只有被作废的那张会重新读盘，别人一动不动。
     ///
-    /// 为什么不做成「每个 key 一个版本号」：那需要视图订阅到具体的键，
-    /// 而 SwiftUI 里这等于给每张卡挂一个观察者。全局世代号的代价是**一次作废
-    /// 会让所有可见的缩略图各跑一次 `load()`** —— 但除了被作废的那张，
-    /// 其余都在第一行命中缓存直接返回，不读盘。几十张卡的量级完全够用。
-    @Published private(set) var generation = 0
+    /// 起初这里是一个全局世代号（任何作废都 +1）。那样每保存一次修订，
+    /// 编辑器胶片条上**所有**可见缩略图都会各跑一次 `load()` ——
+    /// 虽然除被作废的那张之外都在第一行命中缓存返回，但几十个 `.task`
+    /// 的重建本身也是活儿，而这活儿每隔一秒多就来一遍。
+    @Published private(set) var versions: [String: Int] = [:]
+
+    func version(forKey key: String) -> Int { versions[key] ?? 0 }
 
     private let cache = NSCache<NSString, NSImage>()
 
@@ -37,12 +39,13 @@ final class ThumbnailCache: ObservableObject {
     /// 不主动作废就会一直命中旧图。
     func remove(forKey key: String) {
         cache.removeObject(forKey: key as NSString)
-        generation &+= 1
+        versions[key, default: 0] &+= 1
     }
 
+    /// 全部作废（清理任务等）。这一下确实要惊动所有人，逐键 +1。
     func removeAll() {
         cache.removeAllObjects()
-        generation &+= 1
+        for key in versions.keys { versions[key]! &+= 1 }
     }
 }
 
@@ -71,8 +74,9 @@ struct CachedImage: View {
                 Rectangle().fill(DS.thumbnailBacking(colorScheme))
             }
         }
-        // id 里编进作废世代：换图（key 变）和「缩略图被重画」（世代变）都要重新加载。
-        .task(id: "\(key)#\(cacheState.generation)") { await load() }
+        // id 里编进**本键自己的**版本号：换图（key 变）和「这一张被重画」都要重新加载，
+        // 而别人被重画时本视图纹丝不动。
+        .task(id: "\(key)#\(cacheState.version(forKey: key))") { await load() }
     }
 
     private func load() async {

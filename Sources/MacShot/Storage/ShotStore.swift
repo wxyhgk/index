@@ -698,7 +698,17 @@ final class ShotStore: ObservableObject {
         objectWillChange.send()
         shots = newShots
         favoriteIDs = newFavoriteIDs
+        libraryDidChange.send()
     }
+
+    /// 「库存内容变了」——新增 / 删除 / 筛选重查，即每次 `reload()`。
+    ///
+    /// 与 `objectWillChange` 的区别很关键：后者**任何**写入都会发，包括
+    /// 「给某张图追加一条修订」这种不改变库存的操作。订阅方如果只关心
+    /// 「有哪些截图」，订 `objectWillChange` 就会被修订保存反复惊动 ——
+    /// 编辑器胶片条正是这样每隔一秒多在主线程上重查一次全库（500 行取回 + 全量解码），
+    /// 表现为编辑时点按钮有延迟。
+    let libraryDidChange = PassthroughSubject<Void, Never>()
 
     var totalCount: Int {
         (try? dbQueue.read { db in try Shot.fetchCount(db) }) ?? 0

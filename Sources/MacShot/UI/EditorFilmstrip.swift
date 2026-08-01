@@ -42,10 +42,15 @@ struct EditorFilmstrip: View {
             .frame(height: collapsed ? 24 : 72)
         }
         .onAppear(perform: refresh)
-        .onReceive(store.objectWillChange) { _ in
-            // objectWillChange 在变更**之前**发布；转一拍再查库，拿到变更后的内容。
-            DispatchQueue.main.async { refresh() }
-        }
+        // 只订「库存内容变了」，**不订 objectWillChange**。
+        //
+        // 后者任何写入都会发，包括编辑器自己每隔一秒多的一次修订保存 ——
+        // 而保存修订并不改变胶片条的内容（还是同一批截图、同样的顺序），
+        // 却会害这里在主线程上重查一次全库。那正是「编辑时点按钮有延迟」的来源。
+        //
+        // `libraryDidChange` 发在 `reload()` 之后（即库存真的重查过），
+        // 所以这里不需要再 `DispatchQueue.main.async` 转一拍去等变更落地。
+        .onReceive(store.libraryDidChange) { _ in refresh() }
     }
 
     // MARK: - 胶片
@@ -117,7 +122,21 @@ struct EditorFilmstrip: View {
         .help(collapsed ? "展开胶片条" : "收起胶片条")
     }
 
+    /// 重查全库。
+    ///
+    /// ⚠️ **这是主线程上的一次 500 行取回 + 全量解码**，不便宜。
+    /// 它订阅的是 store 的**全部**变更，而编辑器每保存一次修订就会发一次通知 ——
+    /// 于是编辑时每隔一秒多就在主线程上重查一次全库，表现为「点按钮有延迟」。
+    ///
+    /// 但保存修订并**不改变胶片条的内容**：还是同一批截图、同样的顺序，
+    /// 变的只是某一张的缩略图像素（那由 `ThumbnailCache` 的作废机制负责刷新，
+    /// 与这里的列表无关）。所以先做一次廉价的对比，**内容没变就不动**——
+    /// 不动 `shots` 就不会触发 ForEach 重建，也不会连锁 scrollToCurrent。
     private func refresh() {
-        shots = store.allShots()
+        let latest = store.allShots()
+        // Shot 是 Equatable，但逐个比对 500 个结构体也不必要：
+        // 胶片条只关心「有哪些图、什么顺序」，比 ID 序列就够了。
+        guard latest.map(\.id) != shots.map(\.id) else { return }
+        shots = latest
     }
 }
