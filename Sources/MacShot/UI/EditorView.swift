@@ -17,56 +17,35 @@ struct EditorView: View {
 
     let shot: Shot
 
-    // 不订阅 store：后台 OCR 回填会触发它发布变更，没必要为此重建整个编辑器。
-    private let store = ShotStore.shared
+    // 视图**不再直接碰数据库** —— 读写全在 `EditorModel` 里。
+    // （它也刻意不订阅 store：后台 OCR 回填会触发发布，没必要为此重建整个编辑器。）
 
     /// 标注状态机。它自己是 `ObservableObject`，变更由它自己发布 ——
     /// 此前这里还有一个 `annotationTick` 计数器，本视图在 20 处调用后面手写
     /// `+= 1` 来驱动重绘（漏一处就是「画了没反应」，编译器也不提醒）。
     /// 那个计数器是 `@State`，任何能改标注的子视图都必须够得到它，
     /// 于是工具栏、画布、面板只能挤在同一个视图里 —— 拆分的第一步就是消灭它。
-    @StateObject private var annotation = AnnotationState()
+    /// 编辑器的共享状态：底图、缩放、修订链、自动保存 —— 五块子视图都要看到的那部分。
+    /// 只属于某一块的（画布的拖拽阶段、平移位置、面板的 tab）不放进去。
+    @StateObject private var model: EditorModel
 
-    @State private var baseImage: CGImage?
-    /// 底图 + 已应用的马赛克。拖拽过程中不重算，只在图层提交后刷新。
-    @State private var canvasImage: CGImage?
+    /// 标注状态机。真正的持有者是 model，这里只是个转发，省得满篇 `model.annotation`。
+    private var annotation: AnnotationState { model.annotation }
 
-    @State private var loadedRevisionIndex: Int?
-
-    /// 未保存检测的基线：最近一次载入 / 保存时的图层数组。
-    /// 当前图层与它不等 = 有未保存的标注（换图守卫用，Layer 是 Equatable）。
-    /// 已落库的那一版图层。自动保存靠它和当前画布做**内容比对** ——
-    /// 「画一笔再撤销」回到原样时不会留下一条空修订。
-    @State private var baselineLayers: [Layer] = []
-    /// 待落库的节流任务。同一时刻只有一个。
-    @State private var autoSaveTask: Task<Void, Never>?
-    /// 最近一次落库的时刻。底栏那行状态字用它。
-    @State private var savedAt: Date?
-
-    /// 拖拽标注时 body 每帧都会重建 —— 修订列表绝不能挂在 body 上做数据库查询。
-    @State private var revisions: [Revision] = []
+    init(shot: Shot) {
+        self.shot = shot
+        _model = StateObject(wrappedValue: EditorModel(shot: shot))
+    }
 
     /// 一次画布拖拽在做什么。`idle` 表示这次按下不产生后续（点空处取消选中等）。
     private enum CanvasDrag { case draw, move, resize, idle }
     @State private var canvasDrag: CanvasDrag?
-
-    /// 画布缩放倍率。`nil` = 适应窗口（自适应 fitted 分支）；
-    /// 非 nil 时画布尺寸 = 图像点尺寸 × 倍率，包进滚动容器可平移。
-    @State private var zoomLevel: Double?
 
     /// 缩放菜单的固定档位。⌃滚轮 / 捏合走连续缩放，范围见 `zoomRange`。
     private static let zoomSteps: [Double] = [0.25, 0.5, 1, 2, 4]
 
     /// 连续缩放的钳制范围。
     private static let zoomRange: ClosedRange<Double> = 0.1...8.0
-
-    /// 画布模式：指针（画/选/移图层）或抓手（拖拽平移视口）。
-    /// 抓手**不是**标注工具（不进 AnnotationTool）—— 覆盖层 / 钉图没有滚动概念。
-    private enum CanvasMode { case pointer, hand }
-    @State private var canvasMode: CanvasMode = .pointer
-
-    /// 滚动容器的命令桥：抓手平移、锚点缩放都经它摸 NSClipView。
-    @State private var panBox = CanvasPanBox()
 
     /// 抓手拖拽的上一次光标位置（窗口坐标 —— 平移时内容在光标下滑动，
     /// 本地坐标会跟着变，只有窗口坐标是稳定参照）。nil = 没在拖。
@@ -109,23 +88,18 @@ struct EditorView: View {
         .frame(minWidth: 900, minHeight: 620)
         .background(hiddenShortcuts)
         .onAppear {
-            load()
+            model.load()
             spaceMonitor.install()
         }
         .onDisappear {
             spaceMonitor.remove()
             // 视图消失（换图重建、窗口关闭、切到别的顶层选项）时**立即**落库，
             // 不等节流 —— 节流任务会随视图一起没掉，等不到它自己触发。
-            flushSave()
+            model.flushSave()
         }
-        // 每一次改动都会 tick（画、删、改样式、开效果、撤销重做…），
-        // 所以自动保存挂在它上面就够了，不需要给每个动作各接一次。
-        // 直接订阅状态机的变更（画、删、改样式、开效果、撤销重做都会发）——
-        // 此前是靠视图自己的 tick 计数器，那意味着「忘了 +1 的地方也不会自动保存」。
-        .onReceive(annotation.objectWillChange) { _ in scheduleAutoSave() }
-        .onChange(of: zoomLevel) { _, newValue in
+        .onChange(of: model.zoomLevel) { _, newValue in
             // 适应窗口态没有可平移空间，抓手模式随之退场（按钮也已置灰）。
-            if newValue == nil { canvasMode = .pointer }
+            if newValue == nil { model.canvasMode = .pointer }
         }
         .onChange(of: spaceMonitor.spaceHeld) { _, held in
             // 空格切手势会让进行中的标注拖拽收不到 onEnded，主动收尾避免状态卡住。
@@ -139,53 +113,8 @@ struct EditorView: View {
 
     // MARK: - 加载
 
-    private func load() {
-        guard let base = store.originalImage(for: shot) else { return }
-        baseImage = base
-        // 效果层的注入上下文（编辑器这一处，与覆盖层/钉图同一契约）：
-        // 画布就是图像像素 —— 水印按原图宽烤字号、壳/信息栏按 shot.scale 缩放；
-        // 元数据来自采集时落库的真实归因 —— 竞品的壳是空的，这里是真的。
-        annotation.effectContext = { [shot] in
-            var context = EffectContext()
-            context.imagePixelWidth = Double(base.width)
-            context.imagePixelHeight = Double(base.height)
-            context.chromeScale = max(1, shot.scale)
-            context.windowTitle = shot.windowTitle
-            context.sourceURL = shot.sourceURL
-            context.appDescription = CaptureInfoSpec.appDescription(
-                name: shot.appName, version: shot.appVersion
-            )
-            context.capturedAt = shot.capturedAt
-            return context
-        }
-        revisions = store.revisions(for: shot)
-        loadRevision(layers: revisions.last?.layers ?? [], index: max(0, revisions.count - 1))
-    }
-
-    private func loadRevision(layers: [Layer], index: Int) {
-        annotation.load(Layers(persisted: layers), pixelSource: cropPixels)
-        baselineLayers = layers
-        loadedRevisionIndex = index
-        refreshCanvasImage()    }
-
-    /// 马赛克贴片的像素来源：编辑器画布就是图片像素，直接从原图裁。
-    private func cropPixels(_ rect: CGRect) -> CGImage? {
-        baseImage?.cropping(to: rect.integral)
-    }
-
-    /// 只有马赛克需要走像素管线，这里单独重算一次。
-    private func refreshCanvasImage() {
-        guard let base = baseImage else { return }
-        let pixelates = exportedLayers.filter { $0.kind == .pixelate }
-        canvasImage = pixelates.isEmpty
-            ? base
-            : LayerRenderer.render(base: base, layers: pixelates)
-    }
-
-    /// 恒等投影到图像像素空间 —— 入库、导出、烤底图都用这一份。
-    private var exportedLayers: Layers<ImageSpace> {
-        annotation.layers.projected(onto: .zero, scale: 1)
-    }
+    // 加载、按版本载入、马赛克像素源、画布底图重算、导出投影
+    // 全部搬进了 `EditorModel` —— 它们是数据，不是视图。
 
     // MARK: - 工具栏
 
@@ -242,7 +171,7 @@ struct EditorView: View {
             }
 
             Button {
-                performUndo()
+                model.undo()
             } label: {
                 Image(systemName: "arrow.uturn.backward").frame(width: 26, height: 22)
             }
@@ -252,7 +181,7 @@ struct EditorView: View {
             .help("撤销（⌘Z）")
 
             Button {
-                performRedo()
+                model.redo()
             } label: {
                 Image(systemName: "arrow.uturn.forward").frame(width: 26, height: 22)
             }
@@ -267,7 +196,7 @@ struct EditorView: View {
 
     private func toolButton(_ tool: AnnotationTool?) -> some View {
         // 抓手激活时指针按钮不再高亮（两者都对应 annotation.tool == nil）。
-        let selected = annotation.tool == tool && canvasMode == .pointer
+        let selected = annotation.tool == tool && model.canvasMode == .pointer
         let shortcut = AnnotationTool.shortcuts.first { $0.tool == tool }
 
         return Button {
@@ -295,8 +224,8 @@ struct EditorView: View {
     /// 抓手按钮（Snagit 式大按钮同款样式）。适应窗口态没有可平移空间，置灰。
     /// 快捷键刻意不占字母（H 已是高亮）：按住空格即临时抓手，点按钮是常驻抓手。
     private var handButton: some View {
-        let selected = canvasMode == .hand
-        let disabled = zoomLevel == nil
+        let selected = model.canvasMode == .hand
+        let disabled = model.zoomLevel == nil
         return Button {
             toggleHandMode()
         } label: {
@@ -324,10 +253,10 @@ struct EditorView: View {
 
     private func toggleHandMode() {
         annotation.endTextEditing()
-        if canvasMode == .hand {
-            canvasMode = .pointer
+        if model.canvasMode == .hand {
+            model.canvasMode = .pointer
         } else {
-            canvasMode = .hand
+            model.canvasMode = .hand
             annotation.tool = nil
         }    }
 
@@ -526,16 +455,16 @@ struct EditorView: View {
     private func selectTool(_ tool: AnnotationTool?) {
         annotation.endTextEditing()
         annotation.tool = tool
-        canvasMode = .pointer    }
+        model.canvasMode = .pointer    }
 
     /// 不可见按钮承载的快捷键：⌫ 删除选中图层（打字时禁用，退格让给文字框）、
     /// ⌘0 适应窗口、⌘+ 放大（⌘= 挂在底栏的加号按钮上，这里补真正的 "+" 键）。
     private var hiddenShortcuts: some View {
         Group {
-            Button("删除选中图层") { performDelete() }
+            Button("删除选中图层") { model.deleteSelected() }
                 .keyboardShortcut(.delete, modifiers: [])
                 .disabled(textFieldFocused || annotation.selectedID == nil)
-            Button("适应窗口") { zoomLevel = nil }
+            Button("适应窗口") { model.zoomLevel = nil }
                 .keyboardShortcut("0", modifiers: .command)
             Button("放大") { zoomIn() }
                 .keyboardShortcut("+", modifiers: .command)
@@ -547,17 +476,8 @@ struct EditorView: View {
 
     // MARK: - 操作
 
-    private func performUndo() {
-        guard annotation.undo() else { return }
-        refreshCanvasImage()    }
-
-    private func performRedo() {
-        guard annotation.redo() else { return }
-        refreshCanvasImage()    }
-
-    private func performDelete() {
-        guard annotation.deleteSelected() else { return }
-        refreshCanvasImage()    }
+    // 撤销 / 重做 / 删除都搬进了 `EditorModel` —— 它们各自要跟一次画布底图重算
+    // （马赛克的底图是烤出来的，图层变了不重算就会留着上一版）。
 
     // MARK: - 画布
 
@@ -573,7 +493,7 @@ struct EditorView: View {
             let layout = canvasLayout(viewport: viewport)
             EditorCanvasScrollView(
                 contentSize: layout.content,
-                panBox: panBox,
+                panBox: model.panBox,
                 onZoom: { factor, docPoint, clipPoint in
                     handleContinuousZoom(
                         factor: factor, docPoint: docPoint,
@@ -594,7 +514,7 @@ struct EditorView: View {
     /// 两态统一的画布布局。返回的 `fitted` 同构（origin = 画布在滚动内容里的
     /// 位置），`imagePoint` / 手势因此不区分分支。
     private func canvasLayout(viewport: CGSize) -> (fitted: CGRect, content: CGSize) {
-        if let zoom = zoomLevel {
+        if let zoom = model.zoomLevel {
             return zoomedRects(zoom: zoom, viewport: viewport)
         }
         // 适应窗口：四周 16pt 留白里适配居中，内容恰好一个视口大（无滚动）。
@@ -608,7 +528,7 @@ struct EditorView: View {
 
     /// 抓手是否生效：常驻抓手或按住空格，且处于缩放态（适应态无可平移空间）。
     private var handModeActive: Bool {
-        zoomLevel != nil && (canvasMode == .hand || spaceMonitor.spaceHeld)
+        model.zoomLevel != nil && (model.canvasMode == .hand || spaceMonitor.spaceHeld)
     }
 
     /// 画布本体 + 手势。`fitted` 是画布在其父容器坐标里的摆放矩形 ——
@@ -618,7 +538,7 @@ struct EditorView: View {
     private func canvasBody(fitted: CGRect) -> some View {
         let handActive = handModeActive
         return LayerCanvas(
-            image: canvasImage ?? blankImage,
+            image: model.canvasImage ?? blankImage,
             layers: annotation.displayLayers.projected(onto: .zero, scale: 1),
             pixelatePreviews: annotation.pixelatePreviews,
             selectedLayerID: annotation.selectedID
@@ -673,7 +593,7 @@ struct EditorView: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
                 if let last = panLastWindowLocation {
-                    panBox.scrollBy(
+                    model.panBox.scrollBy(
                         dx: last.x - value.location.x,
                         dy: last.y - value.location.y
                     )
@@ -728,14 +648,14 @@ struct EditorView: View {
     private func handleDragEnded() {
         switch canvasDrag {
         case .draw:
-            annotation.endDraw(pixelSource: cropPixels)
-            refreshCanvasImage()
+            annotation.endDraw(pixelSource: model.cropPixels)
+            model.refreshCanvasImage()
         case .move:
-            annotation.endMove(pixelSource: cropPixels)
-            refreshCanvasImage()
+            annotation.endMove(pixelSource: model.cropPixels)
+            model.refreshCanvasImage()
         case .resize:
-            annotation.endResize(pixelSource: cropPixels)
-            refreshCanvasImage()
+            annotation.endResize(pixelSource: model.cropPixels)
+            model.refreshCanvasImage()
         default:
             break
         }
@@ -798,15 +718,15 @@ struct EditorView: View {
 
     // MARK: - 缩放控制
 
-    /// 图像的点尺寸（像素 ÷ 显示倍率），zoomLevel 的换算基准。
+    /// 图像的点尺寸（像素 ÷ 显示倍率），model.zoomLevel 的换算基准。
     private var imagePointWidth: CGFloat {
         CGFloat(max(1, shot.pixelWidth)) / CGFloat(max(1, shot.scale))
     }
 
-    /// 当前实际倍率：缩放态就是 zoomLevel；适应窗口态用 fitted 宽反推 ——
+    /// 当前实际倍率：缩放态就是 model.zoomLevel；适应窗口态用 fitted 宽反推 ——
     /// 从适应态开始连续缩放 / 归档时以它为起点，体验上无跳变。
     private func effectiveZoom(viewport: CGSize) -> Double {
-        if let zoom = zoomLevel { return zoom }
+        if let zoom = model.zoomLevel { return zoom }
         guard viewport.width > 1 else { return 1 }
         return Double(canvasLayout(viewport: viewport).fitted.width / imagePointWidth)
     }
@@ -831,10 +751,10 @@ struct EditorView: View {
     ) {
         let oldFitted = canvasLayout(viewport: viewport).fitted
         let pixel = imagePoint(docPoint, fitted: oldFitted)
-        zoomLevel = newZoom
+        model.zoomLevel = newZoom
         let newFitted = zoomedRects(zoom: newZoom, viewport: viewport).fitted
         let scale = newFitted.width / CGFloat(max(1, shot.pixelWidth))
-        panBox.pendingOrigin = CGPoint(
+        model.panBox.pendingOrigin = CGPoint(
             x: newFitted.minX + pixel.x * scale - clipPoint.x,
             y: newFitted.minY + pixel.y * scale - clipPoint.y
         )
@@ -842,13 +762,13 @@ struct EditorView: View {
 
     /// 档位直设（缩放菜单 / ⌘± 归档共用）：视口中心为锚。
     private func setZoom(_ zoom: Double) {
-        let viewport = panBox.viewportSize
+        let viewport = model.panBox.viewportSize
         guard viewport.width > 1 else {
-            zoomLevel = zoom
+            model.zoomLevel = zoom
             return
         }
         let clipPoint = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
-        let origin = panBox.scrollOrigin
+        let origin = model.panBox.scrollOrigin
         applyZoom(
             zoom,
             docPoint: CGPoint(x: origin.x + clipPoint.x, y: origin.y + clipPoint.y),
@@ -860,17 +780,17 @@ struct EditorView: View {
     /// 升到下一档。基准是当前**实际**倍率（连续缩放后的散值就近归档，
     /// 适应窗口态用 fitted 反推的倍率），与连续缩放自然共存。
     private func zoomIn() {
-        let current = effectiveZoom(viewport: panBox.viewportSize)
+        let current = effectiveZoom(viewport: model.panBox.viewportSize)
         setZoom(Self.zoomSteps.first { $0 > current + 0.001 } ?? Self.zoomSteps.last!)
     }
 
     private func zoomOut() {
-        let current = effectiveZoom(viewport: panBox.viewportSize)
+        let current = effectiveZoom(viewport: model.panBox.viewportSize)
         setZoom(Self.zoomSteps.last { $0 < current - 0.001 } ?? Self.zoomSteps.first!)
     }
 
     private var zoomLabel: String {
-        zoomLevel.map { "\(Int(($0 * 100).rounded()))%" } ?? "适应"
+        model.zoomLevel.map { "\(Int(($0 * 100).rounded()))%" } ?? "适应"
     }
 
     // MARK: - 右侧面板（图层 / 效果双 tab）
@@ -923,7 +843,7 @@ struct EditorView: View {
                         Spacer()
                         Button {
                             annotation.select(layer.id)
-                            performDelete()
+                            model.deleteSelected()
                         } label: {
                             Image(systemName: "trash").font(.caption2)
                         }
@@ -980,9 +900,9 @@ struct EditorView: View {
             Text("历史版本").font(.caption).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(revisions.enumerated()), id: \.element.id) { index, rev in
+                    ForEach(Array(model.revisions.enumerated()), id: \.element.id) { index, rev in
                         Button {
-                            loadRevision(layers: rev.layers, index: index)
+                            model.loadRevision(layers: rev.layers, index: index)
                         } label: {
                             HStack {
                                 Text("v\(index + 1)")
@@ -999,7 +919,7 @@ struct EditorView: View {
                             .padding(.horizontal, 6)
                             .background(
                                 RoundedRectangle(cornerRadius: 4)
-                                    .fill(loadedRevisionIndex == index
+                                    .fill(model.loadedRevisionIndex == index
                                           ? Color.accentColor.opacity(0.18) : .clear)
                             )
                         }
@@ -1060,7 +980,7 @@ struct EditorView: View {
                     Button {
                         setZoom(step)
                     } label: {
-                        if zoomLevel == step {
+                        if model.zoomLevel == step {
                             Label("\(Int((step * 100).rounded()))%", systemImage: "checkmark")
                         } else {
                             Text("\(Int((step * 100).rounded()))%")
@@ -1069,9 +989,9 @@ struct EditorView: View {
                 }
                 Divider()
                 Button {
-                    zoomLevel = nil
+                    model.zoomLevel = nil
                 } label: {
-                    if zoomLevel == nil {
+                    if model.zoomLevel == nil {
                         Label("适应窗口", systemImage: "checkmark")
                     } else {
                         Text("适应窗口")
@@ -1102,8 +1022,8 @@ struct EditorView: View {
     }
 
     private func rendered() -> CGImage? {
-        guard let base = baseImage else { return nil }
-        return LayerRenderer.render(base: base, layers: exportedLayers)
+        guard let base = model.baseImage else { return nil }
+        return LayerRenderer.render(base: base, layers: model.exportedLayers)
     }
 
     /// 底栏的保存状态。取代原来那个「保存为新版本」按钮 ——
@@ -1111,11 +1031,11 @@ struct EditorView: View {
     /// 那份安心感原本是靠离开时那个对话框提供的（用一次打断换一次确认）。
     @ViewBuilder
     private var saveStatus: some View {
-        // `annotation` 是 @StateObject，图层一变本行就跟着重算（未落库 → 「保存中…」）。
-        let pending = exportedLayers.persisted != baselineLayers
+        // model 是 @StateObject，图层一变本行就跟着重算（未落库 → 「保存中…」）。
+        let pending = model.hasPendingChanges
 
         Label(
-            pending ? "保存中…" : (savedAt == nil ? "已是最新" : "已保存"),
+            pending ? "保存中…" : (model.savedAt == nil ? "已是最新" : "已保存"),
             systemImage: pending ? "arrow.triangle.2.circlepath" : "checkmark.circle"
         )
         .font(.caption)
@@ -1124,62 +1044,20 @@ struct EditorView: View {
         .accessibilityLabel(pending ? "正在保存" : "已保存")
     }
 
-    // MARK: - 自动保存
-    //
-    // 编辑器**不需要手动保存**。此前离开画布时会弹一个「有未保存的标注，仍要离开吗？」
-    // 三选一对话框 —— 那是把本该由软件承担的责任推给用户：非破坏式编辑下每次保存
-    // 只是往修订链追加一条，原图从不改动，没有任何「保存失败会毁掉东西」的风险，
-    // 却要求用户在每次离开时做一次决定。现在改成停手就存。
-    //
-    // 节流 1.2 秒：画的过程中每一笔都会 tick，逐笔落库会把修订链撑成流水账；
-    // 停下来一会儿才算一次「改完了」。离开画布（换图 / 回图库 / 视图消失）时
-    // **立即冲一次**，不等节流。
-
-    /// 停手多久算「改完了」。
-    private static let autoSaveDelay: Duration = .milliseconds(1200)
-
-    /// 改动后重新计时。同一时刻只有一个待落库任务。
-    private func scheduleAutoSave() {
-        autoSaveTask?.cancel()
-        autoSaveTask = Task {
-            try? await Task.sleep(for: Self.autoSaveDelay)
-            guard !Task.isCancelled else { return }
-            flushSave()
-        }
-    }
-
-    /// 立即落库。没有实际改动时什么都不做 —— 内容比对（而不是图层数量比对）
-    /// 保证「画一笔再撤销」不会留下一条空修订。
-    private func flushSave() {
-        autoSaveTask?.cancel()
-        autoSaveTask = nil
-        annotation.endTextEditing()
-
-        let layers = exportedLayers
-        guard layers.persisted != baselineLayers else { return }
-
-        store.appendRevision(
-            shot: shot,
-            layers: layers,
-            note: "编辑 \(annotation.layers.count) 层"
-        )
-        revisions = store.revisions(for: shot)
-        loadedRevisionIndex = revisions.count - 1
-        baselineLayers = layers.persisted
-        savedAt = Date()    }
+    // 自动保存（节流、立即冲、内容比对）整段搬进了 `EditorModel` ——
+    // 它是数据生命周期，不是视图。
 
     /// 胶片条点击换图。先把当前画布落库，再换 `editingShotID` ——
     /// 宿主（GalleryView）挂了 `.id(shot.id)`，identity 变化即重建本视图完成切换。
     private func requestSwitch(to target: Shot) {
         guard target.id != shot.id else { return }
-        flushSave()
+        model.flushSave()
         GalleryWindowMode.shared.openEditor(shotID: target.id)
     }
 
     /// 左上「‹ 图库」/ 底部「返回图库」/ Esc：落库后整窗切回图库模式。
     private func requestReturnToGallery() {
-        flushSave()
-        GalleryWindowMode.shared.returnToGallery()
+        model.requestReturnToGallery()
     }
 
     // 这里曾经还有两个对话框，都随自动保存一起删掉了：
