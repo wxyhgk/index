@@ -181,7 +181,10 @@ struct ShotCard: View {
 
     private var thumbnail: some View {
         ZStack {
-            thumbShape.fill(.quaternary.opacity(0.5))
+            // 衬底必须**比窗底亮**，否则卡片读起来是「洞」不是「块」。
+            // 浅色下 `.quaternary` 比 windowBackgroundColor 还暗，是浅色主题
+            // 显脏的根源（见 DS.thumbnailBacking 的注释）。
+            thumbShape.fill(DS.thumbnailBacking(scheme))
             CachedImage(url: thumbnailURL, key: shot.sha256)
                 // 视差只给当前悬停的那张卡开：未悬停时 unit vector 是 .zero，
                 // `.visualEffect` 闭包退化成 identity 变换，成本近似为零。
@@ -204,9 +207,27 @@ struct ShotCard: View {
         // 官方说法是这个修饰器「开销极小，只重排效果的应用时机，不做栅格化」，
         // 和被禁的 `drawingGroup()` 不是一回事。
         .compositingGroup()
+        // 浅色下**只给悬停中的那一张**加阴影。
+        //
+        // 深色靠亮度阶梯 + rim 加浓就能读出抬升，浅色不行：白底上一条深色 rim
+        // 读起来是「描了个边」而不是「浮起来了」，抬升感全靠阴影。
+        // 而「每卡一次阴影 = 每卡一次离屏合成」的性能红线依然成立 ——
+        // 所以只给悬停那一张：同一时刻至多一张卡付这个代价。
+        .shadow(
+            color: hoverShadow.color,
+            radius: hoverShadow.radius,
+            y: hoverShadow.y
+        )
         // 角标出没 + rim 加浓：悬停走 micro，选中走 standard。
         .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
         .animation(DS.Motion.standard(reduced: reduceMotion), value: isSelected)
+    }
+
+    /// 悬停阴影。浅色悬停时给一档 `.raised`；其余情况（含深色的任何状态）
+    /// 一律 `.none` —— 深色下的黑阴影落在近黑底上读不出高度，只是白付一次离屏。
+    private var hoverShadow: DS.Shadow {
+        guard scheme != .dark, isHovering else { return .none }
+        return DS.shadow(.raised, scheme)
     }
 
     /// 缩略图边缘的渐变发丝线。**卡面取消之后它是唯一的常驻深度线索**，

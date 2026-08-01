@@ -441,7 +441,11 @@ struct GalleryGrid: View {
             Spacer()
         }
         .padding(.vertical, DS.s2)
-        .background(.bar)
+        // 用**窗口底色**盖住滚上来的卡片，而不是 `.bar` 材质。
+        // 材质在浅色下会渲染成一条横贯内容区的白带，比周围还亮 ——
+        // 分组头是个标签，不该是屏幕上最亮的一条。同色不透明底同样能盖住内容，
+        // 而且和中间区域本来就坐在窗底上这件事一致（网格没有自己的画布）。
+        .background(Color(nsColor: DS.windowBase))
     }
 
     /// 逐卡滚动深度。规格里它是**次选**（首选是成本恒定的容器级 `scrollEdgeMask`），

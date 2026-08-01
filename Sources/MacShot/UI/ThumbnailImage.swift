@@ -36,6 +36,7 @@ struct CachedImage: View {
     let key: String
 
     @State private var image: NSImage?
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Group {
@@ -46,7 +47,8 @@ struct CachedImage: View {
                     .aspectRatio(contentMode: .fit)
                     .transition(.opacity)
             } else {
-                Rectangle().fill(.quaternary)
+                // 加载中的占位。与卡片衬底同色 —— 图片出现前后底色不该跳一下。
+                Rectangle().fill(DS.thumbnailBacking(colorScheme))
             }
         }
         .task(id: key) { await load() }

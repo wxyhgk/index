@@ -144,6 +144,16 @@ extension DS {
         }
     }
 
+    /// 缩略图的衬底（图片按比例缩放后四周留下的那圈「信箱」）。
+    ///
+    /// **这里最容易把浅色模式做反。** 深色下衬底比窗底亮 → 卡片是「浮起的一块」；
+    /// 浅色如果沿用 `.quaternary` 那类语义灰，它比 `windowBackgroundColor`
+    /// **更暗**，于是每张卡片读起来像在底色上「挖了个洞」——层级整个翻过来，
+    /// 满屏灰块，这正是浅色主题显脏的根源。浅色必须给近白。
+    static func thumbnailBacking(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.05) : .white.opacity(0.92)
+    }
+
     // MARK: - 边缘高光（rim）
     //
     // 「边缘比表面重要」：一条从亮到暗的渐变描边，比任何背景不透明度调整

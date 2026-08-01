@@ -126,8 +126,14 @@ struct ShellIconButtonStyle: ButtonStyle {
         }
 
         /// 悬停底色走「亮度阶梯」那一套：深色加白、浅色加黑，都是几个点的量。
+        ///
+        /// **激活态不再填实心 accent。** 顶栏上同时有搜索框焦点环、详情栏开关、
+        /// 网格里的选中环、详情栏的「编辑」主按钮、缩放滑杆 —— 五处一起发蓝，
+        /// 而 spatial-ui-spec §7.1 的规矩是同屏最多一处上强调色。
+        /// 这里改成「淡染 + accent 图标」：状态一样读得出，但不跟内容抢注意力。
+        /// 强调色的归属留给**内容的选中态**，那才是用户真正要找的东西。
         private var fill: Color {
-            if isActive { return .accentColor }
+            if isActive { return .accentColor.opacity(scheme == .dark ? 0.22 : 0.14) }
             guard hovering else { return .clear }
             return scheme == .dark ? .white.opacity(0.09) : .black.opacity(0.06)
         }
@@ -135,7 +141,7 @@ struct ShellIconButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(isActive ? Color.white : Color.primary)
+                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
                 .frame(width: side, height: side)
                 .background(fill, in: shape)
                 .contentShape(shape)

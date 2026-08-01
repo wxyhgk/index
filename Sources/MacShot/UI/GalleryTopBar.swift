@@ -161,9 +161,11 @@ struct GalleryTopBar: View {
         // 是无障碍硬要求（WCAG 2.4.13），所以由胶囊的描边承担。
         // `allowsHitTesting(false)`：描边是最前面一层，不关掉会吃掉落在描边上的点击。
         .overlay {
+            // 焦点环收到 1.5pt / 0.55 透明度：原来的 2pt 实色 accent 在浅色下
+            // 是整个窗口最抢眼的东西，而它只是「光标在这儿」，不该压过内容的选中态。
             Capsule().strokeBorder(
-                searchFocused ? Color.accentColor.opacity(0.85) : capsuleStroke,
-                lineWidth: searchFocused ? 2 : 1
+                searchFocused ? Color.accentColor.opacity(0.55) : capsuleStroke,
+                lineWidth: searchFocused ? 1.5 : 1
             )
             .allowsHitTesting(false)
         }
