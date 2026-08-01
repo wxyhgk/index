@@ -20,10 +20,12 @@ struct EditorView: View {
     // 不订阅 store：后台 OCR 回填会触发它发布变更，没必要为此重建整个编辑器。
     private let store = ShotStore.shared
 
-    /// `AnnotationState` 不是 ObservableObject；它的每次变更都经由本视图的
-    /// 处理函数发生，处理函数末尾自增这个计数器驱动 SwiftUI 重绘。
-    @State private var annotation = AnnotationState()
-    @State private var annotationTick = 0
+    /// 标注状态机。它自己是 `ObservableObject`，变更由它自己发布 ——
+    /// 此前这里还有一个 `annotationTick` 计数器，本视图在 20 处调用后面手写
+    /// `+= 1` 来驱动重绘（漏一处就是「画了没反应」，编译器也不提醒）。
+    /// 那个计数器是 `@State`，任何能改标注的子视图都必须够得到它，
+    /// 于是工具栏、画布、面板只能挤在同一个视图里 —— 拆分的第一步就是消灭它。
+    @StateObject private var annotation = AnnotationState()
 
     @State private var baseImage: CGImage?
     /// 底图 + 已应用的马赛克。拖拽过程中不重算，只在图层提交后刷新。
@@ -89,9 +91,6 @@ struct EditorView: View {
          .dimension, .pixelate, .crop]
 
     var body: some View {
-        // 读一下计数器，让所有标注变更都能触发 body 重算。
-        let _ = annotationTick
-
         VStack(spacing: 0) {
             toolbar
             Divider()
@@ -121,7 +120,9 @@ struct EditorView: View {
         }
         // 每一次改动都会 tick（画、删、改样式、开效果、撤销重做…），
         // 所以自动保存挂在它上面就够了，不需要给每个动作各接一次。
-        .onChange(of: annotationTick) { _, _ in scheduleAutoSave() }
+        // 直接订阅状态机的变更（画、删、改样式、开效果、撤销重做都会发）——
+        // 此前是靠视图自己的 tick 计数器，那意味着「忘了 +1 的地方也不会自动保存」。
+        .onReceive(annotation.objectWillChange) { _ in scheduleAutoSave() }
         .onChange(of: zoomLevel) { _, newValue in
             // 适应窗口态没有可平移空间，抓手模式随之退场（按钮也已置灰）。
             if newValue == nil { canvasMode = .pointer }
@@ -165,9 +166,7 @@ struct EditorView: View {
         annotation.load(Layers(persisted: layers), pixelSource: cropPixels)
         baselineLayers = layers
         loadedRevisionIndex = index
-        refreshCanvasImage()
-        annotationTick += 1
-    }
+        refreshCanvasImage()    }
 
     /// 马赛克贴片的像素来源：编辑器画布就是图片像素，直接从原图裁。
     private func cropPixels(_ rect: CGRect) -> CGImage? {
@@ -330,9 +329,7 @@ struct EditorView: View {
         } else {
             canvasMode = .hand
             annotation.tool = nil
-        }
-        annotationTick += 1
-    }
+        }    }
 
     /// 裸键快捷键（无修饰）。文字框在打字时返回 nil，把按键让给输入。
     /// 显式限定 `SwiftUI.`：项目里有个同名的全局热键类型（Settings/KeyboardShortcut.swift）。
@@ -347,9 +344,7 @@ struct EditorView: View {
         let selected = annotation.styleIndex(for: .color) == index
         return Button {
             annotation.setStyleIndex(index, for: .color)
-            annotation.applyColorToSelection()
-            annotationTick += 1
-        } label: {
+            annotation.applyColorToSelection()        } label: {
             Circle()
                 .fill(Color(.sRGB, red: c.r, green: c.g, blue: c.b))
                 .overlay(Circle().strokeBorder(.black.opacity(0.25)))
@@ -373,9 +368,7 @@ struct EditorView: View {
         let selected = annotation.styleIndex(for: axis) == index
         return Button {
             annotation.setStyleIndex(index, for: axis)
-            annotation.applyStyleToSelection(axis)
-            annotationTick += 1
-        } label: {
+            annotation.applyStyleToSelection(axis)        } label: {
             Circle()
                 .fill(selected ? Color.accentColor : Color.primary.opacity(0.75))
                 .frame(width: diameter, height: diameter)
@@ -395,9 +388,7 @@ struct EditorView: View {
                 backdropCard
                 watermarkCard
                 frameCard
-                EditorCaptureInfoRow(annotation: annotation) {
-                    annotationTick += 1
-                }
+                EditorCaptureInfoRow(annotation: annotation) {                }
             }
             .padding(DS.s3)
         }
@@ -436,9 +427,7 @@ struct EditorView: View {
     /// 预设色块点选即换（`setBackdropPreset`），作为一条可撤销的 style 记录。
     private var backdropCard: some View {
         effectCard("美化", isOn: annotation.hasEffect(.backdrop), toggle: {
-            annotation.toggleEffect(.backdrop)
-            annotationTick += 1
-        }) {
+            annotation.toggleEffect(.backdrop)        }) {
             HStack(spacing: DS.s2) {
                 ForEach(BackdropPreset.allCases, id: \.rawValue) { preset in
                     backdropSwatch(preset)
@@ -451,9 +440,7 @@ struct EditorView: View {
     private func backdropSwatch(_ preset: BackdropPreset) -> some View {
         let selected = annotation.backdropPresetID == preset.rawValue
         return Button {
-            annotation.setBackdropPreset(preset.rawValue)
-            annotationTick += 1
-        } label: {
+            annotation.setBackdropPreset(preset.rawValue)        } label: {
             RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(swatchGradient(preset))
                 .frame(width: 40, height: 26)
@@ -501,15 +488,11 @@ struct EditorView: View {
     /// 位置三选走 `setWatermarkMode`，作为一条可撤销的 style 记录。
     private var watermarkCard: some View {
         effectCard("水印", isOn: annotation.hasEffect(.watermark), toggle: {
-            annotation.toggleEffect(.watermark)
-            annotationTick += 1
-        }) {
+            annotation.toggleEffect(.watermark)        }) {
             Picker("水印位置", selection: Binding(
                 get: { annotation.watermarkMode ?? .corner },
                 set: { mode in
-                    annotation.setWatermarkMode(mode)
-                    annotationTick += 1
-                }
+                    annotation.setWatermarkMode(mode)                }
             )) {
                 ForEach(WatermarkMode.allCases) { mode in
                     Text(mode.displayName).tag(mode)
@@ -525,15 +508,11 @@ struct EditorView: View {
     /// 样式二选走 `setFrameStyle`，作为一条可撤销的 style 记录。
     private var frameCard: some View {
         effectCard("外壳", isOn: annotation.hasEffect(.frame), toggle: {
-            annotation.toggleEffect(.frame)
-            annotationTick += 1
-        }) {
+            annotation.toggleEffect(.frame)        }) {
             Picker("壳样式", selection: Binding(
                 get: { annotation.frameStyle ?? .macos },
                 set: { style in
-                    annotation.setFrameStyle(style)
-                    annotationTick += 1
-                }
+                    annotation.setFrameStyle(style)                }
             )) {
                 ForEach(FrameSpec.Style.allCases, id: \.rawValue) { style in
                     Text(style.displayName).tag(style)
@@ -547,9 +526,7 @@ struct EditorView: View {
     private func selectTool(_ tool: AnnotationTool?) {
         annotation.endTextEditing()
         annotation.tool = tool
-        canvasMode = .pointer
-        annotationTick += 1
-    }
+        canvasMode = .pointer    }
 
     /// 不可见按钮承载的快捷键：⌫ 删除选中图层（打字时禁用，退格让给文字框）、
     /// ⌘0 适应窗口、⌘+ 放大（⌘= 挂在底栏的加号按钮上，这里补真正的 "+" 键）。
@@ -572,21 +549,15 @@ struct EditorView: View {
 
     private func performUndo() {
         guard annotation.undo() else { return }
-        refreshCanvasImage()
-        annotationTick += 1
-    }
+        refreshCanvasImage()    }
 
     private func performRedo() {
         guard annotation.redo() else { return }
-        refreshCanvasImage()
-        annotationTick += 1
-    }
+        refreshCanvasImage()    }
 
     private func performDelete() {
         guard annotation.deleteSelected() else { return }
-        refreshCanvasImage()
-        annotationTick += 1
-    }
+        refreshCanvasImage()    }
 
     // MARK: - 画布
 
@@ -752,9 +723,7 @@ struct EditorView: View {
         case .move: annotation.updateMove(to: point)
         case .resize: annotation.updateResize(to: point)
         default: break
-        }
-        annotationTick += 1
-    }
+        }    }
 
     private func handleDragEnded() {
         switch canvasDrag {
@@ -770,9 +739,7 @@ struct EditorView: View {
         default:
             break
         }
-        canvasDrag = nil
-        annotationTick += 1
-    }
+        canvasDrag = nil    }
 
     /// 文字工具：落点即建层，给一段占位文字，随即选中并把焦点交给右侧文本框。
     private func placeTextLayer(at point: CGPoint) {
@@ -992,9 +959,7 @@ struct EditorView: View {
         Binding(
             get: { annotation.selectedID },
             set: { id in
-                annotation.select(id)
-                annotationTick += 1
-            }
+                annotation.select(id)            }
         )
     }
 
@@ -1006,9 +971,7 @@ struct EditorView: View {
                 annotation.layers.firstIndex(id: id).map { annotation.layers[$0].text } ?? ""
             },
             set: { text in
-                annotation.setText(id: id, text)
-                annotationTick += 1
-            }
+                annotation.setText(id: id, text)            }
         )
     }
 
@@ -1148,8 +1111,7 @@ struct EditorView: View {
     /// 那份安心感原本是靠离开时那个对话框提供的（用一次打断换一次确认）。
     @ViewBuilder
     private var saveStatus: some View {
-        // 读一下 tick，改动时这行会跟着重算（未落库 → 「保存中…」）。
-        let _ = annotationTick
+        // `annotation` 是 @StateObject，图层一变本行就跟着重算（未落库 → 「保存中…」）。
         let pending = exportedLayers.persisted != baselineLayers
 
         Label(
@@ -1204,9 +1166,7 @@ struct EditorView: View {
         revisions = store.revisions(for: shot)
         loadedRevisionIndex = revisions.count - 1
         baselineLayers = layers.persisted
-        savedAt = Date()
-        annotationTick += 1
-    }
+        savedAt = Date()    }
 
     /// 胶片条点击换图。先把当前画布落库，再换 `editingShotID` ——
     /// 宿主（GalleryView）挂了 `.id(shot.id)`，identity 变化即重建本视图完成切换。

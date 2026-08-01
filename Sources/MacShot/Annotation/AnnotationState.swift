@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// 即时标注的状态机。截图覆盖层和钉图窗口共用同一个实例类型 ——
 /// 两处的工具、颜色、粗细、撤销行为因此完全一致。
@@ -8,7 +9,24 @@ import AppKit
 ///   · 截图覆盖层：显示器局部、点（不依赖选区原点，选区被拖动也不会让标注错位）
 ///   · 钉图窗口：  图片像素
 @MainActor
-final class AnnotationState {
+final class AnnotationState: ObservableObject {
+
+    // MARK: - 变更发布
+    //
+    // 状态机**自己**宣告变更。此前它不是 ObservableObject，SwiftUI 察觉不到它变了，
+    // 于是编辑器（`EditorView`）在每一处调用后面手写 `annotationTick += 1` 来触发重绘 ——
+    // 全文件 24 处，漏掉一处就是「画了没反应」，而且编译器不会提醒。
+    // 更要命的是那个计数器是视图的 `@State`：**任何能改标注的子视图都必须够得到它**，
+    // 于是工具栏、画布、效果面板、图层面板只能挤在同一个视图里，拆不开。
+    //
+    // 两个 AppKit 宿主（截图浮层、钉图）不受影响：它们本来就自己 `setNeedsDisplay`，
+    // 多一个发布对它们是空操作。
+    //
+    // **新增会影响渲染的存储属性时，记得挂上同样的 `willSet`。**
+    // 用 willSet 而不是 didSet：`objectWillChange` 的契约是「变更**之前**发信号」，
+    // 与 @Published 一致。
+
+    private func publishChange() { objectWillChange.send() }
 
     nonisolated static let palette: [LColor] = [
         LColor(r: 0.98, g: 0.22, b: 0.22, a: 1),   // 红
@@ -19,28 +37,28 @@ final class AnnotationState {
     nonisolated static let widths: [Double] = [2, 4, 8]
 
     /// nil 表示指针模式：拖拽是调整选区，而不是画标注。
-    var tool: AnnotationTool?
+    var tool: AnnotationTool? { willSet { publishChange() } }
 
     /// 「鼠标（指针）」是否被主动选中。截图覆盖层有一个**中性默认态** ——
     /// 确认选区后 tool == nil 且 pointerEngaged == false：没有任何工具高亮，
     /// 拖拽只调整选区，不做图层命中、不做选字；点「鼠标」按钮（或按 V）后
     /// 才进入 tool == nil && pointerEngaged 的完整指针模式（图层可选、Live Text 选字）。
     /// 钉图/编辑器没有中性态概念，默认 true 维持现状。
-    var pointerEngaged: Bool = true
+    var pointerEngaged: Bool = true { willSet { publishChange() } }
 
     /// 每个工具各记各的样式（键是 `AnnotationTool.id`）。
     /// 旧版本这里是全局的一份 colorIndex/widthIndex，所有工具共用 ——
     /// 拿箭头选了红色粗线，切到文字就是红色粗体。见 `ToolStyle`。
-    private var toolStyles: [String: ToolStyle] = [:]
+    private var toolStyles: [String: ToolStyle] = [:] { willSet { publishChange() } }
 
     /// 画布空间相对屏幕点的倍率。笔宽和字号按它换算，
     /// 这样不管画布怎么缩放，画出来的线在屏幕上都是同样粗细。
-    var strokeScale: Double = 1
+    var strokeScale: Double = 1 { willSet { publishChange() } }
 
     /// 画布单位到**图像像素**的倍率。测量标注的数值按它换算：
     /// 覆盖层画布是显示器的点（Retina 上 1 点 = 2 像素），钉图/编辑器画布本身就是像素（保持 1）。
     /// 数值在生成图层时烤进 `text`，投影导出后不再重算 —— 预览和成品显示同一个数。
-    var pixelScale: Double = 1
+    var pixelScale: Double = 1 { willSet { publishChange() } }
 
     /// 开启效果那一刻的注入上下文提供者（见 `EffectContext`）：成品图像素宽、
     /// 壳/信息栏结构倍率、真实元数据。三宿主在构造/装载时各设一次，
@@ -48,28 +66,28 @@ final class AnnotationState {
     /// 覆盖层的选区宽度、窗口归因都以开关瞬间为准。
     var effectContext: () -> EffectContext = { EffectContext() }
 
-    private(set) var layers = Layers<CanvasSpace>()
-    private(set) var editingTextID: UUID?
+    private(set) var layers = Layers<CanvasSpace>() { willSet { publishChange() } }
+    private(set) var editingTextID: UUID? { willSet { publishChange() } }
 
     /// 指针模式下选中的图层。选中后可以拖动、删除、改样式。
-    private(set) var selectedID: UUID?
+    private(set) var selectedID: UUID? { willSet { publishChange() } }
 
     /// 每个马赛克图层对应一张预先算好的小图。
     /// 绝不在每帧重跑 CoreImage —— 那是上一轮把主线程压垮的同一类错误。
-    private(set) var pixelatePreviews: [UUID: CGImage] = [:]
+    private(set) var pixelatePreviews: [UUID: CGImage] = [:] { willSet { publishChange() } }
 
-    private var dragStart: CGPoint?
-    private var dragCurrent: CGPoint?
+    private var dragStart: CGPoint? { willSet { publishChange() } }
+    private var dragCurrent: CGPoint? { willSet { publishChange() } }
 
-    private var moveID: UUID?
-    private var moveLastPoint: CGPoint?
+    private var moveID: UUID? { willSet { publishChange() } }
+    private var moveLastPoint: CGPoint? { willSet { publishChange() } }
     /// beginMove 时的矩形与马赛克贴片。endMove 拿它们记一条可撤销的 move。
     private var moveFromRect: LRect?
     private var moveFromPreview: CGImage?
 
     /// 拖角缩放的进行时状态。`resizeOriginal` 是 beginResize 时的整层快照 ——
     /// 每帧都从「快照 + 累计位移」重算，不累积浮点误差；endResize 拿它记撤销。
-    private var resizeID: UUID?
+    private var resizeID: UUID? { willSet { publishChange() } }
     private var activeResizeHandle: ResizeHandle?
     private var resizeOriginal: Layer?
     private var resizeStartPoint: CGPoint?
@@ -93,8 +111,8 @@ final class AnnotationState {
         case style(id: UUID, before: Layer, after: Layer)
     }
 
-    private var undoStack: [Mutation] = []
-    private var redoStack: [Mutation] = []
+    private var undoStack: [Mutation] = [] { willSet { publishChange() } }
+    private var redoStack: [Mutation] = [] { willSet { publishChange() } }
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
