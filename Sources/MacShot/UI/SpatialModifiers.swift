@@ -202,7 +202,9 @@ struct GlassPanelModifier: ViewModifier {
         content
             .background {
                 if reduceTransparency {
-                    Color(nsColor: .windowBackgroundColor)
+                    // 用面板底色而不是 `windowBackgroundColor` —— 后者恰好就是
+                    // 窗口底色，面板会和底板同色、缝直接消失，等于把层级抹平。
+                    DS.panelFill(.resting)
                 } else {
                     VisualEffectBackground(material: material, blending: blending)
                 }

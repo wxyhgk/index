@@ -43,7 +43,7 @@ struct EditorCaptureInfoRow: View {
         }
         .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: DS.radiusCard))
+        .background(DS.insetSurface, in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
     }
 
     // MARK: 绑定

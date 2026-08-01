@@ -99,7 +99,7 @@ struct ShotInfoPage: View {
         .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            .quaternary.opacity(0.5),
+            DS.insetSurface,
             in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
         )
     }

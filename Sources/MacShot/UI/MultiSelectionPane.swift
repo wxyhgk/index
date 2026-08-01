@@ -66,7 +66,7 @@ struct MultiSelectionPane: View {
                 // 同心公式下内层 = 外层 − 0 = 外层。全部补 .continuous。
                 ZStack {
                     RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                        .fill(.quaternary.opacity(0.5))
+                        .fill(DS.insetSurface)
                     CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
                         .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
                 }

@@ -428,7 +428,7 @@ struct EditorView: View {
         }
         .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: DS.radiusCard))
+        .background(DS.insetSurface, in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
     }
 
     /// 美化行。backdrop 只影响导出/复制/保存的成品 ——

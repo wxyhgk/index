@@ -144,14 +144,49 @@ extension DS {
         }
     }
 
+    // MARK: 两条颜色铁律
+    //
+    // 浅色模式此前「有时白、有时灰」，灰的那些地方尤其难看。根因是同屏出现了
+    // 四五种深浅不一的面：系统窗背景灰、纯白面板、半透明白合成出的浅灰、
+    // `.quaternary` 渲染出的中灰方块、材质的半透明灰……彼此都差一点点，
+    // 读起来就是脏。
+    //
+    // 现在只认两条：
+    //   1. **灰 = 底板**，全窗口只有一种灰（`windowBase`），且只出现在
+    //      「内容之间的空隙」——面板缝、网格背景、分组头。
+    //   2. **白 = 内容表面**，且必须**不透明**。半透明白叠在灰底上合成出来的
+    //      是灰不是白，这正是上一轮把缩略图衬底做成 `.white.opacity(0.92)`
+    //      时踩的坑。
+    //
+    // 需要「在白面板里再嵌一块」时用 `insetSurface`——它是**极淡**的一层，
+    // 不是 `.quaternary` 那种中灰色块。
+
     /// 缩略图的衬底（图片按比例缩放后四周留下的那圈「信箱」）。
     ///
     /// **这里最容易把浅色模式做反。** 深色下衬底比窗底亮 → 卡片是「浮起的一块」；
-    /// 浅色如果沿用 `.quaternary` 那类语义灰，它比 `windowBackgroundColor`
-    /// **更暗**，于是每张卡片读起来像在底色上「挖了个洞」——层级整个翻过来，
-    /// 满屏灰块，这正是浅色主题显脏的根源。浅色必须给近白。
+    /// 浅色如果沿用 `.quaternary` 那类语义灰，它比窗底**更暗**，
+    /// 每张卡片就读成在底色上「挖了个洞」——层级整个翻过来，满屏灰块。
     static func thumbnailBacking(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? .white.opacity(0.05) : .white.opacity(0.92)
+        // 浅色给**不透明**纯白：这是内容表面，不是一层蒙版。
+        scheme == .dark ? .white.opacity(0.05) : .white
+    }
+
+    /// 嵌在面板/表面**内部**的一块（详情栏的信息卡、预览衬底、标签胶囊…）。
+    ///
+    /// 取代散在八处的 `.quaternary` —— 那个语义色在浅色下约等于 20% 的黑，
+    /// 渲染成中灰方块压在白面板上，是「灰色部分特别丑」的直接来源。
+    /// 这里给的是**极淡**的一层：深色加白 6%，浅色加黑 3.5%，
+    /// 刚好读得出「这是嵌进去的一块」，又不会自成一种颜色。
+    ///
+    /// 做成**自适应外观的动态色**而不是 `(ColorScheme) -> Color`：
+    /// 八个调用点里只有一个手上有 `@Environment(\.colorScheme)`，
+    /// 为了配色去给每个视图加一个环境变量是本末倒置。
+    static let insetSurface = Color(nsColor: insetSurfaceColor)
+
+    private static let insetSurfaceColor = NSColor(name: "MacShotInsetSurface") { appearance in
+        appearance.isDarkAqua
+            ? NSColor(white: 1, alpha: 0.06)
+            : NSColor(white: 0, alpha: 0.035)
     }
 
     // MARK: - 边缘高光（rim）

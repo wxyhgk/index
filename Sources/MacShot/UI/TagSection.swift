@@ -70,7 +70,7 @@ struct TagSection: View {
                 .padding(.vertical, 3)
                 // 材质换成 quaternary 填充（详见类型注释）。胶囊圆角 = 高度/2，
                 // 这一档不走圆角阶梯，Capsule 本身就是公式的答案。
-                .background(.quaternary, in: Capsule())
+                .background(DS.insetSurface, in: Capsule())
                 // 这圈 accent 是**焦点指示**，是 accent 在本视图里唯一合法的归属；
                 // 正因为它占着，下面的建议胶囊就不能再上强调色了。
                 .overlay(
@@ -133,7 +133,7 @@ struct TagSection: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, DS.s2)
                         .padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
+                        .background(DS.insetSurface, in: Capsule())
                         .overlay(
                             Capsule().strokeBorder(
                                 Color.primary.opacity(0.15),
@@ -219,7 +219,7 @@ private struct TagChip: View {
         // quaternary 填充 + 一圈发丝描边，不用 Material：面板底是不透明纯色，
         // 在实色上做模糊只是白付一次采样。
         // 「边缘比表面重要」—— 这圈线比任何背景模糊都更能把胶囊托起来。
-        .background(.quaternary, in: Capsule())
+        .background(DS.insetSurface, in: Capsule())
         .overlay(
             Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
         )

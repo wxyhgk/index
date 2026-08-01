@@ -136,7 +136,7 @@ struct ShotDetailPane: View {
         return CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
             .frame(maxWidth: .infinity)
             .frame(height: InspectorMetrics.previewHeight)
-            .background(.quaternary.opacity(0.5), in: shape)
+            .background(DS.insetSurface, in: shape)
             .clipShape(shape)
             .shadow(color: sh.color, radius: sh.radius, y: sh.y)
             .contentShape(Rectangle())

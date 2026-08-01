@@ -122,7 +122,7 @@ private struct SimilarShotCard: View {
         VStack(alignment: .leading, spacing: DS.s2) {
             ZStack {
                 RoundedRectangle(cornerRadius: thumbRadius, style: .continuous)
-                    .fill(.quaternary.opacity(0.5))
+                    .fill(DS.insetSurface)
                 CachedImage(url: ShotStore.shared.thumbnailURL(for: shot), key: shot.sha256)
                     .clipShape(RoundedRectangle(cornerRadius: thumbRadius, style: .continuous))
             }

@@ -231,7 +231,7 @@ private struct TimelineThumb: View {
         VStack(spacing: 4) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(.quaternary.opacity(0.5))
+                    .fill(DS.insetSurface)
                 CachedImage(url: ShotStore.shared.thumbnailURL(for: shot), key: shot.sha256)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
