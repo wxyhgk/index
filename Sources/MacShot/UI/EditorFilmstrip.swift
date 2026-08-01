@@ -7,11 +7,25 @@ import SwiftUI
 /// 订阅 store 的变更通知刷新，新截图 / 删除都会即时体现。
 ///
 /// 自带顶部 Divider，宿主（EditorView）只需在主 VStack 底部插一行。
-struct EditorFilmstrip: View {
+struct EditorFilmstrip: View, Equatable {
+
+    /// 相等性**只看当前编辑的是哪张图**。
+    ///
+    /// 闭包不参与比较（也没法比）—— `onSelect` 每次都是新实例，
+    /// 但它做的事是恒定的「先落库再换图」，与画布上画了什么无关。
+    /// 宿主用 `.equatable()` 挂上这条规则之后，标注变更就再也惊动不到胶片条。
+    static func == (lhs: EditorFilmstrip, rhs: EditorFilmstrip) -> Bool {
+        lhs.currentShotID == rhs.currentShotID
+    }
 
     /// 当前编辑中的 shot ID：高亮 accent 描边 + 自动滚动到可见。
     let currentShotID: Int64?
-    /// 点击其它缩略图 → 请求换图。未保存守卫在宿主侧，这里只管转发。
+    /// 点击其它缩略图 → 请求换图。宿主负责先落库再换。
+    ///
+    /// **闭包让本结构体无法被判定为「没变」**，所以父视图每次重算 body
+    /// 都会连带重算这里。真正的解法是不让它出现在会频繁重算的 body 里 ——
+    /// 宿主已经把它包进 `EquatableView`（见 `EditorView`），
+    /// 相等性只看 `currentShotID`：标注怎么画都与胶片条无关。
     let onSelect: (Shot) -> Void
 
     /// 收起状态跨窗口、跨启动记住 —— 胶片条是屏幕空间的取舍，偏好因人而异。
@@ -58,7 +72,13 @@ struct EditorFilmstrip: View {
     private var strip: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                // ⚠️ **必须是 Lazy**。普通 `HStack` 会把 `shots` 里的每一张都构建出来
+                // （上限 500），而本视图带着一个闭包参数 `onSelect` —— 结构体因此
+                // 无法被 SwiftUI 判定为「没变」，**父视图 body 一重算它就跟着重算**。
+                // 编辑器里每一次标注变更都会重算 body，于是画一笔的每一帧
+                // 都在构建几百个缩略图子视图（每个还带一个 `.task`）。
+                // 这是「编辑时点按钮有延迟」查到最后的那一层。
+                LazyHStack(spacing: 6) {
                     ForEach(shots) { shot in
                         thumbnail(shot)
                     }

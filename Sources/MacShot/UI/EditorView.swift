@@ -78,7 +78,11 @@ struct EditorView: View {
             }
             Divider()
             bottomBar
+            // `.equatable()`：胶片条只在**换了编辑对象**时才重算。
+            // 没有它的话，闭包参数会让 SwiftUI 认定「可能变了」，
+            // 于是画一笔的每一帧都连带重算整条胶片条（见 EditorFilmstrip 的注释）。
             EditorFilmstrip(currentShotID: shot.id, onSelect: requestSwitch)
+                .equatable()
         }
         .frame(minWidth: 900, minHeight: 620)
         .background(hiddenShortcuts)
