@@ -60,9 +60,17 @@ final class EditorModel: ObservableObject {
 
     init(shot: Shot) {
         self.shot = shot
-        // 标注一变就重新计时。此前这是视图上的 `.onChange(of: annotationTick)`，
-        // 意味着「忘了 +1 的地方连自动保存也不会触发」。
         annotationSubscription = annotation.objectWillChange.sink { [weak self] _ in
+            // ⚠️ **必须转发**。视图观察的是 model，而 `annotation` 只是模型上的一个
+            // 普通 `let` —— 它自己发的变更不会让任何 SwiftUI 视图失效。
+            // 漏掉这一行的后果是：画的时候画布不重绘，笔画要等到 1.2 秒后
+            // 自动保存写了 @Published 属性才顺带刷出来，用起来就是「特别卡」。
+            // （这是把状态从视图搬进模型时最容易掉的一环：搬走了持有者，
+            //   就得接上观察链。）
+            self?.objectWillChange.send()
+
+            // 标注一变就重新计时。此前这是视图上的 `.onChange(of: annotationTick)`，
+            // 意味着「忘了 +1 的地方连自动保存也不会触发」。
             self?.scheduleAutoSave()
         }
     }
@@ -187,7 +195,12 @@ final class EditorModel: ObservableObject {
 
     /// 有改动还没落库。底栏的状态字用它。
     var hasPendingChanges: Bool {
-        exportedLayers.persisted != baselineLayers
+        // 先比数量再比内容：底栏那行状态字**每次重绘都会问一次**，
+        // 而拖拽时重绘是每帧的。数量不等就能立刻定论，省掉一次整数组的
+        // 投影 + 逐层比较；数量相等才走精确比对（「改了颜色但层数没变」要认得出来）。
+        let layers = annotation.layers
+        if layers.count != baselineLayers.count { return true }
+        return exportedLayers.persisted != baselineLayers
     }
 
     // MARK: - 导航
