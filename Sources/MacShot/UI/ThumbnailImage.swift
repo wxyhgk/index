@@ -4,9 +4,18 @@ import AppKit
 /// 缩略图内存缓存。
 /// 没有它的话，SwiftUI 每次重建 body 都会把每张缩略图重新从磁盘解码一遍 —— 点选一次就卡一次。
 @MainActor
-final class ThumbnailCache {
+final class ThumbnailCache: ObservableObject {
 
     static let shared = ThumbnailCache()
+
+    /// 作废世代。任何一次作废都 +1 —— `CachedImage` 把它编进 `.task` 的 id 里，
+    /// 于是缓存被清掉时视图会重新去读盘。
+    ///
+    /// 为什么不做成「每个 key 一个版本号」：那需要视图订阅到具体的键，
+    /// 而 SwiftUI 里这等于给每张卡挂一个观察者。全局世代号的代价是**一次作废
+    /// 会让所有可见的缩略图各跑一次 `load()`** —— 但除了被作废的那张，
+    /// 其余都在第一行命中缓存直接返回，不读盘。几十张卡的量级完全够用。
+    @Published private(set) var generation = 0
 
     private let cache = NSCache<NSString, NSImage>()
 
@@ -23,8 +32,17 @@ final class ThumbnailCache {
         cache.setObject(image, forKey: key as NSString, cost: cost)
     }
 
+    /// 作废一张。缩略图文件被覆盖（编辑后重画）时必须调 ——
+    /// 缓存键是 sha256，而 sha 只认原图字节，加标注不会让它变，
+    /// 不主动作废就会一直命中旧图。
+    func remove(forKey key: String) {
+        cache.removeObject(forKey: key as NSString)
+        generation &+= 1
+    }
+
     func removeAll() {
         cache.removeAllObjects()
+        generation &+= 1
     }
 }
 
@@ -37,6 +55,8 @@ struct CachedImage: View {
 
     @State private var image: NSImage?
     @Environment(\.colorScheme) private var colorScheme
+    /// 只为拿到作废世代 —— 缓存被清掉时本视图要重新读盘（见 `ThumbnailCache.generation`）。
+    @ObservedObject private var cacheState = ThumbnailCache.shared
 
     var body: some View {
         Group {
@@ -51,11 +71,20 @@ struct CachedImage: View {
                 Rectangle().fill(DS.thumbnailBacking(colorScheme))
             }
         }
-        .task(id: key) { await load() }
+        // id 里编进作废世代：换图（key 变）和「缩略图被重画」（世代变）都要重新加载。
+        .task(id: "\(key)#\(cacheState.generation)") { await load() }
     }
 
     private func load() async {
-        if ThumbnailCache.shared.image(forKey: key) != nil { return }
+        if let hit = ThumbnailCache.shared.image(forKey: key) {
+            // 命中即返回，不读盘 —— 世代变化会让所有可见卡片都跑一次这里，
+            // 除被作废的那张之外全在这一行结束。
+            image = hit
+            return
+        }
+        // 缓存里没有了：先把 @State 里那份旧图丢掉，否则重画后的一瞬间
+        // 屏幕上仍是旧内容（body 是 `image ?? 缓存`）。
+        image = nil
 
         let target = url
         // 解码放到后台，主线程只做赋值。

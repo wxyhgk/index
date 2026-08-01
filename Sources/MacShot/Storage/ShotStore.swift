@@ -455,8 +455,13 @@ final class ShotStore: ObservableObject {
                 try rev.insert(db)
                 return rev
             }
-            // 修订不在 shots 数组里，落库不会自己触发发布 —— 编辑器已是独立
-            // 非模态窗口，图库详情栏（历史版本 / 已打码判定）靠这次发布重查。
+            // 缩略图是按**原图**生成、以 sha256 命名的，而 sha 只认原图字节 ——
+            // 加多少标注它都不变。不在这里重画的话，图库网格会一直显示没有标注的
+            // 那一版（编辑完返回图库「图片没更新」就是这么来的）。
+            refreshThumbnail(for: shot, layers: layers)
+
+            // 修订不在 shots 数组里，落库不会自己触发发布 ——
+            // 图库网格（缩略图刚换过）、详情栏（历史版本 / 已打码判定）靠这次发布重查。
             objectWillChange.send()
             return saved
         } catch {
@@ -464,6 +469,37 @@ final class ShotStore: ObservableObject {
             NSLog("[MacShot] 追加修订失败: \(error)")
             return nil
         }
+    }
+
+    // MARK: - 缩略图重画
+
+    /// 把「原图 + 图层」渲染成成品的渲染器。**由 App 层注入**。
+    ///
+    /// 为什么是闭包而不是直接调 `LayerRenderer`：依赖方向不许 Storage 认识 Render
+    /// （ARCHITECTURE §1，Render 在 Storage 之上）。注入点在 `AppDelegate`，
+    /// 与其它注册表登记在一起。没注入时（测试、命令行）退化为不重画，行为安全。
+    var revisionThumbnailRenderer: ((CGImage, Layers<ImageSpace>) -> CGImage)?
+
+    /// 缩略图换了之后要通知谁把内存缓存里那份旧的丢掉。同样由 App 层注入 ——
+    /// 缓存住在 UI 层（`ThumbnailCache`），Storage 更不该认识它。
+    var thumbnailInvalidator: ((Shot) -> Void)?
+
+    /// 按当前图层重画缩略图并覆盖写盘。
+    ///
+    /// 失败一律静默：缩略图是派生数据，画不出来最多是显示旧的一版，
+    /// 不该让一次修订保存失败。
+    private func refreshThumbnail(for shot: Shot, layers: Layers<ImageSpace>) {
+        guard let render = revisionThumbnailRenderer,
+              let base = originalImage(for: shot) else { return }
+
+        let composed = render(base, layers)
+        guard let thumb = ImageCodec.resized(composed, maxDimension: 640),
+              let jpg = ImageCodec.jpegData(from: thumb) else { return }
+
+        try? jpg.write(to: thumbnailURL(for: shot), options: .atomic)
+        // 文件覆盖了还不够：内存缓存的键是 sha256，而 sha 没变 ——
+        // 不主动作废的话界面会继续用缓存里那张旧图。
+        thumbnailInvalidator?(shot)
     }
 
     // MARK: - 刷新合并

@@ -31,6 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CapturePipeline.registerBuiltins(into: .shared)
         ToolbarRegistry.registerBuiltins(into: .shared)
         GalleryDestinationRegistry.registerBuiltins(into: .shared)
+
+        // 修订落库后重画缩略图所需的两件事，在这里接线 ——
+        // Storage 不许认识 Render（渲染）和 UI（缓存），所以由编排层注入。
+        ShotStore.shared.revisionThumbnailRenderer = { base, layers in
+            LayerRenderer.render(base: base, layers: layers)
+        }
+        ShotStore.shared.thumbnailInvalidator = { shot in
+            ThumbnailCache.shared.remove(forKey: shot.sha256)
+        }
         registerCaptureSources()
 
         setupStatusItem()

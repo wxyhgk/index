@@ -532,6 +532,9 @@ struct GalleryGrid: View {
         Button(GalleryBatch.allFavorited(shots) ? "取消收藏 \(count) 张" : "收藏 \(count) 张") {
             GalleryBatch.toggleFavorites(shots)
         }
+        Button("复制 \(count) 张图片") {
+            GalleryBatch.copyImages(shots)
+        }
         Button("导出 \(count) 张…") {
             Task { _ = await GalleryBatch.exportAll(shots) }
         }
@@ -802,10 +805,10 @@ struct GalleryGrid: View {
         Task { try? await CaptureActionRegistry.shared.action(id: ActionID.pin)?.perform(context) }
     }
 
+    /// 单张复制走与 ⌘C、批量菜单**同一份**实现（`GalleryBatch.copyImages`）——
+    /// 复制的是成品（原图 + 最新修订的标注），三个入口不该有三种结果。
     private func copy(_ shot: Shot) {
-        guard let base = store.originalImage(for: shot) else { return }
-        let layers = store.latestRevision(for: shot)?.imageLayers ?? Layers()
-        Clipboard.copy(LayerRenderer.render(base: base, layers: layers))
+        GalleryBatch.copyImages([shot])
     }
 
     /// 回到出处：优先开网址（默认浏览器），否则激活来源 App。

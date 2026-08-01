@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // MARK: - 批量动作
@@ -20,6 +21,29 @@ enum GalleryBatch {
             return selection.selectedIDs.contains(id) && !seen.contains(id)
         }
         return picked
+    }
+
+    /// 把截图**渲染成品**（原图 + 最新修订的标注）放进剪贴板。
+    ///
+    /// 复制的是成品而不是原图：图库里看到的是什么，粘出去就该是什么 ——
+    /// 原图字节仍然从未被修改（非破坏式编辑，见 Storage 的文件头）。
+    ///
+    /// 多选时把每一张都写成一个剪贴板条目。多数接收方只取第一条，
+    /// 但访达、邮件、Keynote 这类支持多条的会全部收下 —— 只放第一张
+    /// 等于悄悄丢掉用户的选择。
+    ///
+    /// 返回成功复制的张数，供调用方判断要不要提示。
+    @discardableResult
+    static func copyImages(_ shots: [Shot]) -> Int {
+        let store = ShotStore.shared
+        let images = shots.compactMap { shot -> CGImage? in
+            guard let base = store.originalImage(for: shot) else { return nil }
+            let layers = store.latestRevision(for: shot)?.imageLayers ?? Layers()
+            return LayerRenderer.render(base: base, layers: layers)
+        }
+        guard !images.isEmpty else { return 0 }
+        Clipboard.copy(images)
+        return images.count
     }
 
     static func allFavorited(_ shots: [Shot]) -> Bool {

@@ -68,6 +68,17 @@ final class GalleryKeyboard {
             GallerySelection.shared.selectAll(ShotStore.shared.displayShots.compactMap(\.id))
             return true
 
+        case KeyCode.c where flags == .command:
+            // ⌘C：把选中的截图（成品，含标注）复制到剪贴板。
+            //
+            // 让位判定已经在入口那道 `GalleryKeyContext` 里做过了 ——
+            // 搜索框、标签输入、重命名弹窗聚焦时首响应者是 NSTextView，
+            // 那里直接返回 .none，⌘C 原样交给系统去复制文字，不会被这里劫走。
+            let shots = GalleryBatch.selectedShots()
+            guard !shots.isEmpty else { return false }
+            GalleryBatch.copyImages(shots)
+            return true
+
         case KeyCode.escape where flags.isEmpty:
             // Esc：多选收拢回主选中单张；没在多选就不拦，留给系统。
             let selection = GallerySelection.shared

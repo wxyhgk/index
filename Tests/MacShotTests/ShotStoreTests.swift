@@ -88,6 +88,46 @@ final class ShotStoreTests: XCTestCase {
 
     // MARK: - 批量删除的引用计数
 
+    // MARK: - 缩略图重画
+
+    /// 追加修订之后缩略图**必须**被重画。
+    ///
+    /// 缩略图是 `save()` 时按原图生成、以 sha256 命名的，而 sha 只认原图字节 ——
+    /// 加多少标注它都不变。少了这一步，图库网格会一直显示没有标注的那一版
+    /// （用户报的「编辑完返回图库图片没更新」）。
+    func testAppendRevisionRefreshesThumbnail() throws {
+        let (store, _) = try makeStore()
+        let shot = try store.save(image: makeImage(gray: 0.1), metadata: CaptureMetadata())
+
+        let thumbURL = store.thumbnailURL(for: shot)
+        let before = try Data(contentsOf: thumbURL)
+
+        // 渲染器由 App 层注入；这里给一个「把整张涂成另一个灰度」的假实现，
+        // 只要产物与原图不同就能验证「确实重画过」。
+        store.revisionThumbnailRenderer = { [self] _, _ in
+            (try? makeImage(gray: 0.9)) ?? (try! makeImage(gray: 0.9))
+        }
+
+        var invalidated: [String] = []
+        store.thumbnailInvalidator = { invalidated.append($0.sha256) }
+
+        _ = store.appendRevision(shot: shot, layers: Layers(), note: "测试")
+
+        let after = try Data(contentsOf: thumbURL)
+        XCTAssertNotEqual(before, after, "追加修订后缩略图文件没有被重画")
+        XCTAssertEqual(invalidated, [shot.sha256], "重画之后必须作废内存缓存里那份旧的")
+    }
+
+    /// 没注入渲染器时（测试、命令行）不重画也不崩 —— 缩略图是派生数据，
+    /// 画不出来最多显示旧的一版，不该让修订保存失败。
+    func testAppendRevisionWithoutRendererIsSafe() throws {
+        let (store, _) = try makeStore()
+        let shot = try store.save(image: makeImage(gray: 0.2), metadata: CaptureMetadata())
+
+        let revision = store.appendRevision(shot: shot, layers: Layers(), note: "测试")
+        XCTAssertNotNil(revision, "没有渲染器不该影响修订本身落库")
+    }
+
     /// 同 sha 两张截图：删一张文件保留，删第二张文件消失。
     func testBatchDeleteKeepsSharedOriginalUntilLastReference() throws {
         let (store, _) = try makeStore()
