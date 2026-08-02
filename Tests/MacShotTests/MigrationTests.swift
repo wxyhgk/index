@@ -83,36 +83,4 @@ final class MigrationTests: XCTestCase {
             XCTAssertEqual(newHits, [1])
         }
     }
-
-    /// v5 给 shot 加了 `fileExtension` 列（导入的图保留原格式）。
-    ///
-    /// 两件事要盯住：**老记录不回填**（nil 一律当 png，回填只是把同一件事写两处），
-    /// 以及**没有碰 shotFts** —— 那张虚表的同步触发器绑定建表时的列集合，
-    /// 加列要整表重建，所以导入文件名走的是属性表而不是 shot 列。
-    func testV5AddsFileExtensionWithoutTouchingFts() throws {
-        let dbQueue = try DatabaseQueue()
-        try AppDatabase.migrator.migrate(dbQueue, upTo: "v4_multivalue_attributes")
-
-        try dbQueue.write { db in
-            try db.execute(sql: """
-                INSERT INTO shot (sha256, capturedAt, pixelWidth, pixelHeight, scale,
-                                  regionX, regionY, regionW, regionH)
-                VALUES ('old', 0, 100, 50, 2.0, 0, 0, 100, 50)
-                """)
-        }
-
-        try AppDatabase.migrator.migrate(dbQueue)
-
-        try dbQueue.read { db in
-            let ext = try String.fetchOne(
-                db, sql: "SELECT fileExtension FROM shot WHERE sha256 = 'old'"
-            )
-            XCTAssertNil(ext, "老记录不回填，nil 由 Shot.originalFileName 兜成 png")
-
-            let ftsSQL = try String.fetchOne(
-                db, sql: "SELECT sql FROM sqlite_master WHERE name = 'shotFts'"
-            ) ?? ""
-            XCTAssertFalse(ftsSQL.contains("fileExtension"), "v5 不该往 shotFts 加列")
-        }
-    }
 }

@@ -193,35 +193,21 @@ struct Shot: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, E
     /// Vision OCR 结果，异步回填，进 FTS5 索引。
     var ocrText: String?
 
-    /// 原图在磁盘上的扩展名。**nil = png**（截图产出的都是 PNG，老记录也全是）。
-    /// 导入本地图片时原始字节原样保存，这里记住它本来的格式 —— 重新编码成 PNG
-    /// 会让 JPEG 膨胀好几倍、让动图丢掉动画。见 v5 迁移。
-    var fileExtension: String?
-
     mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID
     }
 }
 
 extension Shot {
-    /// 原图文件名。扩展名跟着 `fileExtension` 走（nil = png，见那边的注释）。
-    var originalFileName: String { "\(sha256).\(fileExtension ?? "png")" }
-    /// 缩略图恒为 JPEG —— 它是派生数据，格式由我们说了算，不跟原图。
+    var originalFileName: String { "\(sha256).png" }
     var thumbnailFileName: String { "\(sha256).jpg" }
-
-    /// 是不是导入进来的（而不是自己截的）。
-    /// 判据是「没有来源 App」：截图一定采得到来源，导入的文件不可能有。
-    var isImported: Bool { appBundleID == nil && appName == nil }
 
     /// 一行式来源描述，给列表用。
     var sourceSummary: String {
         var parts: [String] = []
         if let appName { parts.append(appVersion.map { "\(appName) \($0)" } ?? appName) }
         if let windowTitle, !windowTitle.isEmpty { parts.append(windowTitle) }
-        guard parts.isEmpty else { return parts.joined(separator: " — ") }
-        // 导入的图片本来就不该有来源 App —— 说「未知来源」像是采集失败，
-        // 而它其实是如实的「这张不是截的，是收进来的」。
-        return isImported ? "导入的图片" : "未知来源"
+        return parts.isEmpty ? "未知来源" : parts.joined(separator: " — ")
     }
 }
 

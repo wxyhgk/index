@@ -323,7 +323,6 @@ struct GalleryTopBar: View {
     private var moreMenu: some View {
         Menu {
             Button("开始截图") { CaptureCoordinator.shared.begin() }
-            Button("导入图片…") { ImportCoordinator.importWithPanel() }
             Divider()
             Button("设置…") { openSettings() }
         } label: {

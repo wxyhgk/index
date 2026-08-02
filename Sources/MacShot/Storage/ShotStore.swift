@@ -3,7 +3,6 @@ import CoreGraphics
 import CryptoKit
 import GRDB
 import Combine
-import ImageIO
 
 /// 文件 + 数据库的统一入口。
 ///
@@ -167,90 +166,6 @@ final class ShotStore: ObservableObject {
 
         setNeedsReload()
         return shot
-    }
-
-    // MARK: - 导入本地图片
-
-    /// 把一个本地图片文件收进库里。返回入库后的记录；不是图片 / 读不出来则返回 nil。
-    ///
-    /// 与 `save(image:metadata:)` 的**根本区别是不重新编码**：原始字节原样落盘。
-    /// 截图自己产出 PNG，重编码无所谓；但导入若一律转 PNG，
-    /// 一张 3MB 的 JPEG 会膨胀到十几 MB，动图 GIF 直接丢掉动画。
-    /// 代价是文件名要带上原扩展名（`fileExtension` 列，v5 迁移）。
-    ///
-    /// 内容寻址仍然成立：sha 算的是**原始字节**，所以同一个文件导入两次只占一份磁盘，
-    /// 但会是两条记录 —— 这与截图侧的语义一致（同样的画面截两次也是两条）。
-    @discardableResult
-    func importImage(at url: URL) -> Shot? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-
-        // 解码只为拿尺寸和生成缩略图；落盘的仍是原始 data。
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
-
-        let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        // 扩展名统一小写；没有扩展名的按解码结果兜底成 png。
-        let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension.lowercased()
-
-        let originalPath = originalsDirectory.appendingPathComponent("\(sha).\(ext)")
-        if !FileManager.default.fileExists(atPath: originalPath.path) {
-            try? data.write(to: originalPath, options: .atomic)
-        }
-
-        let thumbPath = thumbnailsDirectory.appendingPathComponent("\(sha).jpg")
-        if !FileManager.default.fileExists(atPath: thumbPath.path),
-           let thumb = ImageCodec.resized(image, maxDimension: 640),
-           let jpg = ImageCodec.jpegData(from: thumb) {
-            try? jpg.write(to: thumbPath, options: .atomic)
-        }
-
-        // 来源元数据全空 —— 导入的文件不可能有「截图那一刻的上下文」，
-        // 这正是 `Shot.isImported` 的判据。倍率按 1：文件里没有「点 vs 像素」的概念。
-        var shot = Shot(
-            id: nil,
-            sha256: sha,
-            capturedAt: fileDate(of: url) ?? Date(),
-            pixelWidth: image.width,
-            pixelHeight: image.height,
-            scale: 1,
-            appName: nil, appBundleID: nil, appVersion: nil, appBuild: nil,
-            windowTitle: nil, sourceURL: nil,
-            displayID: nil, displayName: nil,
-            regionX: 0, regionY: 0, regionW: 0, regionH: 0,
-            ocrText: nil,
-            fileExtension: ext
-        )
-
-        do {
-            try dbQueue.write { db in
-                try shot.insert(db)
-                var initial = Revision.make(
-                    shotID: shot.id!, parentID: nil, layers: [], note: "原始"
-                )
-                try initial.insert(db)
-            }
-        } catch {
-            NSLog("[MacShot] 导入失败 \(url.lastPathComponent): \(error)")
-            return nil
-        }
-
-        // 原文件名进属性表（可搜）。导入之后按原名找得回来，是这条路径的基本要求。
-        if let id = shot.id {
-            writeAttribute(
-                shotID: id,
-                key: AttributeKey.importName,
-                value: .text(url.lastPathComponent)
-            )
-        }
-        return shot
-    }
-
-    /// 取文件自己的创建时间当作「捕获时间」—— 导入一批老图时，
-    /// 按导入那一刻排序会把它们全堆在今天，按原始时间排才有意义。
-    private func fileDate(of url: URL) -> Date? {
-        let keys: Set<URLResourceKey> = [.creationDateKey, .contentModificationDateKey]
-        let values = try? url.resourceValues(forKeys: keys)
-        return values?.creationDate ?? values?.contentModificationDate
     }
 
     /// 派生属性的统一落库入口。后处理器只认 key 和值，不知道它最终存在哪。

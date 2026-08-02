@@ -139,25 +139,6 @@ enum AppDatabase {
             }
         }
 
-        // 导入本地图片：原始文件**原样保存**，所以要记住它的扩展名。
-        //
-        // 在此之前整条链写死 PNG（`originals/<sha>.png`）—— 截图自己产出的就是 PNG，
-        // 无所谓；但导入一张 3MB 的 JPEG 若重新编码成 PNG 会膨胀到十几 MB，
-        // 动图 GIF 更是直接丢掉动画。所以导入走「保留原字节」，
-        // 文件名变成 `<sha>.<ext>`，这一列就是那个 ext。
-        //
-        // 可空，且**不回填**：nil 一律当 "png"（见 `Shot.originalFileName`）。
-        // 老记录本来就都是 PNG，回填一遍只是把同一件事写两处。
-        //
-        // ⚠️ 刻意**不往 shotFts 加列**：那张虚表的同步触发器绑定建表时的列集合，
-        // 加列要整表重建（ARCHITECTURE §5 第 6 条记着这个坑）。
-        // 导入文件名走属性表（`AttributeKey.importName`），它经 attributeFts 一样可搜。
-        migrator.registerMigration("v5_import_format") { db in
-            try db.alter(table: "shot") { t in
-                t.add(column: "fileExtension", .text)
-            }
-        }
-
         return migrator
     }
 }

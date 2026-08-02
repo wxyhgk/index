@@ -138,65 +138,6 @@ final class ShotStoreTests: XCTestCase {
         XCTAssertNotNil(revision, "没有渲染器不该影响修订本身落库")
     }
 
-    // MARK: - 导入本地图片
-
-    /// 导入**不重新编码**：磁盘上落的必须是原始字节。
-    ///
-    /// 这是导入路径与截图路径最根本的差别。若一律转 PNG，
-    /// 一张 JPEG 会膨胀好几倍、动图 GIF 会丢掉动画。
-    func testImportPreservesOriginalBytes() throws {
-        let (store, _) = try makeStore()
-
-        // 用 JPEG 作被导入文件：它转成 PNG 一定会变大且字节不同，
-        // 「原样保存」与「重新编码」因此可区分。
-        let image = try makeImage(gray: 0.42)
-        let jpeg = try XCTUnwrap(ImageCodec.jpegData(from: image))
-        let source = tempRoot.appendingPathComponent("photo.jpg")
-        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-        try jpeg.write(to: source)
-
-        let shot = try XCTUnwrap(store.importImage(at: source), "导入应当成功")
-
-        XCTAssertEqual(shot.fileExtension, "jpg", "扩展名要记住原格式")
-        XCTAssertTrue(shot.originalFileName.hasSuffix(".jpg"))
-        XCTAssertTrue(shot.isImported, "没有来源 App 即为导入")
-
-        let stored = try Data(contentsOf: store.originalURL(for: shot))
-        XCTAssertEqual(stored, jpeg, "落盘的必须是原始字节，一个都不能变")
-
-        // 缩略图仍是我们自己生成的 JPEG（派生数据，格式由我们说了算）。
-        XCTAssertTrue(FileManager.default.fileExists(atPath: store.thumbnailURL(for: shot).path))
-    }
-
-    /// 原文件名要能搜到 —— 导入之后按原名找得回来是这条路径的基本要求。
-    func testImportRecordsSearchableFileName() throws {
-        let (store, _) = try makeStore()
-
-        let image = try makeImage(gray: 0.3)
-        let png = try XCTUnwrap(ImageCodec.pngData(from: image))
-        let source = tempRoot.appendingPathComponent("季度报表截图.png")
-        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-        try png.write(to: source)
-
-        let shot = try XCTUnwrap(store.importImage(at: source))
-        let id = try XCTUnwrap(shot.id)
-        XCTAssertEqual(store.attributeText(shotID: id, key: AttributeKey.importName), "季度报表截图.png")
-
-        store.searchText = "季度报表"
-        store.reload()
-        XCTAssertEqual(store.shots.first?.id, id, "按原文件名应当搜得到")
-    }
-
-    /// 非图片文件不进库。
-    func testImportRejectsNonImage() throws {
-        let (store, _) = try makeStore()
-        let source = tempRoot.appendingPathComponent("note.txt")
-        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-        try Data("hello".utf8).write(to: source)
-
-        XCTAssertNil(store.importImage(at: source), "解不出图像的文件不该入库")
-    }
-
     /// 同 sha 两张截图：删一张文件保留，删第二张文件消失。
     func testBatchDeleteKeepsSharedOriginalUntilLastReference() throws {
         let (store, _) = try makeStore()
