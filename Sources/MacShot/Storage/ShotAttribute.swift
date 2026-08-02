@@ -67,6 +67,13 @@ enum AttributeKey {
     /// 录屏成品 mp4 的绝对路径（UTF-8 存 payload）。挂在录屏首帧锚点截图上，
     /// 详情栏据此显示「打开录像」。text 必须为 nil —— attributeFts 会索引
     /// 整个 text 列，文件路径不该进搜索索引。
+    /// 导入时的原始文件名（含扩展名）。
+    ///
+    /// 放属性表而不是给 `shot` 加列：`shotFts` 的同步触发器绑定建表时的列集合，
+    /// 加列要整表重建（ARCHITECTURE §5 第 6 条）。属性表经 `attributeFts`
+    /// 一样能搜到 —— 导入之后按原文件名搜得着，这正是要的。
+    static let importName = "import.name"
+
     static let recordingPath = "recording.path"
     /// 敏感内容检测结果（[SensitiveRegion] 的 JSON）。
     /// searchableText 只放命中的**种类**汇总（如 "邮箱,密钥"）——

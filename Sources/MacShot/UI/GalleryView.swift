@@ -46,6 +46,9 @@ struct GalleryView: View {
     /// 解析不到（选项被移除、旧值）时 `resolve` 退回第一个。
     @AppStorage("galleryDestination") private var destinationID = "destination.library"
 
+    /// 有文件正悬在窗口上方（拖入导入的落点提示）。
+    @State private var isTargeted = false
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -149,7 +152,35 @@ struct GalleryView: View {
         // 内容伸到红绿灯底下，避让由 `DS.Shell.trafficLightInset` 在顶栏内部完成。
         .ignoresSafeArea(.container, edges: .top)
         .animation(DS.Motion.standard(reduced: reduceMotion), value: showInspector)
-        .frame(minWidth: 1000, minHeight: 600)
+        // 拖文件进窗口即导入。挂在**整个图库分支**上而不是网格里 ——
+        // 落点不该要求用户瞄准某块区域；空库时（网格是空态占位）也照样能收。
+        //
+        // 接 `URL.self` 是安全的：这里收的本来就是外部拖进来的文件 URL，
+        // 与图库自己拖**出去**那条路（`GalleryGrid.onDrag`）方向相反、互不干扰。
+        .dropDestination(for: URL.self) { urls, _ in
+            ImportCoordinator.importItems(at: urls) > 0
+        } isTargeted: { isTargeted = $0 }
+        .overlay {
+            if isTargeted { importDropHint }
+        }
+    }
+
+    /// 拖入时的落点提示。整窗一圈强调色描边 + 一行说明 ——
+    /// 拖拽中的反馈必须一眼看见，不能只在某个角落里变个色。
+    private var importDropHint: some View {
+        RoundedRectangle(cornerRadius: DS.radiusFloating, style: .continuous)
+            .strokeBorder(Color.accentColor, lineWidth: 3)
+            .background(Color.accentColor.opacity(0.06))
+            .overlay {
+                Label("松手即导入图库", systemImage: "square.and.arrow.down")
+                    .font(.title3.weight(.medium))
+                    .padding(.horizontal, DS.s4)
+                    .padding(.vertical, DS.s3)
+                    .background(DS.panelFill(.overlay), in: Capsule())
+            }
+            .padding(DS.Shell.windowMargin)
+            .allowsHitTesting(false)
+            .transition(.opacity)
     }
 
 
