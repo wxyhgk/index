@@ -44,22 +44,9 @@
     <!-- 应用内拖拽用的自定义类型：图库卡片拖到侧边栏标签上时传的是「一串截图 ID」的 JSON，
          而不是图像本身（图像走同一次拖拽里优先级更高的 public.png 表示）。
          必须在这里导出声明，UTType(exportedAs:) 才能拿到稳定类型，见 UI/ShotCard.swift。 -->
-    <key>UTExportedTypeDeclarations</key>
-    <array>
-        <dict>
-            <key>UTTypeIdentifier</key>
-            <string>com.wxyhgk.macshot.shot-ids</string>
-            <key>UTTypeDescription</key>
-            <string>MacShot 截图引用</string>
-            <key>UTTypeConformsTo</key>
-            <array>
-                <string>public.data</string>
-            </array>
-            <!-- 纯应用内类型，不对应任何文件扩展名 / MIME -->
-            <key>UTTypeTagSpecification</key>
-            <dict/>
-        </dict>
-    </array>
+    <!-- 这里曾经导出过一个纯应用内的 UTType（com.wxyhgk.macshot.shot-ids），
+         给「拖截图到侧边栏标签上打标签」用。那批投放目标在简化侧边栏时删掉了，
+         图库拖拽也改成了真实文件 URL，这个类型随之没有任何消费方。 -->
     <!-- 服务菜单：无输入类型 → 出现在所有 App 的「服务」菜单里。
          注意：服务注册按签名+路径缓存，改动后可能要 pbs -update 或重新登录才生效。 -->
     <key>NSServices</key>

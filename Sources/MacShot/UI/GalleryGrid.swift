@@ -485,11 +485,20 @@ struct GalleryGrid: View {
                 GalleryWindowMode.shared.openEditor(shotID: shot.id)
             }
         )
-        // 不给 preview 闭包：默认预览就是这张卡自己的快照，多选时也照样跟手，
-        // 语义上也诚实 —— 拖出到外部本来就只导出这一张（见 ShotDragFile 的取舍注释），
-        // 现在去做 Finder 那种「叠张 + 数字角标」反而会承诺一个不存在的行为。
-        // 何况自定义 preview 的 ViewBuilder 和载荷一样在 body 里逐卡片求值，是要还的。
-        .draggable(dragFile(for: shot))
+        // 用 `onDrag` 而不是 `.draggable(_:)`，理由是**接收方兼容性**：
+        //
+        // `.draggable` 配 `FileRepresentation` 交出去的是「文件承诺」（promise）。
+        // 访达、邮件认它，但**浏览器的上传控件和多数 Office 应用只收磁盘上
+        // 真实存在的文件 URL**，拿到承诺就当没有，表现为「拖过去没反应」。
+        // 暂存卡片一直能拖进这些地方，正是因为它走 AppKit 的
+        // `NSDraggingItem(pasteboardWriter: url as NSURL)`，天生就是真 URL。
+        //
+        // `onDrag` 的闭包在**拖拽真正开始时**才执行（不是 body 求值时），
+        // 所以「载荷必须廉价」那条红线依然守得住 —— 渲染整张 PNG 一次拖拽只跑一次，
+        // 而不是每张可见卡片每帧跑一次（那是当年拖垮图库滚动的事故）。
+        .onDrag {
+            NSItemProvider(contentsOf: dragFileURL(for: shot)) ?? NSItemProvider()
+        }
         .contextMenu {
             // ⚠️ 这个 ViewBuilder 会在**普通渲染时**被 SwiftUI 求值，不是右键才跑 ——
             // 在这里写任何状态（哪怕 async）都会形成「渲染→改选中→重渲染」的自激振荡
@@ -777,20 +786,39 @@ struct GalleryGrid: View {
     /// 拖出卡片的载荷。**必须是廉价构造**：`.draggable` 的载荷在 body 里
     /// 逐卡片急切求值，任何重活（读原图/渲染/写盘）放在这里都会把主线程打满 ——
     /// 表现就是「图库滚不动、点击丢失」。渲染推迟到真正拖放时的传输闭包里做。
-    private func dragFile(for shot: Shot) -> ShotDragFile {
-        ShotDragFile(shot: shot, shotIDs: draggedIDs(for: shot))
+    /// 拖拽用的成品 PNG 落到磁盘，返回它的 URL。
+    ///
+    /// **只在拖拽真正开始时调一次**（`onDrag` 的闭包），不是每帧。
+    /// 重活集中在这：读原图 → 合成最新修订 → 编码 → 写临时文件；
+    /// 目录复用暂存栏的拖拽临时目录，下次启动统一清理；渲染失败退回原图路径
+    /// （拖出去的至少还是这张截图，只是没有标注）。
+    private func dragFileURL(for shot: Shot) -> URL {
+        let fallback = store.originalURL(for: shot)
+        guard let base = store.originalImage(for: shot) else { return fallback }
+
+        let rendered = LayerRenderer.render(
+            base: base,
+            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers()
+        )
+        guard let png = ImageCodec.pngData(from: rendered) else { return fallback }
+
+        let dir = ShelfController.dragFileDirectory
+            .appendingPathComponent(shot.sha256, isDirectory: true)
+        let url = dir.appendingPathComponent(ImageExporter.suggestedName(for: shot))
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try png.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return fallback
+        }
     }
 
-    /// 拖拽携带哪些 ID：被拖的这张在多选集合里 → 全部选中项；不在 → 只有它自己。
-    /// 这是 Finder 的行为，也是「先框选一批、再一把拖到侧边栏标签上」能成立的前提。
-    ///
-    /// 同样受上面那条廉价纪律约束：命中多选时是 `Set` 的 COW 引用拷贝（O(1)，不遍历），
-    /// 未命中时新建一个单元素 Set。**不要**改成去 `store.displayShots` 里按展示顺序过滤 ——
-    /// 那是「全库长度 × 可见卡片数」的每帧扫描，而打标签根本不需要顺序。
-    private func draggedIDs(for shot: Shot) -> Set<Int64> {
-        guard let id = shot.id else { return [] }
-        return selection.isSelected(id) ? selection.selectedIDs : [id]
-    }
+    // 这里曾经有个 `draggedIDs`：拖拽时携带「全部选中项的 ID」，
+    // 供侧边栏「拖到标签上打标签」接收。那批投放目标在简化侧边栏时删掉了，
+    // 这条应用内通道随之没有了消费方（连同 `ShotDragFile` / `ShotIDPayload`
+    // 与那个自定义 UTType 一起移除）。将来要恢复拖放打标签，
+    // 从 git 历史里取回即可 —— 那套载荷的廉价纪律有完整注释。
 
     /// 钉在桌面：走注册表的 pin 动作（界面层不直接建窗口），材料从图库记录重建。
     private func pin(_ shot: Shot) {
