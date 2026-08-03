@@ -250,7 +250,9 @@ protocol GalleryDestination {
 **第二批（2026-08）已完成**：`DatabasePool` + WAL（读连接 4 条）—— `DatabaseQueue` 是串行的，一次写入把所有读堵住，而回滚日志每次写要 fsync 整库；WAL 下写只追加、读走写入前的快照，两者互不阻塞，这是「重查询挪出主线程」的地基。连接类型放宽成 `any DatabaseWriter`（生产 Pool / 测试内存 Queue）。
 同批修掉两处审计点名的重灾区：`relatedShots` 不再把全库带网址的行整个取回（改为 SQL 前缀缩候选 + Swift 精确判定，前缀能成立是因为归一化只截短；有测试盯着「前缀多命中要被挡掉」），`attributePayloads` 新增后台读版本，相似图 / 语义搜索不再在主线程上拉几十 MB 的向量 blob。三处硬编码的 `LIMIT 500` 收敛成 `listFetchLimit`（暂定 2000）。
 
-剩余：**分页 + 网格虚拟化**（去掉列表上限的真正解法，要连带改滚动、分组段头、键盘步长与「全选」语义）、`ShotDatabase` 非 MainActor 仓库类型承接全部 SQL、`reload()` 等列表查询转 async、按职责拆门面、`ValueObservation` 替代手动通知。UI 状态（searchText / filter / semantic）届时迁出 ShotStore 成为 GalleryViewModel。
+**第三批（2026-08）已完成**：列表查询搬出主线程。查询体抽成 `nonisolated static fetchShots`（同步与后台两条路**共用同一份 SQL**，有测试守着「两条路径结果一致」），新增 `reloadInBackground()`，**节流路径（截图落库、属性回填、批量操作）整条改走它** —— 那些场景没有「调完立刻读 `shots`」的需求，UI 是订阅式的。同步 `reload()` 保留给需要立即结果的调用方（测试、「打开窗口并定位到某张」）。赋值与通知收敛到 `publish(shots:favorites:)`，两条路不会有一条忘了发 `libraryDidChange`。
+
+剩余：**分页 + 网格虚拟化**（去掉列表上限的真正解法，要连带改滚动、分组段头、键盘步长与「全选」语义）、`ShotDatabase` 非 MainActor 仓库类型承接全部 SQL、按职责拆门面、`ValueObservation` 替代手动通知。UI 状态（searchText / filter / semantic）届时迁出 ShotStore 成为 GalleryViewModel。
 
 **拆巨文件（进行中）**：`GalleryView` 已于 2026-07 拆成 9 个文件（壳 171 行，最大的 `GalleryGrid` 548 行），拆分为纯搬家、逐行对账过。
 剩余：`maskSensitiveRegions` 业务逻辑仍留在 `ShotDetailPane` 待下沉；`EditorView`（1194 行）切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。

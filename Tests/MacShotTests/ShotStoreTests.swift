@@ -391,4 +391,52 @@ final class ShotStoreTests: XCTestCase {
             "前缀多命中的 /abc 必须被精确过滤挡掉，同页面的三张都要在"
         )
     }
+
+    // MARK: - 两条刷新路径
+
+    /// 同步 `reload()` 与后台 `reloadInBackground()` 必须给出**同样的结果**。
+    ///
+    /// 它们共用 `fetchShots` 那一份 SQL，正是为了防止两条路慢慢长歪 ——
+    /// 这条测试就是那份共用的守卫：将来谁只改了其中一条，这里会红。
+    func testBackgroundReloadMatchesSyncReload() async throws {
+        let (store, _) = try makeStore()
+
+        var safari = CaptureMetadata()
+        safari.appName = "Safari"
+        _ = try store.save(image: makeImage(gray: 0.1), metadata: safari)
+        _ = try store.save(image: makeImage(gray: 0.2), metadata: safari)
+
+        var xcode = CaptureMetadata()
+        xcode.appName = "Xcode"
+        _ = try store.save(image: makeImage(gray: 0.3), metadata: xcode)
+
+        // 无筛选无搜索
+        store.reload()
+        let syncAll = store.shots.map(\.id)
+        await store.reloadInBackground()
+        XCTAssertEqual(store.shots.map(\.id), syncAll, "无条件时两条路径结果应一致")
+
+        // 叠加筛选 + 搜索：分支最多的那条路
+        store.filter = .app("Safari")
+        store.searchText = "Safari"
+        store.reload()
+        let syncFiltered = store.shots.map(\.id)
+        XCTAssertEqual(syncFiltered.count, 2)
+
+        await store.reloadInBackground()
+        XCTAssertEqual(store.shots.map(\.id), syncFiltered, "筛选 + 搜索下两条路径结果应一致")
+    }
+
+    /// 后台刷新同样要发「库存变了」的信号 —— 胶片条只订这个，
+    /// 漏发就等于它再也不更新（那条信号正是为了让它别被修订保存惊动）。
+    func testBackgroundReloadEmitsLibraryDidChange() async throws {
+        let (store, _) = try makeStore()
+
+        var received = 0
+        let token = store.libraryDidChange.sink { received += 1 }
+        defer { token.cancel() }
+
+        await store.reloadInBackground()
+        XCTAssertEqual(received, 1)
+    }
 }

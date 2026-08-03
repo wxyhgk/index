@@ -572,7 +572,11 @@ final class ShotStore: ObservableObject {
         guard pendingReload == nil else { return }
         let elapsed = Date().timeIntervalSince(lastReloadAt)
         if elapsed >= Self.reloadInterval {
-            reload()
+            // leading：立刻刷，但**查询走后台** —— 写路径（截图落库、属性回填、
+            // 批量操作）没有「调完立刻读 shots」的需求，UI 是订阅式的，
+            // 等一轮 runloop 完全无妨，换来的是主线程不做这趟查询。
+            Task { [weak self] in await self?.reloadInBackground() }
+            lastReloadAt = Date()
             return
         }
         let delay = Self.reloadInterval - elapsed
@@ -585,20 +589,17 @@ final class ShotStore: ObservableObject {
             }
             guard let self else { return }
             self.pendingReload = nil
-            self.reload()
+            await self.reloadInBackground()
         }
     }
 
     // MARK: - 查询
 
-    func reload() {
-        pendingReload?.cancel()
-        pendingReload = nil
-        lastReloadAt = Date()
-
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filter = filter
-        let newShots = (try? dbQueue.read { db -> [Shot] in
+    /// 列表查询本身。**不依赖 actor** —— 同步路径与后台路径共用这一份 SQL，
+    /// 免得两条路慢慢长歪（那是这类改造最常见的退化）。
+    private nonisolated static func fetchShots(
+        _ db: Database, query: String, filter: GalleryFilter
+    ) throws -> [Shot] {
             // 侧边栏筛选是精确匹配的 AND 条件，和 FTS 搜索（子串匹配的 UNION）互不干扰：
             // 搜索决定候选集，筛选再收窄一次。
             let filterClause: String
@@ -708,6 +709,17 @@ final class ShotStore: ObservableObject {
                 ORDER BY shot.capturedAt DESC
                 LIMIT \(Self.listFetchLimit)
                 """, arguments: StatementArguments(arguments))
+    }
+
+    func reload() {
+        pendingReload?.cancel()
+        pendingReload = nil
+        lastReloadAt = Date()
+
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filter = filter
+        let newShots = (try? dbQueue.read { db in
+            try Self.fetchShots(db, query: query, filter: filter)
         }) ?? []
 
         let newFavoriteIDs = Set((try? dbQueue.read { db in
@@ -716,8 +728,45 @@ final class ShotStore: ObservableObject {
                 """)
         }) ?? [])
 
-        // 先算好再一起赋值，整轮 reload 只发一次 objectWillChange ——
-        // 此前 shots / favoriteIDs 两个 @Published 各发一次，订阅方级联重查两遍。
+        publish(shots: newShots, favorites: newFavoriteIDs)
+    }
+
+    /// 同上，但**查询跑在后台读连接上**，只有赋值回到主线程。
+    ///
+    /// 这是节流路径（截图落库、属性回填、批量操作）实际走的那一条 ——
+    /// 那些场景没有「调完立刻读 `shots`」的需求，等一轮 runloop 完全无妨，
+    /// 而列表查询是主线程上剩下的最大一块数据库活儿。
+    ///
+    /// 同步的 `reload()` 保留给**需要立即拿到结果**的调用方（测试、
+    /// 以及「打开窗口并定位到某张」这类先刷新再选中的场景）。
+    /// 两条路共用 `fetchShots` 那一份 SQL，不会慢慢长歪。
+    func reloadInBackground() async {
+        pendingReload?.cancel()
+        pendingReload = nil
+        lastReloadAt = Date()
+
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filter = filter
+
+        // WAL + DatabasePool 之下这两趟读不会被写阻塞，也不占主线程。
+        let newShots = (try? await dbQueue.read { db in
+            try Self.fetchShots(db, query: query, filter: filter)
+        }) ?? []
+        let newFavoriteIDs = Set((try? await dbQueue.read { db in
+            try Int64.fetchAll(db, sql: """
+                SELECT shotID FROM shotAttribute WHERE key = 'favorite'
+                """)
+        }) ?? [])
+
+        publish(shots: newShots, favorites: newFavoriteIDs)
+    }
+
+    /// 赋值 + 发通知。两条刷新路径共用 —— 发布时机是有讲究的（见下），
+    /// 分成两份迟早有一份忘了发 `libraryDidChange`。
+    ///
+    /// 先算好再一起赋值，整轮刷新只发一次 `objectWillChange` ——
+    /// 此前 shots / favoriteIDs 两个 @Published 各发一次，订阅方级联重查两遍。
+    private func publish(shots newShots: [Shot], favorites newFavoriteIDs: Set<Int64>) {
         objectWillChange.send()
         shots = newShots
         favoriteIDs = newFavoriteIDs
