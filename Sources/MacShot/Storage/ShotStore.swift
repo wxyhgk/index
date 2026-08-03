@@ -66,13 +66,19 @@ final class ShotStore: ObservableObject {
     let originalsDirectory: URL
     let thumbnailsDirectory: URL
 
-    private let dbQueue: DatabaseQueue
+    /// 数据库连接。类型是 `any DatabaseWriter` 而不是具体类型 ——
+    /// 生产用 `DatabasePool`（多读连接 + WAL），测试用内存 `DatabaseQueue`。
+    ///
+    /// **它本身不是 MainActor 隔离的**，所以可以安全地在后台读：
+    /// `dbQueue.read {}` 的闭包跑在 GRDB 自己的读连接上，与主线程无关。
+    /// 这是把重查询挪出主线程的通路（见 `readInBackground`）。
+    private let dbQueue: any DatabaseWriter
 
     /// - Parameters:
     ///   - rootDirectory: 磁盘根目录。默认用真实的 Application Support；测试传临时目录。
     ///   - database: 已迁移好的数据库。默认按根目录打开 index.sqlite；测试传内存库
     ///     （调用方自己先跑 `AppDatabase.migrator`）。
-    init(rootDirectory: URL? = nil, database: DatabaseQueue? = nil) {
+    init(rootDirectory: URL? = nil, database: (any DatabaseWriter)? = nil) {
         let base = rootDirectory ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MacShot", isDirectory: true)
@@ -537,6 +543,23 @@ final class ShotStore: ObservableObject {
     // MARK: - 刷新合并
 
     /// 两次 reload 之间的最短间隔。写入风暴（启动回填、批量操作）坍缩成 ≤2Hz。
+    /// 列表一次最多取多少行。
+    ///
+    /// 这是一个**临时上限**，不是设计意图：网格目前一次性拿到全部行再交给
+    /// `LazyVGrid`，所以行数直接等于内存里的 `Shot` 数组长度。没有它的话，
+    /// 十万张的库会在一次 `reload()` 里把十万行取回并解码。
+    ///
+    /// 真正的解法是**分页**（滚到底再取下一页）：那要连带改网格的滚动、
+    /// 分组段头、键盘上下键的步长、以及「全选」的语义（全选是选当前这一页还是全库？），
+    /// 所以单独作为一批做。在那之前，超过这个数的老截图仍然搜得到
+    /// （搜索走的是同一条 SQL，只是结果也受这个上限约束）。
+    ///
+    /// 三条列表查询共用这一个常量 —— 此前是三处硬编码的 500，
+    /// 改一处漏两处是迟早的事。
+    /// `nonisolated`：它被用作 `allShots(limit:)` 的默认参数，
+    /// 而默认参数在调用方的上下文里求值，可能不是主 actor。
+    nonisolated static let listFetchLimit = 2000
+
     private static let reloadInterval: TimeInterval = 0.5
     private var lastReloadAt: Date = .distantPast
     private var pendingReload: Task<Void, Never>?
@@ -634,7 +657,7 @@ final class ShotStore: ObservableObject {
                     SELECT shot.* FROM shot
                     WHERE 1 = 1 \(filterClause)
                     ORDER BY shot.capturedAt DESC
-                    LIMIT 500
+                    LIMIT \(Self.listFetchLimit)
                     """, arguments: StatementArguments(arguments))
             }
             // ⚠️ **trigram 分词器搜不了少于 3 个字符的词**（SQLite 的既定行为：
@@ -664,7 +687,7 @@ final class ShotStore: ObservableObject {
                         )
                     ) \(filterClause)
                     ORDER BY shot.capturedAt DESC
-                    LIMIT 500
+                    LIMIT \(Self.listFetchLimit)
                     """, arguments: StatementArguments(arguments))
             }
 
@@ -683,7 +706,7 @@ final class ShotStore: ObservableObject {
                     WHERE attributeFts MATCH :pattern
                 ) \(filterClause)
                 ORDER BY shot.capturedAt DESC
-                LIMIT 500
+                LIMIT \(Self.listFetchLimit)
                 """, arguments: StatementArguments(arguments))
         }) ?? []
 
@@ -754,7 +777,7 @@ final class ShotStore: ObservableObject {
     /// 全库时间倒序，**不受** `searchText` / `filter` 影响（`shots` 是筛选后的列表）。
     /// 编辑器胶片条用：换图的心智是「库里最近截了什么」，不跟图库窗口的筛选联动。
     /// 上限与图库一致（500），避免超大库一次性拉全表。
-    func allShots(limit: Int = 500) -> [Shot] {
+    func allShots(limit: Int = ShotStore.listFetchLimit) -> [Shot] {
         (try? dbQueue.read { db in
             try Shot.fetchAll(db, sql: """
                 SELECT * FROM shot ORDER BY capturedAt DESC LIMIT ?
@@ -853,13 +876,35 @@ final class ShotStore: ObservableObject {
     /// 某个 key 的全部二进制载荷（shotID + payload）。相似检索的候选集，一条 SQL 拉全量。
     func attributePayloads(key: String) -> [(shotID: Int64, payload: Data)] {
         (try? dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT shotID, payload FROM shotAttribute
-                WHERE key = ? AND payload IS NOT NULL
-                """, arguments: [key]).map {
-                    (shotID: $0["shotID"] as Int64, payload: $0["payload"] as Data)
-                }
+            try Self.fetchPayloads(db, key: key)
         }) ?? []
+    }
+
+    /// 同上，但**在后台连接上读**。
+    ///
+    /// 这是相似图 / 语义搜索的入口：一次要把全库的特征向量取回来
+    /// （CLIP 512 维约 2KB/张，指纹更大），几千张就是几十 MB 的 blob。
+    /// 同步版本会把这几十 MB 的取回与解码全压在主线程上 —— 点一次「查找相似」
+    /// 就卡一下。`DatabasePool` 的读连接与写连接互不阻塞（WAL），
+    /// 所以这一趟完全不必占用主线程。
+    nonisolated func attributePayloadsInBackground(
+        key: String
+    ) async -> [(shotID: Int64, payload: Data)] {
+        (try? await dbQueue.read { db in
+            try Self.fetchPayloads(db, key: key)
+        }) ?? []
+    }
+
+    /// 两个版本共用的取数实现 —— SQL 只该有一份。
+    private nonisolated static func fetchPayloads(
+        _ db: Database, key: String
+    ) throws -> [(shotID: Int64, payload: Data)] {
+        try Row.fetchAll(db, sql: """
+            SELECT shotID, payload FROM shotAttribute
+            WHERE key = ? AND payload IS NOT NULL
+            """, arguments: [key]).map {
+                (shotID: $0["shotID"] as Int64, payload: $0["payload"] as Data)
+            }
     }
 
     /// 与目标视觉最相似的截图，按特征指纹距离升序取前 `limit` 张。
@@ -872,7 +917,8 @@ final class ShotStore: ObservableObject {
               let targetData = attributePayload(shotID: targetID, key: AttributeKey.featurePrint)
         else { return [] }
 
-        let candidates = attributePayloads(key: AttributeKey.featurePrint)
+        // 后台取 blob：几千张时这是几十 MB，同步读会把主线程按住。
+        let candidates = await attributePayloadsInBackground(key: AttributeKey.featurePrint)
             .filter { $0.shotID != targetID }
         guard !candidates.isEmpty else { return [] }
 
@@ -933,7 +979,22 @@ final class ShotStore: ObservableObject {
 
         if let source = shot.sourceURL {
             let target = Self.normalizedSourceURL(source)
-            return fetch(Column("sourceURL") != nil)
+            // 先在 SQL 里用前缀把候选缩到一小撮，再在 Swift 里做精确判定。
+            //
+            // 能这么做是因为归一化只**截短**（去掉 `#锚点`、去掉末尾斜杠）——
+            // 归一化后的串必然是原串的前缀，所以「归一化后等于 target」的行
+            // 一定满足 `sourceURL LIKE 'target%'`。反过来不成立（比如
+            // target 是 `…/a`，`…/abc` 也会命中前缀），所以后面那次精确过滤不能省。
+            //
+            // 此前这里是 `sourceURL IS NOT NULL` —— **把全库带网址的行整个取回来**
+            // 再在 Swift 里筛，而它挂在详情栏上，每选一张卡片就跑一次。
+            // 几千张浏览器截图时这是明显的卡顿源（审计记录在案的重灾区）。
+            let escaped = target
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%")
+                .replacingOccurrences(of: "_", with: "\\_")
+            let prefix = Column("sourceURL").like("\(escaped)%", escape: "\\")
+            return fetch(prefix)
                 .filter { $0.sourceURL.map(Self.normalizedSourceURL) == target }
         }
         if let bundleID = shot.appBundleID {
@@ -974,7 +1035,8 @@ final class ShotStore: ObservableObject {
     func semanticSearch(query: String, limit: Int = 30) async -> [Shot] {
         guard let queryVector = await CLIPEncoder.shared.embedText(query) else { return [] }
 
-        let candidates = attributePayloads(key: AttributeKey.clipEmbedding)
+        // 同上：语义搜索要拉全库的 CLIP 向量，走后台连接。
+        let candidates = await attributePayloadsInBackground(key: AttributeKey.clipEmbedding)
         guard !candidates.isEmpty else { return [] }
 
         let rankedIDs = await Task.detached(priority: .userInitiated) { () -> [Int64] in

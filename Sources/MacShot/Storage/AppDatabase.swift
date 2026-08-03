@@ -4,12 +4,26 @@ import GRDB
 /// SQLite schema + 迁移。数据访问全部走这里，方便将来替换实现。
 enum AppDatabase {
 
-    static func makeWriter(at url: URL) throws -> DatabaseQueue {
+    /// 打开数据库并迁移到最新。
+    ///
+    /// 用 `DatabasePool` + WAL，而不是 `DatabaseQueue` + 默认的回滚日志：
+    ///   · `DatabaseQueue` 是**串行**的 —— 所有读和写排在同一条队列上，
+    ///     一次写入会把所有读堵住；
+    ///   · 回滚日志模式下每次写都要 fsync 整个数据库文件，而 WAL 只追加日志，
+    ///     写入代价低一个量级，**并且读不会被写阻塞**（读的是写入前的快照）。
+    ///
+    /// 这是「数据库读写移出主线程」的地基：只有多个读连接同时可用，
+    /// 把重查询挪到后台才有意义 —— 否则后台读一样会排在主线程那次写后面。
+    static func makeWriter(at url: URL) throws -> DatabasePool {
         var config = Configuration()
         config.foreignKeysEnabled = true
-        let dbQueue = try DatabaseQueue(path: url.path, configuration: config)
-        try migrator.migrate(dbQueue)
-        return dbQueue
+        // 读连接数。截图库的并发读来自：网格列表、侧边栏计数、详情栏、缩略图、
+        // 后台回填 —— 4 个足够，再多只是白占文件描述符。
+        config.maximumReaderCount = 4
+
+        let pool = try DatabasePool(path: url.path, configuration: config)
+        try migrator.migrate(pool)
+        return pool
     }
 
     static var migrator: DatabaseMigrator {

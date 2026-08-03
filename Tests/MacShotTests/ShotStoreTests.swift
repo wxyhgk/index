@@ -357,4 +357,38 @@ final class ShotStoreTests: XCTestCase {
         XCTAssertEqual(store.shots.count, 1, "短查询绕开了收藏筛选")
         XCTAssertEqual(store.shots.first?.id, shotA.id)
     }
+
+    // MARK: - 同源时间线
+
+    /// 网址匹配改成「SQL 前缀缩候选 + Swift 精确判定」之后，结果必须与从前一致。
+    ///
+    /// 此前是把全库带网址的行整个取回来再在 Swift 里筛，而它挂在详情栏上、
+    /// 每选一张卡片就跑一次。前缀能成立是因为归一化只**截短**（去掉 #锚点、
+    /// 去掉末尾斜杠），所以归一化结果必然是原串的前缀；但前缀会**多**命中
+    /// （target 是 …/a 时 …/abc 也满足），所以精确过滤不能省 —— 这条正是盯它。
+    func testRelatedShotsPrefixDoesNotOverMatch() throws {
+        let (store, _) = try makeStore()
+
+        func save(_ url: String, gray: CGFloat) throws -> Shot {
+            var meta = CaptureMetadata()
+            meta.sourceURL = url
+            return try store.save(image: makeImage(gray: gray), metadata: meta)
+        }
+
+        let target = try save("https://example.com/a", gray: 0.1)
+        // 同一页面的不同形态：带锚点、带末尾斜杠 —— 归一化后与 target 相同。
+        let withHash = try save("https://example.com/a#section", gray: 0.2)
+        let withSlash = try save("https://example.com/a/", gray: 0.3)
+        // 前缀会命中但归一化后**不**相同 —— 精确过滤必须把它挡掉。
+        _ = try save("https://example.com/abc", gray: 0.4)
+        // 完全无关。
+        _ = try save("https://other.com/x", gray: 0.5)
+
+        let related = store.relatedShots(to: target)
+        XCTAssertEqual(
+            Set(related.compactMap(\.id)),
+            Set([target.id, withHash.id, withSlash.id].compactMap { $0 }),
+            "前缀多命中的 /abc 必须被精确过滤挡掉，同页面的三张都要在"
+        )
+    }
 }
