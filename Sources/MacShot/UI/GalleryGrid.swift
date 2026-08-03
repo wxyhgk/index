@@ -335,6 +335,7 @@ struct GalleryGrid: View {
                             Section {
                                 ForEach(section.shots) { shot in
                                     card(for: shot, height: zoom * 0.68)
+                                        .onAppear { loadMoreIfNeeded(reaching: shot) }
                                 }
                             } header: {
                                 sectionHeader(for: section)
@@ -457,6 +458,21 @@ struct GalleryGrid: View {
     /// SwiftUI 的 .blur 动画实测能吃掉 50% CPU（等价效果走 CALayer 是 0%）。
     /// 开关关掉时走 else 分支，效果连同 scrollTransition 一起消失（不是设成 identity 空转）。
     /// 代价是切换开关那一下卡片会因 `_ConditionalContent` 换分支重建一次 —— 一次性的，可接受。
+    /// 无限滚动的触发器：快滚到已加载内容的末尾时，去取下一页。
+    ///
+    /// 用「倒数第几张出现」而不是「最后一张出现」：等最后一张露面才开始查，
+    /// 用户会看见一次空白等待。提前一屏（约 12 张）取，滚动是连续的。
+    ///
+    /// 触发器可以放心地多调 —— `loadNextPage` 自己挡住了「没有下一页 / 正在取」
+    /// 两种情况，所以这里不需要再记状态。
+    private func loadMoreIfNeeded(reaching shot: Shot) {
+        let loaded = store.shots
+        guard loaded.count >= 12,
+              let index = loaded.firstIndex(where: { $0.id == shot.id }),
+              index >= loaded.count - 12 else { return }
+        Task { await store.loadNextPage() }
+    }
+
     @ViewBuilder
     private func card(for shot: Shot, height: CGFloat) -> some View {
         if settings.galleryScrollDepth {

@@ -252,7 +252,13 @@ protocol GalleryDestination {
 
 **第三批（2026-08）已完成**：列表查询搬出主线程。查询体抽成 `nonisolated static fetchShots`（同步与后台两条路**共用同一份 SQL**，有测试守着「两条路径结果一致」），新增 `reloadInBackground()`，**节流路径（截图落库、属性回填、批量操作）整条改走它** —— 那些场景没有「调完立刻读 `shots`」的需求，UI 是订阅式的。同步 `reload()` 保留给需要立即结果的调用方（测试、「打开窗口并定位到某张」）。赋值与通知收敛到 `publish(shots:favorites:)`，两条路不会有一条忘了发 `libraryDidChange`。
 
-剩余：**分页 + 网格虚拟化**（去掉列表上限的真正解法，要连带改滚动、分组段头、键盘步长与「全选」语义）、`ShotDatabase` 非 MainActor 仓库类型承接全部 SQL、按职责拆门面、`ValueObservation` 替代手动通知。UI 状态（searchText / filter / semantic）届时迁出 ShotStore 成为 GalleryViewModel。
+**第四批（2026-08）已完成**：分页。列表按 `pageSize`(300) 取，网格滚到「倒数一屏」时取下一页，`listFetchLimit` 那个临时上限随之取消 —— 第一屏的等待从此与库的大小无关。
+
+翻页用**游标**（上一页末尾的 `(capturedAt, id)`）而不是 `OFFSET`：截图库是边看边新增的，OFFSET 在两页之间插入新行时会让下一页整体后移，表现为重复或漏项。为此排序补上 `id DESC` 作为并列打破键——`capturedAt` 会并列（同秒连拍），排序不唯一时游标定位不确定。测试覆盖「607 张翻完不重不漏（含 10 张同时刻并列）」与「翻页途中插入 5 张，已翻过的部分不变」。
+
+「全选」改查 `allMatchingIDs()`（只取 id 一列，不受分页限制）——否则同一个 ⌘A 会因为用户滚了多远而选中不同的东西。翻页只发 `objectWillChange` 不发 `libraryDidChange`：库存没变，只是多显示了一段，发了会让胶片条无谓重查。
+
+剩余：`ShotDatabase` 非 MainActor 仓库类型承接全部 SQL、按职责拆门面、`ValueObservation` 替代手动通知。UI 状态（searchText / filter / semantic）届时迁出 ShotStore 成为 GalleryViewModel。
 
 **拆巨文件（进行中）**：`GalleryView` 已于 2026-07 拆成 9 个文件（壳 171 行，最大的 `GalleryGrid` 548 行），拆分为纯搬家、逐行对账过。
 剩余：`maskSensitiveRegions` 业务逻辑仍留在 `ShotDetailPane` 待下沉；`EditorView`（1194 行）切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。

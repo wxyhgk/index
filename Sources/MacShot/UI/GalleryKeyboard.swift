@@ -64,8 +64,15 @@ final class GalleryKeyboard {
             return true
 
         case KeyCode.a where flags == .command:
-            // ⌘A：全选当前列表（分组只是展示，选择按全局顺序）。
-            GallerySelection.shared.selectAll(ShotStore.shared.displayShots.compactMap(\.id))
+            // ⌘A：全选**符合当前筛选/搜索的全部截图**，而不是「已经滚出来的那些」。
+            //
+            // 分页之后这两者不再等价：`displayShots` 只是已加载的前几页，
+            // 用它会让同一个 ⌘A 因为你滚了多远而选中不同的东西 —— 那是最难解释的一类行为。
+            // 只查 id 一列，十万行也就几百 KB。
+            Task {
+                let ids = await ShotStore.shared.allMatchingIDs()
+                GallerySelection.shared.selectAll(ids)
+            }
             return true
 
         case KeyCode.c where flags == .command:

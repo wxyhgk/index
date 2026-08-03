@@ -439,4 +439,90 @@ final class ShotStoreTests: XCTestCase {
         await store.reloadInBackground()
         XCTAssertEqual(received, 1)
     }
+
+    // MARK: - 分页
+
+    /// 翻页要**不重不漏**，且顺序与不分页时完全一致。
+    func testPaginationCoversEveryRowExactlyOnce() async throws {
+        let (store, dbQueue) = try makeStore()
+
+        // 造 3 页多一点，其中一批**拍摄时间完全相同** —— 并列是游标分页最容易
+        // 翻车的地方：排序不唯一时，游标定位会漏掉或重复并列的那一段。
+        let total = ShotStore.pageSize * 2 + 7
+        var ids: [Int64] = []
+        for i in 0..<total {
+            let shot = try store.save(
+                image: makeImage(gray: Double(i) / Double(total)),
+                metadata: CaptureMetadata()
+            )
+            ids.append(try XCTUnwrap(shot.id))
+        }
+        // 前 10 张压成同一时刻，制造并列。
+        try backdate(Array(ids.prefix(10)), to: Date(timeIntervalSince1970: 1_000_000), in: dbQueue)
+
+        store.reload()
+        XCTAssertEqual(store.shots.count, ShotStore.pageSize, "第一页只取一页的量")
+        XCTAssertTrue(store.hasMorePages)
+
+        while store.hasMorePages {
+            let before = store.shots.count
+            await store.loadNextPage()
+            XCTAssertGreaterThan(store.shots.count, before, "每次翻页都要有进展，否则会死循环")
+        }
+
+        let loaded = store.shots.compactMap(\.id)
+        XCTAssertEqual(loaded.count, total, "翻完之后总数要对得上")
+        XCTAssertEqual(Set(loaded).count, total, "不能有重复")
+        XCTAssertEqual(loaded, loaded.sorted { a, b in
+            let sa = store.shots.first { $0.id == a }!
+            let sb = store.shots.first { $0.id == b }!
+            return (sa.capturedAt, a) > (sb.capturedAt, b)
+        }, "顺序必须是 (拍摄时间, id) 降序")
+    }
+
+    /// 翻页途中新增截图不该打乱已翻过的部分 —— 这正是用游标而不是 OFFSET 的理由。
+    func testPaginationIsStableWhenRowsAreInsertedMidway() async throws {
+        let (store, _) = try makeStore()
+
+        let total = ShotStore.pageSize + 20
+        for i in 0..<total {
+            _ = try store.save(
+                image: makeImage(gray: Double(i) / Double(total)),
+                metadata: CaptureMetadata()
+            )
+        }
+
+        store.reload()
+        let firstPage = store.shots.compactMap(\.id)
+
+        // 在翻下一页之前插入新截图（它们的时间最新，会排在最前）。
+        for i in 0..<5 {
+            _ = try store.save(image: makeImage(gray: 0.9 - Double(i) / 100), metadata: CaptureMetadata())
+        }
+
+        await store.loadNextPage()
+        let all = store.shots.compactMap(\.id)
+
+        XCTAssertEqual(Array(all.prefix(firstPage.count)), firstPage, "已翻过的部分不该被改动")
+        XCTAssertEqual(Set(all).count, all.count, "OFFSET 分页会在这里产生重复；游标不会")
+    }
+
+    /// 全选取的是「符合当前条件的全部」，不是「已经加载的那些」。
+    func testSelectAllIDsIgnorePagination() async throws {
+        let (store, _) = try makeStore()
+
+        let total = ShotStore.pageSize + 50
+        for i in 0..<total {
+            _ = try store.save(
+                image: makeImage(gray: Double(i) / Double(total)),
+                metadata: CaptureMetadata()
+            )
+        }
+
+        store.reload()
+        XCTAssertEqual(store.shots.count, ShotStore.pageSize, "只加载了第一页")
+
+        let ids = await store.allMatchingIDs()
+        XCTAssertEqual(ids.count, total, "全选必须覆盖全部，而不是已加载的一页")
+    }
 }

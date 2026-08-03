@@ -558,7 +558,24 @@ final class ShotStore: ObservableObject {
     /// 改一处漏两处是迟早的事。
     /// `nonisolated`：它被用作 `allShots(limit:)` 的默认参数，
     /// 而默认参数在调用方的上下文里求值，可能不是主 actor。
-    nonisolated static let listFetchLimit = 2000
+    /// 一页多少行。
+    ///
+    /// 取 300：足够铺满几屏（默认缩放下一屏约 20 张），滚动时不会频繁触发下一页；
+    /// 又远小于「整库」，所以第一屏的等待与库的大小无关 —— 这正是分页的意义。
+    nonisolated static let pageSize = 300
+
+    /// 已经没有下一页了。滚到底的触发器据此停手，UI 也据此决定要不要显示加载中。
+    private(set) var hasMorePages = false
+
+    /// 下一页的游标 = 当前已加载的最后一行。nil 表示还没加载过。
+    private var pageCursor: PageCursor? {
+        shots.last.flatMap { shot in
+            shot.id.map { PageCursor(capturedAt: shot.capturedAt, id: $0) }
+        }
+    }
+
+    /// 正在取下一页 —— 防止滚动触发器在同一页上重复发起。
+    private var isLoadingPage = false
 
     private static let reloadInterval: TimeInterval = 0.5
     private var lastReloadAt: Date = .distantPast
@@ -597,13 +614,42 @@ final class ShotStore: ObservableObject {
 
     /// 列表查询本身。**不依赖 actor** —— 同步路径与后台路径共用这一份 SQL，
     /// 免得两条路慢慢长歪（那是这类改造最常见的退化）。
+    /// 翻页游标：上一页最后一行的 (拍摄时间, id)。nil = 第一页。
+    ///
+    /// 用**游标**而不是 `OFFSET`：截图库是边看边新增的，
+    /// OFFSET 分页在两页之间插入了新行时会让下一页整体后移一位 ——
+    /// 表现为重复出现同一张、或者悄悄漏掉一张。游标按「排序键小于上一页末尾」
+    /// 定位，插入多少新行都不影响已翻过的部分。
+    ///
+    /// 这也是排序必须**唯一**的原因：`capturedAt` 会并列（同一秒连拍、
+    /// 导入时用文件时间），所以补 `id` 作为并列打破键，游标才是确定的。
+    struct PageCursor: Equatable {
+        let capturedAt: Date
+        let id: Int64
+    }
+
     private nonisolated static func fetchShots(
-        _ db: Database, query: String, filter: GalleryFilter
+        _ db: Database,
+        query: String,
+        filter: GalleryFilter,
+        after cursor: PageCursor? = nil,
+        limit: Int = ShotStore.pageSize
     ) throws -> [Shot] {
-            // 侧边栏筛选是精确匹配的 AND 条件，和 FTS 搜索（子串匹配的 UNION）互不干扰：
-            // 搜索决定候选集，筛选再收窄一次。
+            // 游标条件。排序是 (capturedAt DESC, id DESC)，所以「上一页之后」＝
+            // 排序键**严格小于**游标 —— 用行值比较 `(a, b) < (x, y)` 一次表达，
+            // 而不是拆成 `a < x OR (a = x AND b < y)`（等价，但那个写法很容易漏掉
+            // 并列那一支，翻到边界时就会丢行）。
             let filterClause: String
             var arguments: [String: (any DatabaseValueConvertible)?] = [:]
+
+            var cursorClause = ""
+            if let cursor {
+                cursorClause = """
+                    AND (shot.capturedAt, shot.id) < (:cursorAt, :cursorID)
+                    """
+                arguments["cursorAt"] = cursor.capturedAt
+                arguments["cursorID"] = cursor.id
+            }
             switch filter {
             case .all:
                 filterClause = ""
@@ -657,8 +703,9 @@ final class ShotStore: ObservableObject {
                 return try Shot.fetchAll(db, sql: """
                     SELECT shot.* FROM shot
                     WHERE 1 = 1 \(filterClause)
-                    ORDER BY shot.capturedAt DESC
-                    LIMIT \(Self.listFetchLimit)
+                    \(cursorClause)
+                    ORDER BY shot.capturedAt DESC, shot.id DESC
+                    LIMIT \(limit)
                     """, arguments: StatementArguments(arguments))
             }
             // ⚠️ **trigram 分词器搜不了少于 3 个字符的词**（SQLite 的既定行为：
@@ -687,8 +734,9 @@ final class ShotStore: ObservableObject {
                             WHERE text LIKE :like ESCAPE '\\'
                         )
                     ) \(filterClause)
-                    ORDER BY shot.capturedAt DESC
-                    LIMIT \(Self.listFetchLimit)
+                    \(cursorClause)
+                    ORDER BY shot.capturedAt DESC, shot.id DESC
+                    LIMIT \(limit)
                     """, arguments: StatementArguments(arguments))
             }
 
@@ -706,8 +754,9 @@ final class ShotStore: ObservableObject {
                     JOIN attributeFts ON attributeFts.rowid = shotAttribute.id
                     WHERE attributeFts MATCH :pattern
                 ) \(filterClause)
-                ORDER BY shot.capturedAt DESC
-                LIMIT \(Self.listFetchLimit)
+                \(cursorClause)
+                ORDER BY shot.capturedAt DESC, shot.id DESC
+                LIMIT \(limit)
                 """, arguments: StatementArguments(arguments))
     }
 
@@ -770,7 +819,53 @@ final class ShotStore: ObservableObject {
         objectWillChange.send()
         shots = newShots
         favoriteIDs = newFavoriteIDs
+        // 取满一页就假定还有下一页。这会导致「总数正好是页大小整数倍」时
+        // 多翻一次空页 —— 代价是一次查询，换来的是不必每轮刷新都跑一条 COUNT(*)。
+        hasMorePages = newShots.count >= Self.pageSize
         libraryDidChange.send()
+    }
+
+    /// 取下一页并追加。滚到底时由网格触发。
+    ///
+    /// 没有下一页、正在取、或者当前是语义搜索结果（那是一次性的完整排序，
+    /// 不分页）时都直接返回 —— 触发器可以放心地多调。
+    func loadNextPage() async {
+        guard hasMorePages, !isLoadingPage, !semanticMode else { return }
+        guard let cursor = pageCursor else { return }
+
+        isLoadingPage = true
+        defer { isLoadingPage = false }
+
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filter = filter
+        let page = (try? await dbQueue.read { db in
+            try Self.fetchShots(db, query: query, filter: filter, after: cursor)
+        }) ?? []
+
+        // 翻页途中筛选/搜索被改过：这一页属于旧条件，丢掉。
+        // （`reload` 会把 shots 换成新条件的第一页，此时游标也已经不是我们那个。）
+        guard cursor == pageCursor else { return }
+
+        objectWillChange.send()
+        shots.append(contentsOf: page)
+        hasMorePages = page.count >= Self.pageSize
+        // **不发 `libraryDidChange`**：库存内容没变，只是多显示了一段。
+        // 发了会让胶片条无谓地重查全库（那条信号的由来见它的注释）。
+    }
+
+    /// 当前筛选 / 搜索下的**全部** ID，不受分页限制。
+    ///
+    /// 「全选」要的是「符合当前条件的所有截图」，而不是「已经滚出来的那些」——
+    /// 后者会让同一个 ⌘A 因为你滚了多远而选中不同的东西。
+    /// 只取 id 一列，十万行也就几百 KB。
+    func allMatchingIDs() async -> [Int64] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filter = filter
+        // 复用同一份查询体（共用 SQL 那条纪律），只是不限量、只要 id。
+        let all = (try? await dbQueue.read { db in
+            try Self.fetchShots(db, query: query, filter: filter, limit: Int.max)
+        }) ?? []
+        return all.compactMap(\.id)
     }
 
     /// 「库存内容变了」——新增 / 删除 / 筛选重查，即每次 `reload()`。
@@ -825,8 +920,9 @@ final class ShotStore: ObservableObject {
 
     /// 全库时间倒序，**不受** `searchText` / `filter` 影响（`shots` 是筛选后的列表）。
     /// 编辑器胶片条用：换图的心智是「库里最近截了什么」，不跟图库窗口的筛选联动。
-    /// 上限与图库一致（500），避免超大库一次性拉全表。
-    func allShots(limit: Int = ShotStore.listFetchLimit) -> [Shot] {
+    /// 胶片条是**横向一条**、只用来跳到最近的图，不做分页 ——
+    /// 取一页的量就够，再多也滚不过来。
+    func allShots(limit: Int = ShotStore.pageSize) -> [Shot] {
         (try? dbQueue.read { db in
             try Shot.fetchAll(db, sql: """
                 SELECT * FROM shot ORDER BY capturedAt DESC LIMIT ?
