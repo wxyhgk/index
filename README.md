@@ -26,6 +26,14 @@ macOS 截图工具：**冻结截图 → 就地标注 → 钉图 / 复制 / 保�
 open build/MacShot.app
 ```
 
+改完代码提交前跑一遍门禁（构建 + 测试 + 架构纪律，约半分钟）：
+
+```bash
+./scripts/check.sh
+```
+
+CI 跑的是同一个脚本。流水线与 runner 的搭建见 [docs/ci.md](docs/ci.md)。
+
 首次运行需要在 **系统设置 → 隐私与安全性 → 屏幕录制** 中勾选 MacShot，然后**重启 App**。
 
 ### 关于「每次构建都要重新授权」

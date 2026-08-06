@@ -76,15 +76,11 @@ extension ResizeHandle {
         return ToolRegistry.descriptor(for: kind)?.resizeHandles ?? resizeHandles
     }
 
-    /// 控制点在图层上的位置（图层自己的坐标空间）。
-    /// line / arrow 按 start/end 语义取端点 —— 负宽高合法，方向不能丢。
+    /// 控制点在图层上的位置（图层自己的坐标空间）。取法由工具描述符决定
+    /// （线段类按 start/end 取端点，其余按外接框）。
     func location(of layer: Layer) -> CGPoint {
-        switch layer.kind {
-        case .line, .arrow:
-            return self == .topLeft ? layer.rect.start : layer.rect.end
-        default:
-            return point(in: layer.handleBounds)
-        }
+        ToolRegistry.descriptor(for: layer.kind)?.handleLocation(self, on: layer)
+            ?? point(in: layer.handleBounds)
     }
 
     /// AppKit 没有公开的斜向缩放光标，四角退回十字（与选区调整同一取舍）。

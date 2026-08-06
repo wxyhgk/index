@@ -86,7 +86,8 @@ enum AnnotationRenderer {
         guard !handles.isEmpty else { return }
 
         let size = 7 * strokeScale
-        let isEndpoint = layer.kind == .line || layer.kind == .arrow
+        // 画成端点圆点还是方块，由工具自己声明（见 `AnnotationToolDescriptor`）。
+        let isEndpoint = ToolRegistry.descriptor(for: layer.kind)?.usesEndpointHandles ?? false
 
         ctx.saveGState()
         ctx.setLineWidth(strokeScale)

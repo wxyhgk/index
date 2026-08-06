@@ -82,6 +82,14 @@ protocol AnnotationToolDescriptor: Sendable {
     /// 参与缩放的控制点。默认八个全上。
     var resizeHandles: [ResizeHandle] { get }
 
+    /// 控制点画在图层的什么位置（图层自己的坐标空间）。
+    /// 默认按外接框取；线段类要按 start/end 取端点 —— 负宽高合法，方向不能丢。
+    func handleLocation(_ handle: ResizeHandle, on layer: Layer) -> CGPoint
+
+    /// 控制点画成端点圆点（线段类）还是方块（矩形类）。
+    /// 是表现，但属于「这个工具长什么样」，所以归描述符管。
+    var usesEndpointHandles: Bool { get }
+
     /// 按控制点缩放。默认整形 rect。
     func resize(
         _ original: Layer, handle: ResizeHandle, delta: CGPoint, pixelScale: Double
@@ -119,6 +127,12 @@ extension AnnotationToolDescriptor {
     var shortcut: (keyCode: UInt16, label: String)? { nil }
     var isPinnedToBar: Bool { false }
     var resizeHandles: [ResizeHandle] { ResizeHandle.resizeHandles }
+
+    var usesEndpointHandles: Bool { false }
+
+    func handleLocation(_ handle: ResizeHandle, on layer: Layer) -> CGPoint {
+        handle.point(in: layer.handleBounds)
+    }
 
     func makeLayer(_ context: ToolLayerContext) -> Layer {
         baseLayer(context)

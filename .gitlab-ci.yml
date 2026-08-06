@@ -1,0 +1,48 @@
+# MacShot 的流水线。
+#
+# 硬约束，先说清楚：**这个项目只能在 macOS 上构建**。AppKit、ScreenCaptureKit、
+# Vision 在 Linux 上根本不存在，群晖上那台 NAS 跑不了它——GitLab 装在 NAS 上，
+# 但 runner 必须落在一台 Mac 上。注册步骤见 docs/ci.md。
+#
+# 所有 job 都只是调用 scripts/check.sh —— 和本地提交前跑的**是同一个脚本**。
+# 检查逻辑只有一份，不存在「CI 过了本地没过」或者反过来。
+
+stages:
+  - check
+  - package
+
+default:
+  # 只有打了 macos 标签的 runner 才会接这些 job。没有这行的话，
+  # 任何一台 Linux runner 都会抢过去，然后在 import AppKit 那行失败。
+  tags:
+    - macos
+  # 同一分支上新的推送到来时，取消还在跑的旧流水线。
+  interruptible: true
+
+variables:
+  # 只要最近的历史，NAS 那边的 IO 不快。
+  GIT_DEPTH: "50"
+  # check.sh 认这个变量，CI 上会先 swift package clean ——
+  # 增量构建在协议改动之后可能留下错位的见证表，症状是莫名其妙的 SIGSEGV。
+  CI: "true"
+
+# 每次推送都跑：构建 + 测试 + 三条架构纪律。
+check:
+  stage: check
+  script:
+    - ./scripts/check.sh
+
+# 打 tag 时才出包。日常推送没必要每次跑一遍 release 构建。
+package:
+  stage: package
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - ./build.sh release
+    - codesign --verify --deep --strict build/MacShot.app
+    - ditto -c -k --keepParent build/MacShot.app "MacShot-${CI_COMMIT_TAG}.app.zip"
+  artifacts:
+    name: "MacShot-${CI_COMMIT_TAG}"
+    paths:
+      - "MacShot-${CI_COMMIT_TAG}.app.zip"
+    expire_in: 3 months

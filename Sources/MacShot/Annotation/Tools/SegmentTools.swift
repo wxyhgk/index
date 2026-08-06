@@ -9,6 +9,14 @@ extension SegmentTool {
     /// 只有两端（`topLeft` ↔ `rect.start`、`bottomRight` ↔ `rect.end`）。
     var resizeHandles: [ResizeHandle] { [.topLeft, .bottomRight] }
 
+    /// 按 start/end 取端点，而不是外接框的角 —— 负宽高合法，方向不能丢。
+    func handleLocation(_ handle: ResizeHandle, on layer: Layer) -> CGPoint {
+        handle == .topLeft ? layer.rect.start : layer.rect.end
+    }
+
+    /// 两端画成圆点，不是方块。
+    var usesEndpointHandles: Bool { true }
+
     /// 按点到线段的距离判定，带一圈容差方便点中细线 ——
     /// 用外接矩形的话，对角线的另外两个角会白白吃掉点击。
     func hitTest(_ layer: Layer, at point: CGPoint, tolerance: Double) -> Bool {
