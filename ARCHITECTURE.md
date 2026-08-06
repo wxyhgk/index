@@ -163,8 +163,25 @@ protocol AnnotationToolDescriptor: Sendable {
 **规范**：加一种工具 = 新写一个实现 + 在 `BuiltinTools.all` 里加一行。
 **不许**回头改 `AnnotationState`、`ResizeHandle`、`BuiltinControls` 或任何快捷键表。
 
-**尚未收进契约的一块**：绘制仍在 `LayerRenderer` 的 `switch layer.kind` 里。
-它是这次改造的下一批 —— 在那之前，加工具仍要碰 `LayerRenderer` 一处。
+**绘制也在契约里**（2026-08 第二批）。`LayerRenderer` 从前是一个 `switch layer.kind`
+加七个私有绘制函数，现在只剩编排、不认识任何一种具体图层：
+
+```swift
+func draw(_ layer: Layer, in ctx: CGContext)          // 逐层，默认什么都不画
+var drawsMerged: Bool { get }                         // 多层合并成一次绘制
+func drawMerged(_ layers: [Layer], in ctx: CGContext) // 聚光灯是唯一用例
+```
+
+`drawsMerged` 表达的是一个真实约束而不是特例开关：聚光灯的所有亮区必须合成**一张**
+遮罩、并画在其余矢量层**之下**，否则标注自己也会被压暗。编排因此是
+「先画声明了合并的，再逐层画」，两步都由注册表驱动。
+
+实现按**一个工具一个文件**放在 `Annotation/Tools/` 下，`BuiltinTools.all` 只留登记。
+这是为多人协同定的：两个人同时加工具时**只在那一行相遇**。
+
+**仍留在管线里的两处**：马赛克（图像级滤镜，必须在矢量层之前作用到底图）和裁剪
+（改画布，永远最后应用）。它们是管线阶段而非绘制，形状上更接近 `EffectDescriptor`；
+两者的描述符不实现 `draw`，交互语义（样式轴、快捷键、命中）照常在契约里。
 工具条**不许**自己判断该显示哪些样式控件，一律问 `annotation.styleAxes`
 （`ColorControl` / `ToolParamControl` 的 `isVisible` 就是这么写的）——
 马赛克/聚光灯/裁剪的渲染根本不读 `layer.color`，从前却照样给它们摆一排色块。

@@ -114,15 +114,19 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 
 **加派生能力**：新处理器文件 + 两处注册（流水线 + 回填表）+ 一个属性 key。
 
-## Annotation/ — 标注领域逻辑（7 文件 / 1693 行）
+## Annotation/ — 标注领域逻辑（16 文件 / 2711 行）
 
 截图浮层、钉图、编辑器三个宿主共用的同一套东西——这是「三处标注行为一致」的根本原因。
 
-- `AnnotationState` — 状态机 + 撤销栈（撤销记录里存马赛克贴片，保证撤销后像素完全还原）
-- `AnnotationTool` — 工具定义与**唯一的快捷键表**
+- `AnnotationToolDescriptor` — **工具契约**：一个工具是什么，全写在这里（造层、落笔方式、命中测试、控制点、缩放、最小尺寸、样式轴、快捷键、常驻与否、绘制）
+- `Tools/` — **一个工具一个文件**，11 个内建工具各自独立；`BuiltinTools.all` 只留登记的那一行
+- `AnnotationState` — 状态机 + 撤销栈（撤销记录里存马赛克贴片，保证撤销后像素完全还原）。它**不再认识任何一种具体工具**——按图层种类分派的 switch 已经归零
 - `LayerSpace` — phantom type，用类型区分「画布点」和「图像像素」两套坐标，唯一的桥是 `projected(onto:scale:)`
 - `EffectLayer` / `EffectSpecs` — 效果层契约（水印/美化/外壳/捕获信息），排除逻辑一律从 `kind.isEffect` 派生
-- `ResizeHandle` / `AnnotationRenderer`
+- `ToolStyle` — 样式轴的定义与档位值
+- `ResizeHandle` / `AnnotationRenderer` / `AnnotationTool`
+
+**加一个标注工具**：在 `Tools/` 下新建一个文件写实现，`BuiltinTools.all` 加一行。剩下要碰的只有两个 enum 各一个 case（`AnnotationTool` 与持久化用的 `Layer.Kind`）。改造之前，这件事要同时改十个文件。
 
 ## Toolbar/ — 工具条注册制（6 文件 / 726 行）
 

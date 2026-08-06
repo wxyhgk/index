@@ -89,6 +89,23 @@ protocol AnnotationToolDescriptor: Sendable {
 
     /// 缩到多小就算「缩没了」（缩没的整层恢复原样、不入撤销栈）。默认宽高都要 ≥ 4。
     func meetsMinimumSize(_ layer: Layer) -> Bool
+
+    // MARK: 绘制
+    //
+    // 坐标系由调用方给定：上下文已经翻成左上原点，图层坐标直接可用。
+    // 同一份代码同时服务预览（画布空间）和导出（图像像素空间）——
+    // 两者的差异全部体现在 `lineWidth` / `fontSize` 上，由投影换算好。
+
+    /// 画一层。默认什么都不画 —— 马赛克是图像级滤镜、裁剪改的是画布，
+    /// 它们不参与逐层矢量绘制（见 `LayerRenderer.render` 的一、二两步）。
+    func draw(_ layer: Layer, in ctx: CGContext)
+
+    /// 这一类图层要在其余矢量层**之下**、且多层合并成一次绘制。
+    /// 聚光灯是唯一的用例：所有亮区合成一张遮罩，标注本身不该被压暗。
+    var drawsMerged: Bool { get }
+
+    /// `drawsMerged` 为真时的合并绘制。传进来的是本类的全部图层。
+    func drawMerged(_ layers: [Layer], in ctx: CGContext)
 }
 
 // MARK: - 默认实现
@@ -145,6 +162,12 @@ extension AnnotationToolDescriptor {
         let rect = layer.rect.cg
         return rect.width >= ToolGeometry.minimumSide && rect.height >= ToolGeometry.minimumSide
     }
+
+    func draw(_ layer: Layer, in ctx: CGContext) {}
+
+    var drawsMerged: Bool { false }
+
+    func drawMerged(_ layers: [Layer], in ctx: CGContext) {}
 }
 
 /// 工具实现之间共用的几何小工具。放在协议外面 ——
