@@ -124,43 +124,8 @@ struct ToolStyle: Codable, Equatable {
     }
 }
 
-/// 一个工具的描述符：它用得上哪些样式轴、默认样式是什么。
-struct ToolDescriptor {
-    let tool: AnnotationTool
-    /// 声明顺序即工具条上的顺序。**只有这里列出的轴才会出现在工具条上** ——
-    /// 马赛克不声明 `.color`，色块就不会占位置。
-    let axes: [ToolStyleAxis]
-    let defaultStyle: ToolStyle
-}
-
-/// 工具描述符注册表。加一种工具 = 在这里补一条。
-@MainActor
-enum ToolRegistry {
-
-    static let descriptors: [ToolDescriptor] = [
-        .init(tool: .rect,      axes: [.color, .width],    defaultStyle: ToolStyle()),
-        .init(tool: .ellipse,   axes: [.color, .width],    defaultStyle: ToolStyle()),
-        .init(tool: .arrow,     axes: [.color, .width],    defaultStyle: ToolStyle()),
-        .init(tool: .line,      axes: [.color, .width],    defaultStyle: ToolStyle()),
-        // 文字与序号吃字号，不吃线宽 —— 旧版本这两者共用一个下标，
-        // 调矩形边框粗细会顺手改掉文字大小。
-        .init(tool: .text,      axes: [.color, .fontSize], defaultStyle: ToolStyle()),
-        .init(tool: .counter,   axes: [.color, .fontSize], defaultStyle: ToolStyle()),
-        // 高亮默认橙色：荧光笔的直觉色，且它的透明度独立于其它工具。
-        .init(tool: .highlight, axes: [.color, .opacity],  defaultStyle: ToolStyle(colorIndex: 1)),
-        .init(tool: .dimension, axes: [.color, .width],    defaultStyle: ToolStyle()),
-        // 以下三个不吃颜色：渲染器根本不读 layer.color。
-        .init(tool: .pixelate,  axes: [.blockSize],        defaultStyle: ToolStyle()),
-        .init(tool: .spotlight, axes: [.dim],              defaultStyle: ToolStyle()),
-        .init(tool: .crop,      axes: [],                  defaultStyle: ToolStyle())
-    ]
-
-    static func descriptor(for tool: AnnotationTool) -> ToolDescriptor {
-        descriptors.first { $0.tool == tool }
-            // 新工具忘了登记时给一份保守的默认，而不是崩溃。
-            ?? ToolDescriptor(tool: tool, axes: [.color, .width], defaultStyle: ToolStyle())
-    }
-}
+// 工具描述符（样式轴 + 行为）已经搬进 `AnnotationToolDescriptor` 契约，
+// 登记处是 `BuiltinTools.all`。这个文件只留「样式」本身：轴的定义与档位值。
 
 extension AnnotationTool {
     /// 持久化与字典键用的稳定标识（复用图层种类的 rawValue，不另造一套）。

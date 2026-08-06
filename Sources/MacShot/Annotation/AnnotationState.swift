@@ -219,108 +219,55 @@ final class AnnotationState: ObservableObject {
         return result
     }
 
+    /// 造层。形体、命中、缩放这些「工具自己的事」全部交给描述符 ——
+    /// 状态机只负责把材料凑齐（见 `AnnotationToolDescriptor`）。
     private func makeLayer(tool: AnnotationTool, from a: CGPoint, to b: CGPoint) -> Layer {
+        let descriptor = ToolRegistry.descriptor(for: tool)
         // 用**这个工具自己**的样式，而不是当前 styleTool 的 ——
         // 两者通常一致，但选中图层时 styleTool 指向被选中那层的工具。
-        let style = toolStyles[tool.id] ?? ToolRegistry.descriptor(for: tool).defaultStyle
-        let axes = ToolRegistry.descriptor(for: tool).axes
-
-        var c = Self.palette.indices.contains(style.colorIndex)
+        let style = toolStyles[tool.id] ?? descriptor.defaultStyle
+        let color = Self.palette.indices.contains(style.colorIndex)
             ? Self.palette[style.colorIndex] : Self.palette[0]
-        if axes.contains(.opacity) { c.a = style.value(for: .opacity) }
 
-        var layer = Layer(
-            kind: tool.layerKind,
-            rect: LRect(from: a, to: b),
-            color: c,
-            lineWidth: style.value(for: .width) * strokeScale,
-            text: "",
-            fontSize: style.value(for: .fontSize) * strokeScale
-        )
-        // 只给声明了这两根轴的工具烤参数，其余保持 nil ——
-        // 渲染器遇到 nil 走旧的硬编码默认，旧图层因此行为不变。
-        if axes.contains(.blockSize) { layer.blockScale = style.value(for: .blockSize) }
-        if axes.contains(.dim) { layer.dim = style.value(for: .dim) }
-
-        if tool == .dimension {
-            prepareDimension(&layer)
-        }
-        return layer
-    }
-
-    /// 测量层的整形：拖拽过程中每帧都会经过这里（`pendingLayer` 重建图层）。
-    ///   · 近似横/竖的拖拽（薄轴不足 8 像素）吸附成单维 —— 薄轴收拢为 0，
-    ///     渲染层据此退化为双箭头线段，只标长度
-    ///   · 标签数值按 `pixelScale` 换算成图像像素后烤进 `text`：
-    ///     覆盖层画布是点、导出是像素，只有生成时算好才能保证预览和成品显示同一个数
-    private func prepareDimension(_ layer: inout Layer) {
-        var r = layer.rect.cg.standardized
-        if min(r.width, r.height) * pixelScale < 8 {
-            r = r.width >= r.height
-                ? CGRect(x: r.minX, y: r.midY, width: r.width, height: 0)
-                : CGRect(x: r.midX, y: r.minY, width: 0, height: r.height)
-        }
-        layer.rect = LRect(r)
-
-        let w = Int((r.width * pixelScale).rounded())
-        let h = Int((r.height * pixelScale).rounded())
-        if r.height == 0 {
-            layer.text = "\(w) px"
-        } else if r.width == 0 {
-            layer.text = "\(h) px"
-        } else {
-            layer.text = "\(w) × \(h) px"
-        }
+        return descriptor.makeLayer(ToolLayerContext(
+            from: a,
+            to: b,
+            style: style,
+            color: color,
+            strokeScale: strokeScale,
+            pixelScale: pixelScale,
+            existing: layers.elements
+        ))
     }
 
     // MARK: - 输入
 
-    /// 文字工具是点击落点，其余是拖拽。返回是否需要重绘。
+    /// 落笔。点击类工具（文字、序号）当场落层，拖拽类进入拖拽态。
+    /// 返回是否需要重绘。
     @discardableResult
     func beginDraw(at point: CGPoint) -> Bool {
         guard let tool else { return false }
         endTextEditing()
         select(nil)
 
+        guard ToolRegistry.descriptor(for: tool).input == .click else {
+            dragStart = point
+            dragCurrent = point
+            return true
+        }
+
+        let layer = makeLayer(tool: tool, from: point, to: point)
+        layers.append(layer)
+
+        // 文字要接着进编辑态（入栈时机在 endTextEditing）；
+        // 其余点击类工具当场记一条 add，撤销一次整层消失。
         if tool == .text {
-            var layer = makeLayer(tool: .text, from: point, to: point)
-            layer.text = ""
-            layers.append(layer)
             editingTextID = layer.id
-            editingTextOriginal = nil   // 新建的层，入栈时机在 endTextEditing
-            return true
-        }
-
-        // 序号也是点击落点，但不进入文字编辑态：直接落一个带编号的层，
-        // 一条 add 记录，撤销一次整层消失。
-        if tool == .counter {
-            let diameter = max(28 * strokeScale, fontSize * 1.4)
-            var layer = makeLayer(tool: .counter, from: point, to: point)
-            // 点击处是圆心，rect 存外接矩形。
-            layer.rect = LRect(CGRect(
-                x: point.x - diameter / 2,
-                y: point.y - diameter / 2,
-                width: diameter,
-                height: diameter
-            ))
-            layer.text = String(nextCounterNumber)
-            layers.append(layer)
+            editingTextOriginal = nil
+        } else {
             record(.add(layer, preview: nil))
-            return true
         }
-
-        dragStart = point
-        dragCurrent = point
         return true
-    }
-
-    /// 下一个序号：扫现有序号层取最大值 +1。
-    /// 刻意不在删除时重排 —— 删掉中间某个序号后，后续编号保持不变。
-    private var nextCounterNumber: Int {
-        (layers.elements
-            .filter { $0.kind == .counter }
-            .compactMap { Int($0.text) }
-            .max() ?? 0) + 1
     }
 
     @discardableResult
@@ -398,29 +345,14 @@ final class AnnotationState: ObservableObject {
 
     // MARK: - 选中与拖动
 
-    /// 命中测试（画布空间），从最上层往下找。
-    /// 线段类按点到线段的距离判定，其余按外接矩形（都带一圈容差，方便点中细线）。
+    /// 命中测试（画布空间），从最上层往下找。判定规则各工具自己定
+    /// （线段按距离、序号按圆形、其余按外接矩形，都带一圈容差方便点中细线）。
     /// 效果层（`kind.isEffect`）没有画布上的形体，不参与命中，只能通过开关/菜单操作。
     func layer(at point: CGPoint) -> UUID? {
         let tolerance = 8 * strokeScale
         for layer in layers.elements.reversed() where !layer.kind.isEffect {
-            let hit: Bool
-            switch layer.kind {
-            case .line, .arrow:
-                let d = Self.distance(from: point, toSegment: layer.rect.start, layer.rect.end)
-                hit = d <= tolerance + layer.lineWidth / 2
-            case .counter:
-                // 徽章是圆的，按圆形区域命中，别让四个角白占位置。
-                let r = layer.rect.cg
-                hit = hypot(point.x - r.midX, point.y - r.midY) <= r.width / 2 + tolerance
-            default:
-                // text 的 rect 只存锚点，按量出的文字范围命中（与选中框/控制点一致）；
-                // 其余 kind `handleBounds` 就是 rect 本身。
-                hit = layer.handleBounds
-                    .insetBy(dx: -tolerance, dy: -tolerance)
-                    .contains(point)
-            }
-            if hit { return layer.id }
+            guard let descriptor = ToolRegistry.descriptor(for: layer.kind) else { continue }
+            if descriptor.hitTest(layer, at: point, tolerance: tolerance) { return layer.id }
         }
         return nil
     }
@@ -525,43 +457,10 @@ final class AnnotationState: ObservableObject {
               let index = layers.firstIndex(id: resizeID) else { return false }
 
         let delta = CGPoint(x: point.x - start.x, y: point.y - start.y)
-        var layer = original
-
-        switch original.kind {
-        case .line, .arrow:
-            if handle == .topLeft {
-                layer.rect.x = original.rect.x + delta.x
-                layer.rect.y = original.rect.y + delta.y
-                layer.rect.w = original.rect.w - delta.x
-                layer.rect.h = original.rect.h - delta.y
-            } else {
-                layer.rect.w = original.rect.w + delta.x
-                layer.rect.h = original.rect.h + delta.y
-            }
-
-        case .counter:
-            layer.rect = LRect(Self.counterSquare(
-                handle: handle, delta: delta, original: original.rect.cg
-            ))
-
-        case .text:
-            let bounds = original.handleBounds
-            let resized = handle.apply(delta: delta, to: bounds)
-            layer.rect.x = resized.minX
-            layer.rect.y = resized.minY
-            if bounds.height > 0 {
-                layer.fontSize = max(4, original.fontSize * resized.height / bounds.height)
-            }
-
-        case .dimension:
-            layer.rect = LRect(handle.apply(delta: delta, to: original.rect.cg))
-            prepareDimension(&layer)
-
-        default:
-            layer.rect = LRect(handle.apply(delta: delta, to: original.rect.cg))
-        }
-
-        layers[index] = layer
+        guard let descriptor = ToolRegistry.descriptor(for: original.kind) else { return false }
+        layers[index] = descriptor.resize(
+            original, handle: handle, delta: delta, pixelScale: pixelScale
+        )
         return true
     }
 
@@ -606,46 +505,10 @@ final class AnnotationState: ObservableObject {
         return true
     }
 
-    /// 最小尺寸（画布单位）。线段类只要长度别缩没，dimension 允许单维为 0（吸附形态）。
-    private nonisolated static func meetsMinimumSize(_ layer: Layer) -> Bool {
-        let minSide = 4.0
-        switch layer.kind {
-        case .line, .arrow, .dimension:
-            return max(abs(layer.rect.w), abs(layer.rect.h)) >= minSide
-        case .text:
-            return layer.fontSize >= 4
-        default:
-            let r = layer.rect.cg
-            return r.width >= minSide && r.height >= minSide
-        }
-    }
-
-    /// 序号徽章保持圆形：直径 d 拖角取 max(w, h)、拖边取被拖的那一维；
-    /// 被拖控制点的对侧保持不动（拖边时另一轴居中锚定）。
-    private nonisolated static func counterSquare(
-        handle: ResizeHandle, delta: CGPoint, original: CGRect
-    ) -> CGRect {
-        let applied = handle.apply(delta: delta, to: original)
-        let d: CGFloat
-        switch handle {
-        case .top, .bottom: d = applied.height
-        case .left, .right: d = applied.width
-        default:            d = max(applied.width, applied.height)
-        }
-
-        let minX: CGFloat
-        switch handle {
-        case .topLeft, .left, .bottomLeft:     minX = original.maxX - d
-        case .topRight, .right, .bottomRight:  minX = original.minX
-        default:                               minX = original.midX - d / 2
-        }
-        let minY: CGFloat
-        switch handle {
-        case .topLeft, .top, .topRight:        minY = original.minY
-        case .bottomLeft, .bottom, .bottomRight: minY = original.maxY - d
-        default:                               minY = original.midY - d / 2
-        }
-        return CGRect(x: minX, y: minY, width: d, height: d)
+    /// 缩到多小算「缩没了」由各工具自己定（线段看长度、文字看字号、
+    /// 测量允许单维为 0 的吸附形态）。效果层不参与缩放，一律放行。
+    private static func meetsMinimumSize(_ layer: Layer) -> Bool {
+        ToolRegistry.descriptor(for: layer.kind)?.meetsMinimumSize(layer) ?? true
     }
 
     /// 删除选中的图层，连带清理它的马赛克贴片。
@@ -819,16 +682,7 @@ final class AnnotationState: ObservableObject {
         }
     }
 
-    private nonisolated static func distance(
-        from p: CGPoint, toSegment a: CGPoint, _ b: CGPoint
-    ) -> Double {
-        let dx = b.x - a.x
-        let dy = b.y - a.y
-        let lengthSquared = dx * dx + dy * dy
-        guard lengthSquared > 0 else { return hypot(p.x - a.x, p.y - a.y) }
-        let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared))
-        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
-    }
+    // 点到线段的距离已经搬到 `ToolGeometry` —— 用它的只剩线段类工具的命中测试。
 
     // MARK: - 文字输入
 

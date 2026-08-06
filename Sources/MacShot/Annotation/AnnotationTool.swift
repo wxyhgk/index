@@ -56,22 +56,9 @@ struct ToolShortcut {
 
 extension AnnotationTool {
 
-    static let shortcuts: [ToolShortcut] = [
-        ToolShortcut(keyCode: KeyCode.v, tool: nil,        label: "V"),
-        ToolShortcut(keyCode: KeyCode.r, tool: .rect,      label: "R"),
-        ToolShortcut(keyCode: KeyCode.a, tool: .arrow,     label: "A"),
-        ToolShortcut(keyCode: KeyCode.t, tool: .text,      label: "T"),
-        ToolShortcut(keyCode: KeyCode.p, tool: .pixelate,  label: "P"),
-        ToolShortcut(keyCode: KeyCode.o, tool: .ellipse,   label: "O"),
-        ToolShortcut(keyCode: KeyCode.h, tool: .highlight, label: "H"),
-        ToolShortcut(keyCode: KeyCode.l, tool: .line,      label: "L"),
-        // C 被取色器占用，裁剪用 X。
-        ToolShortcut(keyCode: KeyCode.x, tool: .crop,      label: "X"),
-        ToolShortcut(keyCode: KeyCode.n, tool: .counter,   label: "N"),
-        // 裸 S 选聚光灯；⌘S 在两处键盘路由里都先判修饰键，保存不受影响。
-        ToolShortcut(keyCode: KeyCode.s, tool: .spotlight, label: "S"),
-        ToolShortcut(keyCode: KeyCode.m, tool: .dimension, label: "M")
-    ]
+    /// 全部裸键绑定。**唯一真相**，由各工具的描述符自己声明（见 `BuiltinTools`）——
+    /// 此前这里是一张手写的表，加工具要记得回来补一行，忘了就只能从工具条选。
+    static var shortcuts: [ToolShortcut] { ToolRegistry.shortcuts }
 
     /// 返回值是双层可选：外层 nil 表示这个键没绑工具，内层 nil 表示指针模式。
     static func shortcut(forKeyCode keyCode: UInt16) -> AnnotationTool?? {

@@ -390,16 +390,20 @@ extension ToolbarRegistry {
     /// 常驻工具条的工具。椭圆、高亮、聚光灯、测量、序号只保留快捷键
     /// （O / H / S / M / N）—— 截图标注里「指出、框住、写字、打码」是绝对主力，
     /// 快捷键激活的非常驻工具会临时露面（见 `ToolControl.isVisible`）。
-    static let pinnedTools: [AnnotationTool] = [.rect, .arrow, .text, .pixelate]
+    ///
+    /// 常驻与否现在是各工具描述符自己声明的（`isPinnedToBar`），
+    /// 这里只是转发 —— 加一个工具不必回到这个文件改数组。
+    static var pinnedTools: [AnnotationTool] { ToolRegistry.pinnedTools }
 
     static func registerBuiltins(into registry: ToolbarRegistry) {
         registry.register(ToolControl(tool: nil, order: 0, isPinnedToBar: true))
 
-        for (index, tool) in AnnotationTool.allCases.enumerated() {
+        // 顺序、常驻与否全部来自登记处（`BuiltinTools.all`）。
+        for (index, descriptor) in ToolRegistry.descriptors.enumerated() {
             registry.register(ToolControl(
-                tool: tool,
+                tool: descriptor.tool,
                 order: index + 1,
-                isPinnedToBar: pinnedTools.contains(tool)
+                isPinnedToBar: descriptor.isPinnedToBar
             ))
         }
 

@@ -65,20 +65,15 @@ enum ResizeHandle {
 
 extension ResizeHandle {
 
-    /// 各 kind 参与缩放的控制点：
-    ///   · line / arrow 只有两端（`topLeft` ↔ `rect.start`、`bottomRight` ↔ `rect.end`）
-    ///   · 效果层（`kind.isEffect`）没有画布上的形体，不参与 ——
-    ///     由派生属性统一排除（此前手维护的列表漏了 captureInfo，
-    ///     选中它会在原点冒出 8 个控制点、拖拽还会污染撤销栈）
-    ///   · 其余矩形类 8 个全上
+    /// 各 kind 参与缩放的控制点，由工具描述符自己声明
+    /// （线段类只有两端，其余矩形类 8 个全上 —— 见 `AnnotationToolDescriptor`）。
+    ///
+    /// 效果层（`kind.isEffect`）没有画布上的形体，注册表里查不到描述符，
+    /// 自然就是空 —— 此前手维护的列表漏了 captureInfo，选中它会在原点
+    /// 冒出 8 个控制点、拖拽还会污染撤销栈。
     static func handles(for kind: Layer.Kind) -> [ResizeHandle] {
         guard !kind.isEffect else { return [] }
-        switch kind {
-        case .line, .arrow:
-            return [.topLeft, .bottomRight]
-        default:
-            return resizeHandles
-        }
+        return ToolRegistry.descriptor(for: kind)?.resizeHandles ?? resizeHandles
     }
 
     /// 控制点在图层上的位置（图层自己的坐标空间）。

@@ -126,21 +126,45 @@ protocol CaptureAction {
 **记录在案的膨胀风险**：Live Text 往 `ToolbarContext` 加了 `isLiveTextActive` / `toggleLiveText` 一对宿主回调 —— 「每个要宿主配合的控件加一对闭包」是注册制的经典逃生门。**第二个**同类控件出现之前，必须把它们收敛成一个 `hostCapabilities` 结构。
 （`MoreActionsControl` 的折叠策略原先写在注册表的 `.capture` 分支里，**已于 2026-07 收敛**：折叠对所有场景一视同仁，注册表不再认识具体场景。）
 
-### 2.5 工具样式：`ToolDescriptor` —— 一个工具有哪些可调参数（2026-07 新增）
+### 2.5 标注工具：`AnnotationToolDescriptor` —— 一个工具是什么（2026-07 新增，2026-08 扩成完整契约）
 
-从前所有工具共用**一份**全局 `colorIndex` / `widthIndex`，字号还是从线宽派生的
-（`线宽 × 4 + 8`）；高亮透明度、马赛克颗粒、聚光灯压暗则是彻底硬编码。
-现收敛为描述符 + 注册表（`Annotation/ToolStyle.swift`）：
+起初只管**样式**：从前所有工具共用一份全局 `colorIndex` / `widthIndex`，字号还是从线宽
+派生的（`线宽 × 4 + 8`）；高亮透明度、马赛克颗粒、聚光灯压暗则是彻底硬编码。
+
+2026-08 扩成完整契约。起因是一次面向多人协同的边界体检：「一个标注工具」这个概念
+散在**十个文件**里 —— 造层与落笔方式、命中测试、缩放语义、最小尺寸在
+`AnnotationState`（973 行），控制点在 `ResizeHandle`，快捷键在 `AnnotationTool` 的一张
+手写表，常驻工具条与否在 `BuiltinControls` 的一个数组，样式轴在 `ToolStyle`，绘制在
+`LayerRenderer`（1064 行）。每处都是一个 switch。git 历史里
+`AnnotationState ↔ BuiltinControls` 共现 84%、`↔ LayerRenderer` 83% ——
+加一个工具必然同时改这几个大文件，两个人并行必撞车。
 
 ```swift
-struct ToolDescriptor {
-    let tool: AnnotationTool
-    let axes: [ToolStyleAxis]     // 声明顺序即工具条顺序；只有这里列出的轴才会出现
-    let defaultStyle: ToolStyle
+protocol AnnotationToolDescriptor: Sendable {
+    var tool: AnnotationTool { get }
+    var axes: [ToolStyleAxis] { get }        // 声明顺序即工具条顺序；只有这里列出的轴才会出现
+    var defaultStyle: ToolStyle { get }
+    var input: ToolInput { get }             // 拖拽 / 点击落点
+    var shortcut: (keyCode: UInt16, label: String)? { get }
+    var isPinnedToBar: Bool { get }
+    var resizeHandles: [ResizeHandle] { get }
+
+    func makeLayer(_ context: ToolLayerContext) -> Layer
+    func hitTest(_ layer: Layer, at point: CGPoint, tolerance: Double) -> Bool
+    func resize(_ original: Layer, handle: ResizeHandle, delta: CGPoint, pixelScale: Double) -> Layer
+    func meetsMinimumSize(_ layer: Layer) -> Bool
 }
 ```
 
-**规范**：加一种工具 = 在 `ToolRegistry.descriptors` 补一条。
+默认实现覆盖「拖一个矩形、按外接框命中、八个控制点」这一类，绝大多数工具只需声明
+`tool` / `axes` / `defaultStyle` 三样。契约**刻意不绑主线程**（`Sendable`）：描述符是
+无状态值类型、方法都是纯函数，而渲染路径是 nonisolated 的，绑上去会逼着渲染一起搬。
+
+**规范**：加一种工具 = 新写一个实现 + 在 `BuiltinTools.all` 里加一行。
+**不许**回头改 `AnnotationState`、`ResizeHandle`、`BuiltinControls` 或任何快捷键表。
+
+**尚未收进契约的一块**：绘制仍在 `LayerRenderer` 的 `switch layer.kind` 里。
+它是这次改造的下一批 —— 在那之前，加工具仍要碰 `LayerRenderer` 一处。
 工具条**不许**自己判断该显示哪些样式控件，一律问 `annotation.styleAxes`
 （`ColorControl` / `ToolParamControl` 的 `isVisible` 就是这么写的）——
 马赛克/聚光灯/裁剪的渲染根本不读 `layer.color`，从前却照样给它们摆一排色块。
