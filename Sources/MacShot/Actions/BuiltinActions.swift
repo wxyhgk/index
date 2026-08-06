@@ -41,9 +41,13 @@ struct SaveAction: CaptureAction {
     let scopes: Set<ActionScope> = [.capture, .pinned]
 
     func perform(_ context: CaptureContext) async throws {
-        try ImageExporter.exportWithPanel(
+        // 走 sheet 那条路：面板落在刚才截图的那块屏上，而且不必激活整个 App ——
+        // 后者会把图库那组 stage 一起拽到前台，把用户正在用的软件挤进侧边条。
+        // 钉图窗口发起时 region 为 nil，退回 key 窗口 / 指针那块屏。
+        try await ImageExporter.exportWithPanel(
             context.rendered(),
-            suggestedName: ImageExporter.suggestedName(for: context.shot)
+            suggestedName: ImageExporter.suggestedName(for: context.shot),
+            over: context.region
         )
     }
 }

@@ -29,6 +29,9 @@ enum AppAlert {
         }
         // App 不在前台时（菜单栏触发的流程）模态框会沉底，先拉到前面。已激活时是空操作。
         NSApp.activate(ignoringOtherApps: true)
+        // 和存盘面板同病：没有宿主窗口的模态框会被台前调度算进 MacShot 那一组，
+        // 弹出来时把用户正在用的 App 挤进侧边条，自己还跑去图库那块屏上。
+        PanelPlacement.apply(to: alert.window, anchor: nil)
         let response = alert.runModal()
         return response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
     }
@@ -65,6 +68,7 @@ enum AppAlert {
             alert.beginSheetModal(for: host)
         } else {
             NSApp.activate(ignoringOtherApps: true)
+            PanelPlacement.apply(to: alert.window, anchor: nil)
             alert.runModal()
         }
     }

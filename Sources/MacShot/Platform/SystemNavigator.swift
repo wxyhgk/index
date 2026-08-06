@@ -46,6 +46,8 @@ enum SystemNavigator {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+        // 与存盘面板同一套摆放规则 —— 没有 key 窗口时别弹到别的屏上去。
+        PanelPlacement.apply(to: panel, anchor: nil)
         guard panel.runModal() == .OK else { return nil }
         return panel.url
     }

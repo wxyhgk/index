@@ -12,22 +12,75 @@ enum ImageExporter {
     }
 
     /// 弹面板让用户选位置。用户取消不算错误，返回 false。
+    ///
+    /// 两种呈现，取决于**当下有没有一个能挂的窗口**（与 `AppAlert` 同一形状）：
+    /// 这里是应用模态版，给图库 / 编辑器 / 详情页用 —— 那些场合窗口就在眼前、
+    /// 也是 key 窗口，模态面板会正确地落在它那块屏上。
+    ///
+    /// 截图流程**不要**用这个，用 `exportWithPanel(_:suggestedName:over:)` ——
+    /// 原因写在那个方法上。
     @discardableResult
     static func exportWithPanel(_ image: CGImage, suggestedName: String) throws -> Bool {
+        let panel = makePanel(suggestedName: suggestedName)
+
+        NSApp.activate(ignoringOtherApps: true)
+        PanelPlacement.apply(to: panel, anchor: nil)
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+
+        try write(image, to: url)
+        return true
+    }
+
+    /// 截图流程专用：把面板挂成 sheet，宿主是一块铺在**截图那个屏**上的透明窗口。
+    ///
+    /// 为什么不能沿用上面那条同步路径 —— 一串实测串起来的结论：
+    ///
+    /// 1. 动作执行时选区覆盖层已经收掉，MacShot 一个窗口都没有。想让面板拿到键盘
+    ///    焦点（不然文件名都输不进去），就得 `NSApp.activate(ignoringOtherApps:)`。
+    /// 2. 而那是「顺带把 App 的所有窗口都拉到前台」的旧语义。台前调度开着时，
+    ///    图库那组 stage 会被一起拽出来：用户正在用的 App 被缩进左侧窗口条，
+    ///    面板还跟着图库跑到图库那块屏上去。
+    /// 3. 替代写法逐个试过，只有这一条同时成立：宿主用 `.nonactivatingPanel`
+    ///    再挂 sheet —— 面板照样是 key 窗口，而**不需要**那句 activate。
+    ///
+    /// 落点也顺带解决了：sheet 天然跟着宿主走，宿主铺在哪块屏上，面板就在哪块屏上，
+    /// 不再需要「等上屏之后再 setFrameOrigin」那套补救。
+    ///
+    /// - Parameter region: 截图选区（AppKit 全局坐标）。nil 时退回 key 窗口 / 指针那块屏。
+    @discardableResult
+    static func exportWithPanel(
+        _ image: CGImage,
+        suggestedName: String,
+        over region: CGRect?
+    ) async throws -> Bool {
+        let panel = makePanel(suggestedName: suggestedName)
+        let host = PanelPlacement.makeSheetHost(anchor: region)
+        defer { host.orderOut(nil) }
+
+        let response = await withCheckedContinuation { continuation in
+            panel.beginSheetModal(for: host) { continuation.resume(returning: $0) }
+        }
+        guard response == .OK, let url = panel.url else { return false }
+
+        try write(image, to: url)
+        return true
+    }
+
+    /// 两条路径共用同一份面板配置 —— 「三份存盘面板行为不一致」是这个文件存在的原因。
+    private static func makePanel(suggestedName: String) -> NSSavePanel {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         panel.nameFieldStringValue = suggestedName
         panel.directoryURL = FileManager.default
             .urls(for: .desktopDirectory, in: .userDomainMask).first
+        return panel
+    }
 
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return false }
-
+    private static func write(_ image: CGImage, to url: URL) throws {
         guard let data = ImageCodec.pngData(from: image) else {
             throw ExportError.encodingFailed
         }
         try data.write(to: url)
-        return true
     }
 
     /// 按用户模板渲染的建议文件名（含 .png 后缀）。

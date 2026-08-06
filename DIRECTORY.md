@@ -158,11 +158,18 @@ Vision 与 CoreML 的封装，**纯计算，不认识数据库**——结果一�
 
 OCR、场景标签、内容分类、敏感信息检测、相似图特征指纹，以及 CLIP 三件套（模型下载管理 / 编码 / 分词），支撑自然语言语义搜索。
 
-## Platform/ — 系统副作用唯一出口（10 文件 / 689 行）
+## Platform/ — 系统副作用唯一出口（11 文件 / 773 行）
 
 凡是「与系统打交道」的操作都必须收敛到这里：剪贴板、导出存盘、弹窗、访达与系统设置跳转、窗口生命周期与 Dock 图标、浏览器地址获取、图床上传、Live Text 分析、开机自启、键码映射。
 
 **纪律**：其他地方不许出现 `NSAlert()` / `NSOpenPanel()` / `runModal()`。这条规矩是因为早期出现过「三份存盘面板行为不一致」，而 2026-07 审计又发现批量导出偷偷内联了一份目录选择面板——收敛不是做完一次就结束，需要定期巡检。
+
+收敛的另一份红利是 `PanelPlacement`：模态面板（存盘、选目录、无宿主的 `NSAlert`）该弹在哪块屏、归谁管，只需要在这一处说清楚。它解决两个叠在一起的毛病：
+
+1. **跑错屏**。MacShot 是 accessory App，选区覆盖层在动作执行前就收掉了，面板打开时往往没有 key 窗口，AppKit 会退回菜单栏那块屏。存盘面板因此接收一个可选的锚点矩形（截图选区），没有锚点时按 key 窗口 → 指针 → 主屏兜底。注意摆放**必须**发生在 `runModal()` 之后（登记一个主队列 block），之前设置会被面板自己恢复的上次位置覆盖。
+2. **把用户正在用的 App 挤进侧边条**。默认行为下面板算 MacShot 的主窗口，和图库同属一组 stage；台前调度开着时，在别的屏截图点保存会把 MacShot 整组 stage 拽到前台。`detachFromAppStage` 用 macOS 13 为此新增的 `.auxiliary` + `.canJoinAllApplications`（再加 `.moveToActiveSpace`）把面板摘出这一组。三对标志位互斥，所以先摘对立面再设。
+
+截图路径还要多走一步。那里 MacShot 一个窗口都没有，想让面板拿到键盘焦点就得 `NSApp.activate(ignoringOtherApps:)`，而它的旧语义是「顺带把 App 的所有窗口都拉到前台」——图库那组 stage 正是这样被拽出来的。逐个实测过的结论：`NSApp.activate()`（新 API）、光立宿主窗口、宿主 + `runModal`，面板都拿不到 key；**只有 `.nonactivatingPanel` 宿主 + `beginSheetModal` 两者兼得**——面板是 key，且不需要那句 activate。所以 `ImageExporter` 有两条呈现路径（形状与 `AppAlert` 一致）：有窗口在眼前的场合走同步 `runModal`，截图流程走 `makeSheetHost` + sheet。sheet 天然跟着宿主那块屏走，落点因此不用再手动补救。
 
 ## Recording/ — 录屏（4 文件 / 861 行）
 
