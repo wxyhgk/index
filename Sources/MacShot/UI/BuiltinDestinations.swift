@@ -13,10 +13,12 @@ struct LibraryDestination: GalleryDestination {
     let symbol = "square.grid.2x2"
     let order = 0
 
-    func badge() -> Int? {
-        let count = ShotStore.shared.totalCount
+    func badge(reader: ShotReading = ShotStore.shared) -> Int? {
+        let count = reader.totalCount
         return count > 0 ? count : nil
     }
+
+    func badge() -> Int? { badge(reader: ShotStore.shared) }
 
     func content() -> AnyView {
         AnyView(LibraryContent())
@@ -68,7 +70,11 @@ struct AppsDestination: GalleryDestination {
 
 private struct AppsContent: View {
 
-    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var store: ShotStore
+
+    init(store: ShotStore = .shared) {
+        _store = ObservedObject(wrappedValue: store)
+    }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 聚合查询的结果。**绝不放进 body** —— 那是每帧一条 GROUP BY。

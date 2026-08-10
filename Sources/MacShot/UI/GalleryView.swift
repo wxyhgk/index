@@ -28,6 +28,13 @@ struct GalleryView: View {
     /// 窗口模式（图库 / 编辑器），整窗切换的依据。
     @ObservedObject private var mode = GalleryWindowMode.shared
 
+    /// 存储订阅：编辑中的 shot 被删时退回图库。注入式，默认走 ShotStore.shared。
+    @ObservedObject private var store: ShotStore
+
+    init(store: ShotStore = .shared) {
+        _store = ObservedObject(wrappedValue: store)
+    }
+
     // ⚠️ 这里**没有** store / selection 的订阅，也**没有**任何宽度状态，两条都是有意的。
     //
     // 宽度：本视图是四块的共同父层，在这一层放一个「随网格宽度每帧变化」的 @State
@@ -64,7 +71,7 @@ struct GalleryView: View {
                 gallery
             }
         }
-        .onReceive(ShotStore.shared.objectWillChange) { _ in
+        .onReceive(store.objectWillChange) { _ in
             // objectWillChange 发在变更**之前**，转一拍再查库。
             // 正在编辑的 shot 被删（自动清理等）时退回图库。
             DispatchQueue.main.async { closeEditorIfShotDeleted() }

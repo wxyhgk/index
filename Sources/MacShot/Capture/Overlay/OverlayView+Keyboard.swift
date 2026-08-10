@@ -1,5 +1,13 @@
 import AppKit
 
+/// 覆盖层交互里的键盘与悬停状态。`hoveredControlID` 决定工具条高亮，
+/// `optionHeld` 决定窗口悬停是蓝框还是紫框（整窗捕获），都由宿主持有，
+/// 键盘与鼠标事件各自读写同一份状态。
+final class OverlayInteractionState {
+    var hoveredControlID: String?
+    var optionHeld = false
+}
+
 /// 覆盖层的键盘处理。单独成文件是因为它有自己的一套优先级规则，
 /// 和鼠标事件的路由逻辑混在一起会互相干扰阅读。
 extension OverlayView {
@@ -99,7 +107,7 @@ extension OverlayView {
 
     /// 取色器：把光标处的色值放进剪贴板。选区还没确认时也能用。
     private func copyPickedColor() {
-        guard let sample = cursorSample else { return }
+        guard let sample = magnifierState.cursorSample else { return }
         Clipboard.copy(text: sample.color.hexString)
     }
 

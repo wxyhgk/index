@@ -105,6 +105,34 @@ else
     bad "别按 kind 分派 —— 把行为写进 AnnotationToolDescriptor（见 Annotation/Tools/）"
 fi
 
+section "纪律四：CSS token 只认 DS（无裸写回潮）"
+# 视图层不得裸写 Color.primary.opacity / Color.accentColor.opacity 等，
+# 一律走 DS.*。DesignTokens.swift 是唯一允许出现 .opacity 的 CSS 源，
+# 其它 .opacity 仅允许 1) DS.xxx.opacity(...) 的 token 派生 2) .opacity(0/1) 的显隐开关
+# 3) mask/overlay 的技术性透明（已收敛到 DS.mask*）。这里按最严的一档拦：
+# 只要视图里出现 Color.(primary|secondary|accentColor|black|white).opacity 就判违例，
+# 例外仅 DS.swift 本身。
+css_hits=$(grep -rn "Color\.\(primary\|secondary\|accentColor\|black\|white\)\.opacity" \
+    --include="*.swift" Sources 2>/dev/null | grep -v "DesignTokens\.swift" | grep -v "DS\.accent\.opacity" | code_only || true)
+css_hits=$(printf "%s" "$css_hits" | grep -v "DS\." || true)
+if [ -z "$css_hits" ]; then
+    ok "视图层无裸 Color.*.opacity，CSS 只认 DS"
+else
+    printf "%s\n" "$css_hits" | sed 's/^/    /'
+    bad "视图层裸写 Color.*.opacity —— 请收敛到 DS（见 DesignTokens.swift）"
+fi
+
+section "纪律五：DS vs Theme 双轨已收敛"
+# Theme 仅作兼容转发，新代码不得新增 Theme/MacTheme 调用点。
+# 允许的唯一 Theme 出现位置是 UI/Theme.swift 本身（定义处）。
+theme_hits=$(grep -rn "Theme\.\|MacTheme\|: Theme" --include="*.swift" Sources 2>/dev/null | grep -v "UI/Theme\.swift" | grep -v "//" | code_only || true)
+if [ -z "$theme_hits" ]; then
+    ok "Theme 仅在 UI/Theme.swift 兼容转发，调用点只认 DS"
+else
+    printf "%s\n" "$theme_hits" | sed 's/^/    /'
+    bad "新增 Theme/MacTheme 调用点 —— 请改为 DS（Theme 已收敛为兼容层）"
+fi
+
 # -------------------------------------------------------------------- 可选：打包
 
 if [ "${1:-}" = "--full" ]; then

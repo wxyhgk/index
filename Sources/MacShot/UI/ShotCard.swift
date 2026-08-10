@@ -41,6 +41,7 @@ struct ShotCard: View {
     /// 传这一个参数即可，卡片这边不用改。
     var isPressed: Bool = false
     let onToggleFavorite: () -> Void
+    var store: ShotStore = .shared
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -51,7 +52,7 @@ struct ShotCard: View {
 
     // 刻意不用 @ObservedObject 订阅 store —— 只需要一个文件路径，
     // 订阅了会导致任何 store 变化都重建全部缩略图。
-    private var thumbnailURL: URL { ShotStore.shared.thumbnailURL(for: shot) }
+    private var thumbnailURL: URL { store.thumbnailURL(for: shot) }
 
     var body: some View {
         // 单元格 = 缩略图 + 图下方左对齐的两行文字。s2 的间隙：卡面取消之后
@@ -197,7 +198,7 @@ struct ShotCard: View {
                 style: .continuous
             )
             .strokeBorder(
-                Color.accentColor.opacity(DS.Glow.ringOpacity(scheme)),
+                DS.accent.opacity(DS.Glow.ringOpacity(scheme)),
                 lineWidth: DS.Glow.ringWidth
             )
             .padding(-DS.Glow.ringOffset)
@@ -222,9 +223,9 @@ struct ShotCard: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 22)
-                .background(Color.accentColor, in: Circle())
+                .background(DS.accent, in: Circle())
                 .overlay {
-                    Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1)
+                    Circle().strokeBorder(DS.badgeStroke, lineWidth: 1)
                 }
                 // s2 = 8：与左上角收藏星的可视圆心内缩（4pt padding + 32pt 热区里
                 // 那颗 24pt 圆）对齐，两个角上的圆看起来在同一条内缩线上。
@@ -255,7 +256,7 @@ struct ShotCard: View {
             Text(category)
                 .font(.caption2)
                 .padding(.horizontal, DS.s2)
-                .padding(.vertical, 2)
+                .padding(.vertical, DS.s1 / 2)
                 .background(.thinMaterial, in: Capsule())
                 .padding(DS.s2)
                 .transition(.opacity)

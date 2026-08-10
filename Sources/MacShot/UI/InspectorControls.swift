@@ -58,17 +58,13 @@ enum InspectorMetrics {
     /// 浅色圆底 / 软按钮的填充。深色加白、浅色加黑，都是几个点的量 ——
     /// 和 `ShellIconButtonStyle` 同一套「亮度阶梯」，只是这里常态就有底。
     static func softFill(_ scheme: ColorScheme, hovering: Bool) -> Color {
-        if scheme == .dark {
-            return .white.opacity(hovering ? 0.16 : 0.09)
-        } else {
-            return .black.opacity(hovering ? 0.11 : 0.06)
-        }
+        DS.softFill(scheme, hovering: hovering)
     }
 
     /// 整行可点控件（元信息行 / 下钻行）的悬停底。比上面那档更轻 ——
     /// 它是一整行的面积，同样的不透明度铺开会比小圆底重得多。
     static func rowHoverFill(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? .white.opacity(0.06) : .black.opacity(0.045)
+        DS.rowHoverFill(scheme)
     }
 }
 
@@ -109,7 +105,7 @@ struct InspectorPillButtonStyle: ButtonStyle {
                 // 悬停用 brightness 而不是降不透明度：accent 掉透明度会去和面板底色
                 // 混色，深色下读起来是「变脏」而不是「变亮」。
                 .background {
-                    Capsule().fill(Color.accentColor).brightness(hovering ? 0.06 : 0)
+                    Capsule().fill(DS.accent).brightness(hovering ? 0.06 : 0)
                 }
                 .contentShape(Capsule())
                 .scaleEffect(configuration.isPressed ? DS.Lift.pressScale : 1)
@@ -182,7 +178,7 @@ struct InspectorCircleButtonStyle: ButtonStyle {
         @State private var hovering = false
 
         private var fill: Color {
-            if let tint { return tint.opacity(hovering ? 0.30 : 0.18) }
+            if let tint { return DS.tintFill(tint, hovering: hovering) }
             return InspectorMetrics.softFill(scheme, hovering: hovering)
         }
 

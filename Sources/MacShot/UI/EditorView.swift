@@ -468,7 +468,7 @@ struct EditorView: View {
     // MARK: - 底部状态栏
 
     private var bottomBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.s3 - 2) {
             zoomControls
 
             Divider().frame(height: 14)
@@ -491,14 +491,14 @@ struct EditorView: View {
                 .keyboardShortcut(.cancelAction)
                 .buttonStyle(.borderedProminent)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DS.s4 - 2)
+        .padding(.vertical, DS.s3 - 2)
     }
 
     /// 缩放控制：`-` / 百分比菜单 / `+`。⌘- 缩小、⌘=（和 ⌘+，见 hiddenShortcuts）
     /// 放大、⌘0 适应窗口。
     private var zoomControls: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: DS.s1 / 2) {
             Button {
                 zoomOut()
             } label: {

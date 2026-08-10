@@ -99,7 +99,7 @@ struct SpatialCardModifier: ViewModifier {
             // 深色提亮罩：阴影在深色里读不出高度，用亮度当高度。
             .overlay {
                 if scheme == .dark && state.isHovering {
-                    shape.fill(.white.opacity(0.05)).allowsHitTesting(false)
+                    shape.fill(DS.hoverBrighten).allowsHitTesting(false)
                 }
             }
             // 选中色调：染色玻璃，不是实心填充（实心会把缩略图整片盖住）。
@@ -107,7 +107,7 @@ struct SpatialCardModifier: ViewModifier {
             // 反过来用 .multiply 会把深色卡片直接压黑。
             .overlay {
                 if state.isSelected {
-                    shape.fill(Color.accentColor.opacity(DS.Glow.tint(scheme)))
+                    shape.fill(DS.accent.opacity(DS.Glow.tint(scheme)))
                         .blendMode(scheme == .dark ? .plusLighter : .multiply)
                         .allowsHitTesting(false)
                 }
@@ -136,7 +136,7 @@ struct SpatialCardModifier: ViewModifier {
                         style: .continuous
                     )
                     .strokeBorder(
-                        Color.accentColor.opacity(DS.Glow.ringOpacity(scheme)),
+                        DS.accent.opacity(DS.Glow.ringOpacity(scheme)),
                         lineWidth: DS.Glow.ringWidth
                     )
                     .padding(-DS.Glow.ringOffset)
@@ -153,7 +153,7 @@ struct SpatialCardModifier: ViewModifier {
                         cornerRadius: DS.radiusOuter(inner: radius, offset: DS.Glow.ringOffset),
                         style: .continuous
                     )
-                    .fill(Color.accentColor)
+                    .fill(DS.accent)
                     .blur(radius: DS.Glow.haloBlur)
                     .opacity(DS.Glow.haloOpacity(scheme))
                     .padding(-DS.Glow.ringOffset)
@@ -233,9 +233,7 @@ struct GlassPanelModifier: ViewModifier {
     /// 浅色 black 0.09 是「底边自遮挡」，方向和 DS.rim 的渐变一致 ——
     /// 整个 App 的光源方向必须只有一个，否则深度线索会互相抵消。
     private var hairline: some View {
-        Rectangle().fill(
-            scheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.09)
-        )
+        Rectangle().fill(DS.hairlineFill(scheme))
     }
 }
 
@@ -370,7 +368,7 @@ struct ScrollEdgeMask: ViewModifier {
         content.mask {
             VStack(spacing: 0) {
                 LinearGradient(
-                    colors: [.black.opacity(0), .black],
+                    colors: [DS.maskTransparent, DS.maskOpaque],
                     startPoint: .top, endPoint: .bottom
                 )
                 .frame(height: topInset)

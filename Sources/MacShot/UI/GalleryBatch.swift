@@ -34,7 +34,7 @@ enum GalleryBatch {
     ///
     /// 返回成功复制的张数，供调用方判断要不要提示。
     @discardableResult
-    static func copyImages(_ shots: [Shot], reader: ShotReading = ShotStore.shared) -> Int {
+    static func copyImages(_ shots: [Shot], reader: ShotReading = ShotStore.shared, clipboard: ClipboardWriting = MacClipboard.shared) -> Int {
         let store = reader
         let images = shots.compactMap { shot -> CGImage? in
             guard let base = store.originalImage(for: shot) else { return nil }
@@ -42,7 +42,7 @@ enum GalleryBatch {
             return LayerRenderer.render(base: base, layers: layers)
         }
         guard !images.isEmpty else { return 0 }
-        Clipboard.copy(images)
+        clipboard.copy(images)
         return images.count
     }
 

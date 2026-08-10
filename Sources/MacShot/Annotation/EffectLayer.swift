@@ -52,6 +52,19 @@ struct EffectContext {
     var appDescription: String?
     /// 捕获时刻。nil = 当下（覆盖层：截图那一刻就是现在）。
     var capturedAt: Date?
+
+    // MARK: - 样式注入（解耦 AppSettings）
+
+    /// 水印相关：由宿主从 StyleStore 注入，描述符不再直读 AppSettings.shared。
+    var watermarkText: String = ""
+    var watermarkMode: WatermarkMode = .corner
+    var watermarkAlpha: Double = 0.35
+
+    /// 美化相关：留白/圆角/阴影的短边比例与阴影浓度。
+    var backdropPaddingRatio: Double = 0.05
+    var backdropCornerRatio: Double = 0.014
+    var backdropShadowRatio: Double = 0.022
+    var backdropShadowAlpha: Double = 0.30
 }
 
 /// 一个效果的完整描述。
@@ -96,12 +109,11 @@ enum EffectRegistry {
         kind: .watermark,
         renderOrder: 0,
         makeLayer: { context in
-            let settings = AppSettings.shared
-            let text = settings.trimmedWatermarkText
+            let raw = context.watermarkText.trimmingCharacters(in: .whitespaces)
             var layer = WatermarkSpec.makeLayer(
-                text: text.isEmpty ? WatermarkSpec.defaultText : text,
-                mode: settings.watermarkMode,
-                alpha: settings.watermarkAlpha,
+                text: raw.isEmpty ? WatermarkSpec.defaultText : raw,
+                mode: context.watermarkMode,
+                alpha: context.watermarkAlpha,
                 imagePixelWidth: context.imagePixelWidth
             )
             layer.fontSize /= context.pixelScale
@@ -158,22 +170,21 @@ enum EffectRegistry {
             //   · 比例还顺带解决了 Retina —— 同一个窗口 2x 抓出来像素多一倍，
             //     百分比算出的留白也大一倍，**视觉尺寸因此一致**。
             // 上下钳位只为兜住极端情况（几十像素的小图 / 超宽长截图）。
-            let settings = AppSettings.shared
             let short = context.imageShortSide
 
             var layer = Layer(kind: .backdrop, rect: LRect(x: 0, y: 0, w: 0, h: 0))
             layer.lineWidth = Self.backdropMetric(     // 复用字段：四周留白 padding
-                short, ratio: settings.backdropPaddingRatio, min: 8, max: 240
+                short, ratio: context.backdropPaddingRatio, min: 8, max: 240
             )
             layer.fontSize = Self.backdropMetric(      // 复用字段：内容圆角半径
-                short, ratio: settings.backdropCornerRatio, min: 0, max: 64
+                short, ratio: context.backdropCornerRatio, min: 0, max: 64
             )
             layer.text = BackdropSpec(
                 preset: BackdropPreset.default.rawValue,
                 shadowRadius: Self.backdropMetric(
-                    short, ratio: settings.backdropShadowRatio, min: 3, max: 120
+                    short, ratio: context.backdropShadowRatio, min: 3, max: 120
                 ),
-                shadowAlpha: settings.backdropShadowAlpha
+                shadowAlpha: context.backdropShadowAlpha
             ).json
             return layer
         },

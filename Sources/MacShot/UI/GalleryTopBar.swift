@@ -52,9 +52,21 @@ struct GalleryTopBar: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var store: ShotStore
+
+    init(
+        showInspector: Binding<Bool>,
+        destinationID: Binding<String>,
+        store: ShotStore = .shared,
+        settings: AppSettings = .shared
+    ) {
+        self._showInspector = showInspector
+        self._destinationID = destinationID
+        self._store = ObservedObject(wrappedValue: store)
+        self._settings = ObservedObject(wrappedValue: settings)
+    }
     // 语义模式切换只在「开关已开 + 模型已就绪」时出现，所以要订阅这两个。
-    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var settings: AppSettings
     @ObservedObject private var modelStore = CLIPModelStore.shared
 
     @AppStorage("galleryLayout") private var layout = GalleryLayoutKind.grid
@@ -113,7 +125,7 @@ struct GalleryTopBar: View {
     /// 数量红线：分段控件在 5 个以内舒服，超过 6 个标签会挤成图标、可读性掉下去。
     /// 真到那一步该换回侧边栏 —— 同样只是换一个呈现，契约照旧。
     private var destinationTabs: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: DS.s1 / 2) {
             ForEach(GalleryDestinationRegistry.shared.ordered(), id: \.id) { destination in
                 DestinationTab(
                     title: destination.title,
@@ -124,13 +136,13 @@ struct GalleryTopBar: View {
                 }
             }
         }
-        .padding(2)
+        .padding(DS.s1 / 2)
         .background(tabTrayFill, in: Capsule())
         .fixedSize()
     }
 
     private var tabTrayFill: Color {
-        colorScheme == .dark ? .white.opacity(0.06) : .black.opacity(0.05)
+        DS.trayFill(colorScheme)
     }
 
     // MARK: - 搜索胶囊
@@ -164,7 +176,7 @@ struct GalleryTopBar: View {
             // 焦点环收到 1.5pt / 0.55 透明度：原来的 2pt 实色 accent 在浅色下
             // 是整个窗口最抢眼的东西，而它只是「光标在这儿」，不该压过内容的选中态。
             Capsule().strokeBorder(
-                searchFocused ? Color.accentColor.opacity(0.55) : capsuleStroke,
+                searchFocused ? DS.accentStrokeFocus : capsuleStroke,
                 lineWidth: searchFocused ? 1.5 : 1
             )
             .allowsHitTesting(false)
@@ -229,7 +241,7 @@ struct GalleryTopBar: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 7, weight: .bold))
                 }
-                .foregroundStyle(store.semanticMode ? AnyShapeStyle(Color.accentColor)
+                .foregroundStyle(store.semanticMode ? AnyShapeStyle(DS.accent)
                                                     : AnyShapeStyle(HierarchicalShapeStyle.secondary))
             }
             .menuStyle(.button)
@@ -252,21 +264,21 @@ struct GalleryTopBar: View {
         Text("⌘K")
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.tertiary)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .padding(.horizontal, DS.s1 + 1)
+            .padding(.vertical, DS.s1 / 2)
             .background(
-                scheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.06),
+                DS.badgeFill(scheme),
                 in: RoundedRectangle(cornerRadius: DS.radiusChip, style: .continuous)
             )
             .accessibilityHidden(true)
     }
 
     private var capsuleFill: Color {
-        scheme == .dark ? .white.opacity(0.07) : .black.opacity(0.05)
+        DS.capsuleFill(scheme)
     }
 
     private var capsuleStroke: Color {
-        scheme == .dark ? .white.opacity(0.10) : .black.opacity(0.10)
+        DS.capsuleStroke(scheme)
     }
 
     // MARK: - 右侧控件
@@ -372,7 +384,7 @@ private struct DestinationTab: View {
             }
             .foregroundStyle(isSelected ? Color.primary : Color.secondary)
             .padding(.horizontal, DS.s3)
-            .frame(height: 28)
+            .frame(height: DS.s4 + DS.s3)
             .background(fill, in: Capsule())
             .contentShape(Capsule())
         }
@@ -386,9 +398,28 @@ private struct DestinationTab: View {
     /// 亮度阶梯那一套：深色加白、浅色加白（选中片浮在托盘底上，浅色下用纯白最清楚）。
     private var fill: Color {
         if isSelected {
-            return scheme == .dark ? .white.opacity(0.13) : .white
+            return DS.tabSelectedFill(scheme)
         }
         guard hovering else { return .clear }
-        return scheme == .dark ? .white.opacity(0.06) : .black.opacity(0.04)
+        return DS.tabHoverFill(scheme)
     }
 }
+
+#if DEBUG
+#Preview {
+    // GalleryTopBar 预览：用 FakeStyleStore 验证 StyleStore 注入在 Preview 下可用
+    let style: FakeStyleStore = {
+        let s = FakeStyleStore()
+        s.semanticSearch = true
+        s.uploadEndpoint = "https://example.com/upload"
+        return s
+    }()
+    VStack(spacing: 12) {
+        Text("GalleryTopBar · StyleStore").font(.headline)
+        Text("upload: \(style.uploadEndpoint)").font(.caption).foregroundStyle(.secondary)
+        Text("semantic: \(style.semanticSearch ? "开" : "关")").font(.caption)
+    }
+    .padding()
+    .frame(width: 400)
+}
+#endif

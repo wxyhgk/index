@@ -19,6 +19,12 @@ import AppKit
 /// 卡片的描边 / 浅色阴影 / 圆角全部由 `floatingPanel` 统一给出，这里不再手写 rim。
 struct SimilarShotsSheet: View {
     let shot: Shot
+    private let store: ShotStore
+
+    init(shot: Shot, store: ShotStore = .shared) {
+        self.shot = shot
+        self.store = store
+    }
 
     @Environment(\.dismiss) private var dismiss
     /// nil = 还在比对；空数组 = 比对完但没有可比的候选。
@@ -42,7 +48,7 @@ struct SimilarShotsSheet: View {
         // ambient 本身就没有回弹，Reduce Motion 下也无需再降级。
         .animation(DS.Motion.ambient, value: results == nil)
         .task(id: shot.id) {
-            results = await ShotStore.shared.similarShots(to: shot)
+            results = await store.similarShots(to: shot)
         }
     }
 
@@ -84,7 +90,7 @@ struct SimilarShotsSheet: View {
                         spacing: DS.s4
                     ) {
                         ForEach(results) { result in
-                            SimilarShotCard(shot: result)
+                            SimilarShotCard(shot: result, store: store)
                                 .onTapGesture {
                                     // 定位类场景：清空多选后单选目标。
                                     GallerySelection.shared.select(only: result.id)
@@ -109,6 +115,12 @@ struct SimilarShotsSheet: View {
 /// 同一件事没必要画两遍，而且它的两个不透明度都是拍脑袋来的。
 private struct SimilarShotCard: View {
     let shot: Shot
+    private let store: ShotStore
+
+    init(shot: Shot, store: ShotStore = .shared) {
+        self.shot = shot
+        self.store = store
+    }
 
     @State private var isHovering = false
 
@@ -123,7 +135,7 @@ private struct SimilarShotCard: View {
             ZStack {
                 RoundedRectangle(cornerRadius: thumbRadius, style: .continuous)
                     .fill(DS.insetSurface)
-                CachedImage(url: ShotStore.shared.thumbnailURL(for: shot), key: shot.sha256)
+                CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
                     .clipShape(RoundedRectangle(cornerRadius: thumbRadius, style: .continuous))
             }
             .frame(height: 100)

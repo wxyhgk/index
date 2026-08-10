@@ -27,25 +27,27 @@ final class OverlayView: NSView {
     private let imageLayer = CALayer()
     private let chrome = ChromeView()
 
-    private var hoveredControlID: String?
+    // MARK: - 组合持有的子状态（原散在主视图的可变状态已下沉）
 
-    /// 鼠标（指针）模式下叠在选区上的系统选字层（Live Text）及其命中测试包装。
-    /// 不再是独立开关 —— 挂载与否由 `syncLiveTextOverlay()` 从鼠标模式推导：
-    /// tool == nil && pointerEngaged 时挂载，其余时候拆掉。
-    var liveTextContainer: LiveTextHitTestView?
-    var liveTextOverlay: ImageAnalysisOverlayView?
+    /// 交互状态：工具条悬停与 ⌥ 按压（窗口高亮）。读写分散在鼠标与键盘两类事件，
+    /// 集中一处便于追踪「谁改了悬停」。
+    let interactionState = OverlayInteractionState()
+    /// 放大镜状态：光标位置与像素采样。仅在挑选阶段有效。
+    let magnifierState = OverlayMagnifierState()
+    /// 选字层宿主：容器视图、系统覆盖层与预跑分析任务。
+    let liveTextHost = LiveTextOverlayHost()
 
-    var isLiveTextActive: Bool { liveTextOverlay != nil }
-    /// 选区确认后预跑的分析。键含选区矩形和马赛克图层 —— 任一变了都要重跑，
-    /// 马赛克参与是因为分析输入取打码后的画面（打了码的字不该还能选出来）。
+    // 兼容访问：外部仍可读事件路由关心的派生状态，存储已下沉至对应小组件。
+    var isLiveTextActive: Bool { liveTextHost.isActive }
+    /// 兼容桥：历史调用点通过 `liveTextOverlay` 直接取值，现转发至宿主。
+    var liveTextOverlay: ImageAnalysisOverlayView? { liveTextHost.overlay }
+    var liveTextContainer: LiveTextHitTestView? { liveTextHost.container }
     var liveTextAnalysis: (rect: CGRect, pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
-
-    /// 光标位置（视图局部）与该处的像素采样。选区阶段才有意义。
-    var cursor: CGPoint?
-    var cursorSample: PixelSample?
-
-    /// ⌥ 是否按着。悬停窗口时按住 ⌥ = 整窗捕获模式（紫框 +「完整窗口」标签）。
-    private var optionHeld = false
+    { get { liveTextHost.analysis } set { liveTextHost.analysis = newValue } }
+    var cursor: CGPoint? { get { magnifierState.cursor } set { magnifierState.cursor = newValue } }
+    var cursorSample: PixelSample? { get { magnifierState.cursorSample } set { magnifierState.cursorSample = newValue } }
+    var hoveredControlID: String? { get { interactionState.hoveredControlID } set { interactionState.hoveredControlID = newValue } }
+    var optionHeld: Bool { get { interactionState.optionHeld } set { interactionState.optionHeld = newValue } }
 
     /// 整窗捕获只在正式截图模式下开放 —— 录屏选区和滚动截图只要一个矩形。
     private var allowsFullWindowCapture: Bool {
@@ -97,6 +99,7 @@ final class OverlayView: NSView {
         // 元数据从确认选区时的窗口归因取（浏览器 URL 是落库后异步回填的，
         // 此刻还没有 → 留空）；捕获时刻不注入 —— 截图那一刻就是当下。
         annotation.effectContext = { [model] in
+            let style = AppSettings.shared
             var context = EffectContext()
             context.imagePixelWidth =
                 Double((model.confirmedRect?.width ?? 0) * model.snapshot.scale)
@@ -104,6 +107,13 @@ final class OverlayView: NSView {
                 Double((model.confirmedRect?.height ?? 0) * model.snapshot.scale)
             context.windowTitle = model.confirmedWindow?.title
             context.appDescription = Self.captureInfoApp(for: model.confirmedWindow)
+            context.watermarkText = style.watermarkText
+            context.watermarkMode = style.watermarkMode
+            context.watermarkAlpha = style.watermarkAlpha
+            context.backdropPaddingRatio = style.backdropPaddingRatio
+            context.backdropCornerRatio = style.backdropCornerRatio
+            context.backdropShadowRatio = style.backdropShadowRatio
+            context.backdropShadowAlpha = style.backdropShadowAlpha
             return context
         }
 
@@ -501,29 +511,4 @@ final class OverlayView: NSView {
     }
 }
 
-/// 鼠标模式下包住系统选字层的命中测试包装。
-///
-/// `ImageAnalysisOverlayView` 是 final，没法覆写它的 hitTest，所以在外面包一层，
-/// 明确规定选区内事件的归属（自上而下）：
-///   1. 命中标注图层 / 缩放控制点 → 返回 nil，事件穿给 `OverlayView`（点图层 = 选图层）
-///   2. 命中系统层的可交互文字（`hasInteractiveItem`）→ 交给系统层（拖 = 选字）
-///   3. 其余 → 返回 nil，穿给 `OverlayView`（拖空白 = 调整选区）
-/// 不依赖系统层自身的穿透行为 —— 无论它吞不吞非文字区域的事件，三种手势都成立。
-final class LiveTextHitTestView: NSView {
-
-    /// 返回 true 表示这个点该交还宿主处理（参数是本视图局部坐标）。
-    var passesToHost: ((CGPoint) -> Bool)?
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // 约定入参在父视图坐标系（NSView.hitTest 的语义）。
-        guard let superview else { return nil }
-        let local = convert(point, from: superview)
-        guard bounds.contains(local) else { return nil }
-        if passesToHost?(local) == true { return nil }
-        guard let overlay = subviews.first as? ImageAnalysisOverlayView,
-              overlay.hasInteractiveItem(at: overlay.convert(local, from: self))
-        else { return nil }
-        // overlay 的 hitTest 期望父视图（= 本视图）坐标。
-        return overlay.hitTest(local) ?? overlay
-    }
-}
+// LiveTextHitTestView 已移至 OverlayView+LiveText.swift，与 LiveTextOverlayHost 同处。

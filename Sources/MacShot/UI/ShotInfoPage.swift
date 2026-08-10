@@ -27,7 +27,13 @@ struct ShotInfoPage: View {
     let shot: Shot
     let onBack: () -> Void
 
-    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var store: ShotStore
+
+    init(shot: Shot, onBack: @escaping () -> Void, store: ShotStore = .shared) {
+        self.shot = shot
+        self.onBack = onBack
+        _store = ObservedObject(wrappedValue: store)
+    }
 
     @State private var revisions: [RevisionSummary] = []
     @State private var category: String?
@@ -76,7 +82,7 @@ struct ShotInfoPage: View {
             Spacer(minLength: 0)
         }
         .padding(.leading, DS.s3)
-        .padding(.trailing, 36)
+        .padding(.trailing, InspectorMetrics.closeButtonLane - DS.s1)
         .padding(.top, DS.s2)
         .padding(.bottom, DS.s3)
     }
@@ -150,7 +156,7 @@ struct ShotInfoPage: View {
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(DS.accent)
             }
         }
     }
@@ -216,7 +222,7 @@ struct ShotInfoPage: View {
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(DS.accent)
                 .disabled(!FileManager.default.fileExists(atPath: path))
             }
         }
@@ -304,10 +310,10 @@ private struct RevisionRow: View {
                 Color.clear.frame(height: 8)
                 connector.opacity(isLast ? 0 : 1)
             }
-            .padding(.leading, 3)
+            .padding(.leading, DS.s1 - 1)
 
             Circle()
-                .fill(isLatest ? Color.accentColor : Color.secondary.opacity(0.55))
+                .fill(isLatest ? DS.accent : DS.dotInactive)
                 .frame(width: 8, height: 8)
 
             HStack(spacing: DS.s2) {
@@ -331,7 +337,7 @@ private struct RevisionRow: View {
                 cornerRadius: DS.radiusInner(outer: DS.radiusCard, inset: DS.s3),
                 style: .continuous
             )
-            .fill(Color.primary.opacity(isHovering ? 0.06 : 0))
+            .fill(isHovering ? DS.hoverFill : .clear)
         )
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
@@ -341,7 +347,7 @@ private struct RevisionRow: View {
 
     private var connector: some View {
         Rectangle()
-            .fill(Color.secondary.opacity(0.3))
+            .fill(DS.connectorFill)
             .frame(width: 2)
             .frame(maxHeight: .infinity)
     }

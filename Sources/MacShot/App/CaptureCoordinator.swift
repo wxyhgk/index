@@ -163,6 +163,9 @@ final class CaptureCoordinator {
                 var context = EffectContext()
                 context.imagePixelWidth = Double(image.width)
                 context.imagePixelHeight = Double(image.height)
+                context.watermarkText = settings.watermarkText
+                context.watermarkMode = settings.watermarkMode
+                context.watermarkAlpha = settings.watermarkAlpha
                 layers.append(watermark.makeLayer(context))
             }
 
@@ -185,6 +188,10 @@ final class CaptureCoordinator {
                 var context = EffectContext()
                 context.imagePixelWidth = Double(image.width)
                 context.imagePixelHeight = Double(image.height)
+                context.backdropPaddingRatio = settings.backdropPaddingRatio
+                context.backdropCornerRatio = settings.backdropCornerRatio
+                context.backdropShadowRatio = settings.backdropShadowRatio
+                context.backdropShadowAlpha = settings.backdropShadowAlpha
                 var layer = backdrop.makeLayer(context)
                 // 描述符默认的是渐变底；自动美化要的是透明留白。
                 // **只换 preset 一个字段** —— 阴影参数已经由描述符按短边比例算好，

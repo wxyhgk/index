@@ -20,6 +20,7 @@ import SwiftUI
 /// `.thin` / `.ultraThin` 材质上）。
 struct TagSection: View {
     let shot: Shot
+    var store: ShotStore = .shared
 
     /// 当前截图的标签，按添加顺序。
     @State private var tags: [String] = []
@@ -74,7 +75,7 @@ struct TagSection: View {
                 // 这圈 accent 是**焦点指示**，是 accent 在本视图里唯一合法的归属；
                 // 正因为它占着，下面的建议胶囊就不能再上强调色了。
                 .overlay(
-                    Capsule().strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 1)
+                    Capsule().strokeBorder(DS.accentStrokeInput, lineWidth: 1)
                 )
                 .focused($inputFocused)
                 .onSubmit { commit() }
@@ -82,7 +83,7 @@ struct TagSection: View {
         } else {
             Button {
                 // 建议候选在进入输入态时拉一次，不跟着每个键击查库。
-                allTagNames = ShotStore.shared.allTags().map(\.name)
+                allTagNames = store.allTags().map(\.name)
                 input = ""
                 isAdding = true
                 inputFocused = true
@@ -97,7 +98,7 @@ struct TagSection: View {
                     // 既是第三层玻璃，也让它冒充成了一个已存在的标签。
                     .overlay(
                         Capsule().strokeBorder(
-                            Color.primary.opacity(0.15),
+                            DS.borderSubtle,
                             style: StrokeStyle(lineWidth: 1, dash: [3, 2])
                         )
                     )
@@ -136,7 +137,7 @@ struct TagSection: View {
                         .background(DS.insetSurface, in: Capsule())
                         .overlay(
                             Capsule().strokeBorder(
-                                Color.primary.opacity(0.15),
+                                DS.borderSubtle,
                                 style: StrokeStyle(lineWidth: 1, dash: [3, 2])
                             )
                         )
@@ -160,24 +161,24 @@ struct TagSection: View {
 
     private func add(_ name: String) {
         guard let id = shot.id else { return }
-        ShotStore.shared.addTag(shotID: id, name)
+        store.addTag(shotID: id, name)
         // 胶囊的增删是小件出没 → micro（§6）。没有动画时新胶囊会「跳」进流式布局，
         // 用户会丢失「刚才那一下发生在哪」的线索。
         withAnimation(DS.Motion.micro(reduced: reduceMotion)) { refresh() }
         // 新名字立刻可被后续建议匹配；清空输入、保持焦点，方便连续打标签。
-        allTagNames = ShotStore.shared.allTags().map(\.name)
+        allTagNames = store.allTags().map(\.name)
         input = ""
         inputFocused = true
     }
 
     private func remove(_ name: String) {
         guard let id = shot.id else { return }
-        ShotStore.shared.removeTag(shotID: id, name)
+        store.removeTag(shotID: id, name)
         withAnimation(DS.Motion.micro(reduced: reduceMotion)) { refresh() }
     }
 
     private func refresh() {
-        tags = shot.id.map { ShotStore.shared.tags(shotID: $0) } ?? []
+        tags = shot.id.map { store.tags(shotID: $0) } ?? []
     }
 
     private func cancelInput() {
@@ -221,7 +222,7 @@ private struct TagChip: View {
         // 「边缘比表面重要」—— 这圈线比任何背景模糊都更能把胶囊托起来。
         .background(DS.insetSurface, in: Capsule())
         .overlay(
-            Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+            Capsule().strokeBorder(DS.borderFaint, lineWidth: 1)
         )
         .onHover { isHovering = $0 }
         // ✕ 的显形是最小的一档微交互 → micro。

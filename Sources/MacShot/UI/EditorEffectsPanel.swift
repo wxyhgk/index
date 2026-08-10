@@ -89,13 +89,13 @@ struct EditorEffectsPanel: View {
                             path.move(to: CGPoint(x: 6, y: 20))
                             path.addLine(to: CGPoint(x: 34, y: 6))
                         }
-                        .stroke(Color.primary.opacity(0.45), lineWidth: 1.5)
+                        .stroke(DS.borderStrong, lineWidth: 1.5)
                     }
                 }
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .strokeBorder(
-                            selected ? Color.accentColor : Color.primary.opacity(0.12),
+                            selected ? DS.accent : DS.borderDefault,
                             lineWidth: selected ? 2 : 1
                         )
                 )

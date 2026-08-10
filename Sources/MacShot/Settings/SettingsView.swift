@@ -506,7 +506,7 @@ private struct AnnotationSettings: View {
                             .overlay {
                                 Circle().strokeBorder(
                                     settings.defaultColorIndex == index
-                                        ? Color.accentColor : Color.primary.opacity(0.15),
+                                        ? DS.accent : DS.focusRingIdle,
                                     lineWidth: settings.defaultColorIndex == index ? 3 : 1
                                 )
                             }
@@ -600,7 +600,7 @@ private struct UploadSettings: View {
                     .autocorrectionDisabled()
                     .overlay(
                         RoundedRectangle(cornerRadius: 5)
-                            .strokeBorder(Color.primary.opacity(0.15))
+                            .strokeBorder(DS.focusRingIdle)
                     )
             } header: {
                 Text("请求头")

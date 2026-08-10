@@ -47,13 +47,13 @@ private struct EditorLayersPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("图层（\(listedLayers.count)）")
                 .font(.headline)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.horizontal, DS.s3)
+                .padding(.vertical, DS.s3 - 2)
             Divider()
 
             List(selection: selectionBinding) {
                 ForEach(listedLayers) { layer in
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.s2) {
                         Image(systemName: layer.kind.symbolName)
                             .foregroundStyle(Color(.sRGB, red: layer.color.r, green: layer.color.g, blue: layer.color.b, opacity: 1))
                         Text(layer.kind.displayName).font(.caption)
@@ -76,15 +76,15 @@ private struct EditorLayersPanel: View {
                let index = annotation.layers.firstIndex(id: selectedID),
                annotation.layers[index].kind == .text {
                 Divider()
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: DS.s2) {
                     Text("文字内容").font(.caption).foregroundStyle(.secondary)
                     TextEditor(text: textBinding(for: selectedID))
                         .font(.system(size: 12))
-                        .frame(height: 60)
-                        .border(Color.primary.opacity(0.12))
+                        .frame(height: DS.s5 * 2 + DS.s3)
+                        .border(DS.borderDefault)
                         .focused(textFieldFocused)
                 }
-                .padding(12)
+                .padding(DS.s3)
             }
 
             Divider()
@@ -104,10 +104,10 @@ private struct EditorLayersPanel: View {
     }
 
     private var historyPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.s2) {
             Text("历史版本").font(.caption).foregroundStyle(.secondary)
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DS.s1 / 2) {
                     ForEach(Array(model.revisions.enumerated()), id: \.element.id) { index, rev in
                         Button {
                             model.loadRevision(layers: rev.layers, index: index)
@@ -118,8 +118,8 @@ private struct EditorLayersPanel: View {
                                 Spacer()
                                 Text("\(rev.layers.count) 层").font(.caption2).foregroundStyle(.tertiary)
                             }
-                            .padding(.vertical, 3).padding(.horizontal, 6)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(model.loadedRevisionIndex == index ? Color.accentColor.opacity(0.18) : .clear))
+                            .padding(.vertical, DS.s1 - 1).padding(.horizontal, DS.s2 - 2)
+                            .background(RoundedRectangle(cornerRadius: DS.radiusChip, style: .continuous).fill(model.loadedRevisionIndex == index ? DS.accentFillHistory : .clear))
                         }
                         .buttonStyle(.plain)
                     }
@@ -127,6 +127,6 @@ private struct EditorLayersPanel: View {
             }
             .frame(maxHeight: 120)
         }
-        .padding(12)
+        .padding(DS.s3)
     }
 }

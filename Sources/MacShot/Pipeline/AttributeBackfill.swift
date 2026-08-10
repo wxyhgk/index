@@ -78,7 +78,7 @@ enum AttributeBackfill {
                         await writer.write(
                             shotID: item.shotID,
                             key: AttributeKey.category,
-                            value: .text(ShotClassifier.classify(bundleID: item.bundleID))
+                            value: .text(ShotClassifier.classify(bundleID: item.bundleID).rawValue)
                         )
                     }
                     continue

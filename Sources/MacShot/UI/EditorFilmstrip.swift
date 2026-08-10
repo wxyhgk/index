@@ -33,7 +33,13 @@ struct EditorFilmstrip: View, Equatable {
 
     @State private var shots: [Shot] = []
 
-    private let store = ShotStore.shared
+    private let store: ShotStore
+
+    init(currentShotID: Int64?, onSelect: @escaping (Shot) -> Void, store: ShotStore = .shared) {
+        self.currentShotID = currentShotID
+        self.onSelect = onSelect
+        self.store = store
+    }
 
     /// 缩略图行高；整条胶片条约 72pt。
     private static let thumbHeight: CGFloat = 56
@@ -46,7 +52,7 @@ struct EditorFilmstrip: View, Equatable {
                     Text("胶片条（\(shots.count)）")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                        .padding(.leading, 14)
+                        .padding(.leading, DS.s4)
                     Spacer()
                 } else {
                     strip
@@ -78,13 +84,13 @@ struct EditorFilmstrip: View, Equatable {
                 // 编辑器里每一次标注变更都会重算 body，于是画一笔的每一帧
                 // 都在构建几百个缩略图子视图（每个还带一个 `.task`）。
                 // 这是「编辑时点按钮有延迟」查到最后的那一层。
-                LazyHStack(spacing: 6) {
+                LazyHStack(spacing: DS.s2) {
                     ForEach(shots) { shot in
                         thumbnail(shot)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, DS.s3)
+                .padding(.vertical, DS.s2)
             }
             .onAppear { scrollToCurrent(proxy, animated: false) }
             .onChange(of: currentShotID) { scrollToCurrent(proxy, animated: true) }
@@ -99,11 +105,11 @@ struct EditorFilmstrip: View, Equatable {
         } label: {
             CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
                 .frame(height: Self.thumbHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 5)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
                         .strokeBorder(
-                            isCurrent ? Color.accentColor : Color.primary.opacity(0.12),
+                            isCurrent ? DS.accent : DS.borderDefault,
                             lineWidth: isCurrent ? 2 : 1
                         )
                 )
@@ -138,7 +144,7 @@ struct EditorFilmstrip: View, Equatable {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .padding(.trailing, 6)
+        .padding(.trailing, DS.s2)
         .help(collapsed ? "展开胶片条" : "收起胶片条")
     }
 

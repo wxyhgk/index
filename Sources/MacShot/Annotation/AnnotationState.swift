@@ -51,6 +51,9 @@ final class AnnotationState: ObservableObject {
     /// 拿箭头选了红色粗线，切到文字就是红色粗体。见 `ToolStyle`。
     private var toolStyles: [String: ToolStyle] = [:] { willSet { publishChange() } }
 
+    /// 样式持久化的落盘通道。注入式：生产用 AppSettings.shared，预览/测试用 FakeStyleStore。
+    private let styleStore: any StyleStore
+
     /// 画布空间相对屏幕点的倍率。笔宽和字号按它换算，
     /// 这样不管画布怎么缩放，画出来的线在屏幕上都是同样粗细。
     var strokeScale: Double = 1 { willSet { publishChange() } }
@@ -127,15 +130,15 @@ final class AnnotationState: ObservableObject {
         redoStack.removeAll()
     }
 
-    init() {
+    init(styleStore: any StyleStore = AppSettings.shared) {
+        self.styleStore = styleStore
         // 先铺描述符声明的默认样式，再用用户存下来的偏好覆盖。
         // 设置页里那两个全局默认（颜色/粗细）作为**首次使用**的种子，
         // 只作用于还没有单独偏好的工具。
-        let settings = AppSettings.shared
-        let seedColor = Self.palette.indices.contains(settings.defaultColorIndex)
-            ? settings.defaultColorIndex : 0
-        let seedWidth = Self.widths.indices.contains(settings.defaultWidthIndex)
-            ? settings.defaultWidthIndex : 1
+        let seedColor = Self.palette.indices.contains(styleStore.defaultColorIndex)
+            ? styleStore.defaultColorIndex : 0
+        let seedWidth = Self.widths.indices.contains(styleStore.defaultWidthIndex)
+            ? styleStore.defaultWidthIndex : 1
 
         for descriptor in ToolRegistry.descriptors {
             var style = descriptor.defaultStyle
@@ -143,7 +146,7 @@ final class AnnotationState: ObservableObject {
             if descriptor.axes.contains(.width) { style.widthIndex = seedWidth }
             toolStyles[descriptor.tool.id] = style
         }
-        for (id, saved) in settings.toolStyles {
+        for (id, saved) in styleStore.toolStyles {
             toolStyles[id] = saved
         }
     }
@@ -181,9 +184,9 @@ final class AnnotationState: ObservableObject {
         guard style.index(for: axis) != index else { return false }
         style.setIndex(index, for: axis)
         toolStyles[styleTool.id] = style
-        // 与 init 里读 AppSettings 是同一处妥协（见 ARCHITECTURE §1 违例表）：
-        // 样式偏好本质上是用户设置，落盘通道只有这一条。
-        AppSettings.shared.toolStyles[styleTool.id] = style
+        var dict = styleStore.toolStyles
+        dict[styleTool.id] = style
+        styleStore.toolStyles = dict
         return true
     }
 

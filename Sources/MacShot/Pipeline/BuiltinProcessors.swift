@@ -40,7 +40,7 @@ struct CategoryProcessor: CapturePostProcessor {
 
     func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
         let category = ShotClassifier.classify(bundleID: input.appBundleID)
-        await writer.write(shotID: input.shotID, key: AttributeKey.category, value: .text(category))
+        await writer.write(shotID: input.shotID, key: AttributeKey.category, value: .text(category.rawValue))
     }
 }
 

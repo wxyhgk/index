@@ -1,6 +1,18 @@
 import SwiftUI
 import AppKit
 
+/// 全局设计 token（DS）—— CSS 层的唯一入口。
+///
+/// 分层：
+///
+///   CSS 层（本文件）：`DS` 收敛所有视觉常量（间距 / 圆角 / 颜色 / 表面 / 阴影 / 动效）。
+///     视图一律 `DS.xxx`，不得裸写 `Color.primary.opacity` / `.quaternary` 等。
+///     旧 `Theme` 协议已收敛为兼容转发层（见 `UI/Theme.swift`），新代码不再使用。
+///
+///   API 层（`Platform/`）：`Platform.swift` 定义 PAL 协议（`ClipboardWriting` 等），
+///     `Platform/*.swift` 为 macOS 实现，未来 `Win*` 另实现，`App` 注入具体实现。
+///     详见 `Sources/MacShot/README.md` 的「CSS / API 分层」与 `Platform/Platform.swift` 顶部注释。
+
 /// 全局设计 token。图库改版期间由并行分支共同遵守的约定，
 /// 间距、圆角、分类色都收敛到这里 —— 视图代码里不再出现魔法数。
 ///
@@ -30,20 +42,81 @@ enum DS {
 
     /// 分类名 → 颜色。侧边栏色点用；其它要按分类着色的地方也走这张表，
     /// 保证同一分类处处同色。未知分类（包括「其它」）兜底灰色。
-    static func categoryColor(_ name: String) -> Color {
-        switch name {
-        case "代码": return .blue
-        case "浏览器": return .teal
-        case "聊天": return .green
-        case "设计": return .pink
-        case "终端": return .indigo
-        case "文档": return .orange
-        case "笔记": return .yellow
-        case "影音": return .purple
-        case "效率": return .mint
-        default: return .gray
+    /// 枚举为单一事实来源，颜色关联到 `ShotClassifier.Category`，不再散落字符串。
+    static func categoryColor(_ category: ShotClassifier.Category) -> Color {
+        switch category {
+        case .code: return .blue
+        case .browser: return .teal
+        case .chat: return .green
+        case .design: return .pink
+        case .terminal: return .indigo
+        case .document: return .orange
+        case .note: return .yellow
+        case .media: return .purple
+        case .productivity: return .mint
+        case .other: return .gray
         }
     }
+
+    /// 字符串重载：从落库/外部传入的中文名解析为枚举，解析失败兜底灰色。
+    /// 新代码优先直接传 `ShotClassifier.Category`。
+    static func categoryColor(_ name: String) -> Color {
+        guard let category = ShotClassifier.Category(rawValue: name) else { return .gray }
+        return categoryColor(category)
+    }
+
+    // MARK: - 状态色
+
+    /// 警示（黄）：敏感内容提示等。背景/描边成对提供，避免视图里现写 opacity。
+    static let statusWarningFill = Color.yellow.opacity(0.18)
+    static let statusWarningStroke = Color.yellow.opacity(0.5)
+
+    /// 细边框：Tag 胶囊等次级描边。
+    static let borderSubtle = Color.primary.opacity(0.15)
+    static let borderFaint = Color.primary.opacity(0.1)
+
+    // MARK: - 强调色（选中 / 焦点）
+
+    /// 工具栏选中态的浅 accent 底（EditorToolbar 等）。
+    static let accentFillSelected = Color.accentColor.opacity(0.22)
+    /// 历史版本高亮（EditorInspector）。
+    static let accentFillHistory = Color.accentColor.opacity(0.18)
+    /// 输入框焦点描边（TagSection）。
+    static let accentStrokeInput = Color.accentColor.opacity(0.5)
+    /// 搜索胶囊焦点描边。
+    static let accentStrokeFocus = Color.accentColor.opacity(0.55)
+    /// 固实 accent（前景色等不带透明度的场景，收敛写法便于后续统一换色）。
+    static let accent = Color.accentColor
+
+    /// 顶栏 / 外壳控件的选中态填充，深浅两值（GalleryShell）。
+    static func accentFillActive(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.accentColor.opacity(0.22) : Color.accentColor.opacity(0.14)
+    }
+
+    // MARK: - 描边与弱化
+
+    /// 通用中性描边（色块选中边、胶片条色块等，0.12）。
+    static let borderDefault = Color.primary.opacity(0.12)
+    /// 输入框空闲描边（SettingsView 等，复用 borderDefault）。
+    static let focusRingIdle = borderDefault
+    /// 强描边 / 斜杠（EditorEffectsPanel 透明档斜线）。
+    static let borderStrong = Color.primary.opacity(0.45)
+    /// 次级圆点（未选中参数点，0.75）。
+    static let dimPrimary = Color.primary.opacity(0.75)
+    /// 行悬停提亮（ShotInfoPage 修订行，0.06）。
+    static let hoverFill = Color.primary.opacity(0.06)
+    /// 时间线空心描边（Timeline 未选中，0.10）。
+    static let timelineIdle = Color.primary.opacity(0.1)
+
+    // MARK: - 不透明度常量（黑/白/灰）
+
+    static let swatchOutline = Color.black.opacity(0.25)
+    static let badgeStroke = Color.white.opacity(0.7)
+    static let shadowOverlay = Color.black.opacity(0.6)
+    static let connectorFill = Color.secondary.opacity(0.3)
+    static let dotInactive = Color.secondary.opacity(0.55)
+    static let overlayDim = Color.black.opacity(0.45)
+    static let hoverBrighten = Color.white.opacity(0.05)
 }
 
 // ============================================================
@@ -475,6 +548,69 @@ extension DS {
         /// 筛选胶囊行的高度（设计稿 34）。
         static let chipHeight: CGFloat = 34
     }
+
+    // MARK: - 悬停 / 容器填充（深浅两值，视图不再现写 white/black opacity）
+
+    /// 顶栏选项托盘底。
+    static func trayFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.06) : .black.opacity(0.05)
+    }
+
+    /// 搜索胶囊填充。
+    static func capsuleFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.07) : .black.opacity(0.05)
+    }
+
+    /// 搜索胶囊描边。
+    static func capsuleStroke(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.10) : .black.opacity(0.10)
+    }
+
+    /// 顶栏选中胶囊填充（深色半透亮，浅色实白）。
+    static func tabSelectedFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.13) : .white
+    }
+
+    /// 顶栏未选中胶囊悬停填充。
+    static func tabHoverFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.06) : .black.opacity(0.04)
+    }
+
+    /// 外壳图标悬停填充（GalleryShell）。
+    static func shellHoverFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.09) : .black.opacity(0.06)
+    }
+
+    /// 快捷键徽章底。
+    static func badgeFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.08) : .black.opacity(0.06)
+    }
+
+    /// 1px 发丝线（SpatialModifiers hairline，深色顶边光、浅色自遮挡）。
+    static func hairlineFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.10) : .black.opacity(0.09)
+    }
+
+    /// 详情面板柔和底（InspectorMetrics.softFill 的 DS 版，深色加白、浅色加黑）。
+    static func softFill(_ scheme: ColorScheme, hovering: Bool) -> Color {
+        scheme == .dark
+            ? .white.opacity(hovering ? 0.16 : 0.09)
+            : .black.opacity(hovering ? 0.11 : 0.06)
+    }
+
+    /// 行悬停底（InspectorMetrics.rowHoverFill 的 DS 版）。
+    static func rowHoverFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.06) : .black.opacity(0.045)
+    }
+
+    /// 带语义色淡底（InspectorCircle tinted，hover 30% / 常态 18%）。
+    static func tintFill(_ color: Color, hovering: Bool) -> Color {
+        color.opacity(hovering ? 0.30 : 0.18)
+    }
+
+    // MARK: - 遮罩与边缘（视图不再裸写 .black.opacity）
+    static let maskTransparent = Color.black.opacity(0)
+    static let maskOpaque = Color.black
 }
 
 extension NSAppearance {

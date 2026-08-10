@@ -26,8 +26,15 @@ final class QuickLookController: NSObject {
     private var storeCancellable: AnyCancellable?
     /// 同步进行中标记，切断「面板 → 选中 → 面板」的回环。
     private var isSyncing = false
+    /// 可注入的读写源，默认 shared，单测可替。
+    var store: ShotStore = .shared
 
     private override init() { super.init() }
+
+    init(store: ShotStore) {
+        self.store = store
+        super.init()
+    }
 
     var panelIsVisible: Bool {
         QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible
@@ -50,7 +57,7 @@ final class QuickLookController: NSObject {
     // MARK: - 由 GalleryWindowController 的 begin/endPreviewPanelControl 转交
 
     func attach(to panel: QLPreviewPanel) {
-        shots = ShotStore.shared.displayShots
+        shots = store.displayShots
         panel.dataSource = self
         panel.delegate = self
         panel.currentPreviewItemIndex = selectedIndex() ?? 0
@@ -66,7 +73,7 @@ final class QuickLookController: NSObject {
             .removeDuplicates()
             .sink { [weak self] _ in self?.syncPanelIndex() }
         // objectWillChange 发在变更前，压到下一轮 runloop 再取新列表。
-        storeCancellable = ShotStore.shared.objectWillChange
+        storeCancellable = store.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.reloadShots() }
     }
@@ -107,7 +114,7 @@ final class QuickLookController: NSObject {
 
     private func reloadShots() {
         guard panelIsVisible else { return }
-        let fresh = ShotStore.shared.displayShots
+        let fresh = store.displayShots
         guard fresh != shots else { return }
         shots = fresh
         if shots.isEmpty {
@@ -130,7 +137,7 @@ extension QuickLookController: @preconcurrency QLPreviewPanelDataSource {
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
         guard shots.indices.contains(index) else { return nil }
-        return ShotStore.shared.originalURL(for: shots[index]) as NSURL
+        return store.originalURL(for: shots[index]) as NSURL
     }
 }
 

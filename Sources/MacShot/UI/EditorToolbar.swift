@@ -13,25 +13,25 @@ struct EditorToolbar: View {
          .dimension, .pixelate, .crop]
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.s3) {
             Button {
                 model.requestReturnToGallery()
             } label: {
-                HStack(spacing: 3) {
+                HStack(spacing: DS.s1 - 1) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .semibold))
                     Text("图库")
                 }
                 .frame(height: 44)
-                .padding(.horizontal, 6)
+                .padding(.horizontal, DS.s2 - 2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("返回图库（⎋）")
 
-            Divider().frame(height: 24)
+            Divider().frame(height: DS.s5)
 
-            HStack(spacing: 2) {
+            HStack(spacing: DS.s1 / 2) {
                 toolButton(nil)
                 handButton
                 ForEach(Array(Self.toolOrder.dropFirst().enumerated()), id: \.offset) { _, tool in
@@ -42,16 +42,16 @@ struct EditorToolbar: View {
             Spacer(minLength: DS.s2)
 
             if annotation.styleAxes.contains(.color) {
-                HStack(spacing: 4) {
+                HStack(spacing: DS.s1) {
                     ForEach(AnnotationState.palette.indices, id: \.self) { index in
                         colorButton(index)
                     }
                 }
-                Divider().frame(height: 18)
+                Divider().frame(height: DS.s4 + 2)
             }
 
             ForEach(annotation.styleAxes.filter { $0 != .color }, id: \.self) { axis in
-                HStack(spacing: 4) {
+                HStack(spacing: DS.s1) {
                     ForEach(axis.steps.indices, id: \.self) { index in
                         paramButton(axis, index)
                     }
@@ -79,8 +79,8 @@ struct EditorToolbar: View {
             .keyboardShortcut("z", modifiers: [.command, .shift])
             .help("重做（⇧⌘Z）")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .padding(.horizontal, DS.s4 - 2)
+        .padding(.vertical, DS.s2 - 2)
     }
 
     private func toolButton(_ tool: AnnotationTool?) -> some View {
@@ -89,7 +89,7 @@ struct EditorToolbar: View {
         return Button {
             selectTool(tool)
         } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: DS.s1 - 1) {
                 Image(systemName: tool?.symbolName ?? "cursorarrow")
                     .font(.system(size: 15))
                     .frame(height: 18)
@@ -101,9 +101,9 @@ struct EditorToolbar: View {
         .buttonStyle(.plain)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(selected ? Color.accentColor.opacity(0.22) : .clear)
+                .fill(selected ? DS.accentFillSelected : .clear)
         )
-        .foregroundStyle(selected ? Color.accentColor : .primary)
+        .foregroundStyle(selected ? DS.accent : .primary)
         .keyboardShortcut(bareKeyShortcut(shortcut?.label))
         .help(shortcut.map { "\($0.toolName)（\($0.label)）" } ?? tool?.title ?? "指针")
     }
@@ -114,7 +114,7 @@ struct EditorToolbar: View {
         return Button {
             toggleHandMode()
         } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: DS.s1 - 1) {
                 Image(systemName: "hand.raised")
                     .font(.system(size: 15))
                     .frame(height: 18)
@@ -126,9 +126,9 @@ struct EditorToolbar: View {
         .buttonStyle(.plain)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(selected ? Color.accentColor.opacity(0.22) : .clear)
+                .fill(selected ? DS.accentFillSelected : .clear)
         )
-        .foregroundStyle(selected ? Color.accentColor : .primary)
+        .foregroundStyle(selected ? DS.accent : .primary)
         .opacity(disabled ? 0.35 : 1)
         .disabled(disabled)
         .help(disabled
@@ -161,12 +161,12 @@ struct EditorToolbar: View {
         } label: {
             Circle()
                 .fill(Color(.sRGB, red: c.r, green: c.g, blue: c.b))
-                .overlay(Circle().strokeBorder(.black.opacity(0.25)))
+                .overlay(Circle().strokeBorder(DS.swatchOutline))
                 .frame(width: 14, height: 14)
-                .padding(3)
+                .padding(DS.s1 - 1)
                 .overlay(
                     Circle().strokeBorder(
-                        selected ? Color.accentColor : .clear,
+                        selected ? DS.accent : .clear,
                         lineWidth: 1.5
                     )
                 )
@@ -183,7 +183,7 @@ struct EditorToolbar: View {
             annotation.applyStyleToSelection(axis)
         } label: {
             Circle()
-                .fill(selected ? Color.accentColor : Color.primary.opacity(0.75))
+                .fill(selected ? DS.accent : DS.dimPrimary)
                 .frame(width: diameter, height: diameter)
                 .frame(width: 20, height: 20)
         }

@@ -13,7 +13,11 @@ import SwiftUI
 
 struct GalleryPageHeader: View {
 
-    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var store: ShotStore
+
+    init(store: ShotStore = .shared) {
+        _store = ObservedObject(wrappedValue: store)
+    }
 
     // 这里从前还存着 apps / categories / tags 三份聚合查询，只为填四个下拉胶囊的菜单。
     // 胶囊删掉之后它们一并消失 —— 顺带省掉了每次 store 变更都要跑的三条 GROUP BY

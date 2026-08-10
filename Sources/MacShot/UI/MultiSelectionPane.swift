@@ -19,8 +19,13 @@ struct MultiSelectionPane: View {
     let shots: [Shot]
 
     // 订阅 store 是为了收藏态实时刷新（批量收藏后按钮文案要翻转）。
-    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var store: ShotStore
     @ObservedObject private var selection = GallerySelection.shared
+
+    init(shots: [Shot], store: ShotStore = .shared) {
+        self.shots = shots
+        _store = ObservedObject(wrappedValue: store)
+    }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 最近一次批量导出的结果提示，几秒后自动消失。
@@ -74,7 +79,7 @@ struct MultiSelectionPane: View {
                 .overlay {
                     if shot.id == previews.last?.id, shots.count > 4 {
                         RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                            .fill(.black.opacity(0.45))
+                            .fill(DS.overlayDim)
                         Text("+\(shots.count - 4)")
                             .font(.title3.weight(.bold))
                             .foregroundStyle(.white)

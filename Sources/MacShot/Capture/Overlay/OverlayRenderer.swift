@@ -1,6 +1,12 @@
 import AppKit
 
 /// 选区覆盖层的全部绘制逻辑。无状态 —— 输入模型，输出像素。
+///
+/// 约束：`enum` + 仅 `static func`，不持有任何可变状态（无 stored properties、
+/// 无单例缓存）。所有输入（`SelectionModel`、`AnnotationState`、`slots`、
+/// `hoveredControlID`、放大镜采样等）都由调用方当帧传入；绘制只读，不写回。
+/// 若需缓存，放在调用方或 `MagnifierRenderer`/`AnnotationRenderer` 内部的
+/// 纯函数缓存里，不在 `OverlayRenderer` 自身保留。
 enum OverlayRenderer {
 
     @MainActor

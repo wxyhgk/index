@@ -13,6 +13,12 @@ import AppKit
 
 struct TimelineSheet: View {
     let shot: Shot
+    @ObservedObject private var store: ShotStore
+
+    init(shot: Shot, store: ShotStore = .shared) {
+        self.shot = shot
+        self._store = ObservedObject(wrappedValue: store)
+    }
 
     @Environment(\.dismiss) private var dismiss
 
@@ -55,7 +61,7 @@ struct TimelineSheet: View {
         }
         .frame(width: 900, height: 620)
         .task(id: shot.id) {
-            related = ShotStore.shared.relatedShots(to: shot)
+            related = store.relatedShots(to: shot)
             selectedID = shot.id
         }
     }
@@ -63,7 +69,7 @@ struct TimelineSheet: View {
     // MARK: 头部
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.s3) {
             Label("时间线", systemImage: "clock.arrow.circlepath")
                 .font(.headline)
             if let related {
@@ -85,8 +91,8 @@ struct TimelineSheet: View {
             Button("关闭") { dismiss() }
                 .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DS.s4)
+        .padding(.vertical, DS.s3)
     }
 
     /// 同源依据的一行描述，让用户知道这串图是按什么聚起来的。
@@ -114,12 +120,13 @@ struct TimelineSheet: View {
 
     private func strip(_ shots: [Shot]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: DS.s2) {
                 ForEach(Array(shots.enumerated()), id: \.element.id) { index, item in
                     TimelineThumb(
                         shot: item,
                         role: role(of: item),
-                        onTap: { tap(item) }
+                        onTap: { tap(item) },
+                        store: store
                     )
                     // sha256 相同 = 画面完全一致，在相邻两张之间标出来。
                     if index + 1 < shots.count, shots[index + 1].sha256 == item.sha256 {
@@ -130,8 +137,8 @@ struct TimelineSheet: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, DS.s4)
+            .padding(.vertical, DS.s3)
         }
         .frame(height: 118)
     }
@@ -167,7 +174,7 @@ struct TimelineSheet: View {
     private var mainArea: some View {
         if compareMode {
             if let a = shotA, let b = shotB {
-                DiffView(a: a, b: b)
+                DiffView(a: a, b: b, store: store)
             } else {
                 ContentUnavailableView(
                     idA == nil ? "选择两张进行对比" : "再选一张作为 B",
@@ -177,14 +184,14 @@ struct TimelineSheet: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else if let selected = selectedShot {
-            VStack(spacing: 8) {
-                LargeShotImage(shot: selected)
+            VStack(spacing: DS.s2) {
+                LargeShotImage(shot: selected, store: store)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Text(caption(for: selected))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(14)
+            .padding(DS.s4)
         } else {
             Color.clear
         }
@@ -209,11 +216,19 @@ private struct TimelineThumb: View {
     let shot: Shot
     let role: Role
     let onTap: () -> Void
+    private let store: ShotStore
+
+    init(shot: Shot, role: Role, onTap: @escaping () -> Void, store: ShotStore = .shared) {
+        self.shot = shot
+        self.role = role
+        self.onTap = onTap
+        self.store = store
+    }
 
     private var borderColor: Color {
         switch role {
-        case .none: return Color.primary.opacity(0.1)
-        case .selected: return .accentColor
+        case .none: return DS.timelineIdle
+        case .selected: return DS.accent
         case .compareA: return .blue
         case .compareB: return .orange
         }
@@ -228,16 +243,16 @@ private struct TimelineThumb: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: DS.s1) {
             ZStack {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
                     .fill(DS.insetSurface)
-                CachedImage(url: ShotStore.shared.thumbnailURL(for: shot), key: shot.sha256)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
             }
             .frame(width: 108, height: 68)
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
                     .strokeBorder(borderColor, lineWidth: role == .none ? 1 : 2.5)
             }
             .overlay(alignment: .topLeading) {
@@ -245,10 +260,10 @@ private struct TimelineThumb: View {
                     Text(badge)
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
+                        .padding(.horizontal, DS.s1 + 1)
                         .padding(.vertical, 1)
-                        .background(borderColor, in: RoundedRectangle(cornerRadius: 4))
-                        .padding(4)
+                        .background(borderColor, in: RoundedRectangle(cornerRadius: DS.radiusChip, style: .continuous))
+                        .padding(DS.s1)
                 }
             }
 
@@ -265,6 +280,12 @@ private struct TimelineThumb: View {
 
 private struct LargeShotImage: View {
     let shot: Shot
+    private let store: ShotStore
+
+    init(shot: Shot, store: ShotStore = .shared) {
+        self.shot = shot
+        self.store = store
+    }
 
     @State private var image: NSImage?
 
@@ -282,7 +303,7 @@ private struct LargeShotImage: View {
         }
         .task(id: shot.sha256) {
             // 路径在主 actor 上取，磁盘解码放后台。
-            let url = ShotStore.shared.originalURL(for: shot)
+            let url = store.originalURL(for: shot)
             let cg = await Task.detached(priority: .userInitiated) {
                 ImageCodec.load(from: url)
             }.value
@@ -297,6 +318,13 @@ private struct LargeShotImage: View {
 struct DiffView: View {
     let a: Shot
     let b: Shot
+    @ObservedObject private var store: ShotStore
+
+    init(a: Shot, b: Shot, store: ShotStore = .shared) {
+        self.a = a
+        self.b = b
+        self._store = ObservedObject(wrappedValue: store)
+    }
 
     enum Mode: String, CaseIterable, Identifiable {
         case sideBySide = "并排"
@@ -324,11 +352,11 @@ struct DiffView: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DS.s3) {
             controls
             content
         }
-        .padding(14)
+        .padding(DS.s4)
         .task(id: a.sha256 + b.sha256) { await loadImages() }
         .task(id: "\(a.sha256)|\(b.sha256)|\(mode.rawValue)") {
             // 只有真正切到高亮模式才计算，且 identical / 尺寸不同都不跑。
@@ -342,7 +370,7 @@ struct DiffView: View {
 
     @ViewBuilder
     private var controls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.s3) {
             if identical {
                 Label("两张画面完全一致 ✓", systemImage: "equal.circle.fill")
                     .font(.callout.weight(.semibold))
@@ -402,7 +430,7 @@ struct DiffView: View {
     }
 
     private func pane(image: NSImage?, title: String) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: DS.s2) {
             Group {
                 if let image {
                     Image(nsImage: image)
@@ -421,7 +449,7 @@ struct DiffView: View {
     }
 
     private func sideBySide(_ left: NSImage, _ right: NSImage) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.s3) {
             pane(image: left, title: label(for: a, tag: "A"))
             pane(image: right, title: label(for: b, tag: "B"))
         }
@@ -430,7 +458,7 @@ struct DiffView: View {
     /// 上下叠放 + 竖直分割线：A 盖在 B 上，用 leading 对齐的矩形 mask
     /// 只露出左边 `split` 比例，拖动分割线改比例。
     private func sliderCompare(_ top: NSImage, _ bottom: NSImage) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: DS.s2) {
             GeometryReader { geo in
                 let fitted = fittedSize(
                     content: CGSize(width: a.pixelWidth, height: a.pixelHeight),
@@ -451,16 +479,16 @@ struct DiffView: View {
                         Rectangle()
                             .fill(.white)
                             .frame(width: 2)
-                            .shadow(color: .black.opacity(0.6), radius: 2)
+                            .shadow(color: DS.shadowOverlay, radius: 2)
                         Image(systemName: "arrow.left.and.right.circle.fill")
                             .font(.system(size: 20))
                             .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.6), radius: 2)
+                            .shadow(color: DS.shadowOverlay, radius: 2)
                     }
                     .offset(x: fitted.width * split - 1)
                 }
                 .frame(width: fitted.width, height: fitted.height)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: DS.radiusChip, style: .continuous))
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
@@ -487,7 +515,7 @@ struct DiffView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let diffMask {
-            VStack(spacing: 6) {
+            VStack(spacing: DS.s2) {
                 ZStack {
                     Image(nsImage: base)
                         .resizable()
@@ -523,8 +551,8 @@ struct DiffView: View {
         diffMask = nil
         diffRatio = nil
         diffFailed = false
-        let urlA = ShotStore.shared.originalURL(for: a)
-        let urlB = ShotStore.shared.originalURL(for: b)
+        let urlA = store.originalURL(for: a)
+        let urlB = store.originalURL(for: b)
         let pair = await Task.detached(priority: .userInitiated) { () -> (CGImage?, CGImage?) in
             (ImageCodec.load(from: urlA), ImageCodec.load(from: urlB))
         }.value
@@ -533,8 +561,8 @@ struct DiffView: View {
     }
 
     private func computeDiff() async {
-        let urlA = ShotStore.shared.originalURL(for: a)
-        let urlB = ShotStore.shared.originalURL(for: b)
+        let urlA = store.originalURL(for: a)
+        let urlB = store.originalURL(for: b)
         // 4K 逐像素约 800 万次比较，裸循环几十毫秒量级 —— 但绝不在主线程做。
         let result = await Task.detached(priority: .userInitiated) { () -> (CGImage, Double)? in
             guard let ia = ImageCodec.load(from: urlA),

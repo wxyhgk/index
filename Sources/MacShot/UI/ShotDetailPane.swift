@@ -31,8 +31,15 @@ struct ShotDetailPane: View {
     let shot: Shot
 
     // 订阅 store 是为了收藏态实时刷新；重查询都挂在 task(id:) 上，不受影响。
-    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var store: ShotStore
     @ObservedObject private var selection = GallerySelection.shared
+    @ObservedObject private var settings: AppSettings
+
+    init(shot: Shot, store: ShotStore = .shared, settings: AppSettings = .shared) {
+        self.shot = shot
+        self._store = ObservedObject(wrappedValue: store)
+        self._settings = ObservedObject(wrappedValue: settings)
+    }
     /// 阴影要按外观分流：深色下 L1 的阴影是 `.none`（黑底上的黑阴影只是糊一层脏）。
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -216,7 +223,7 @@ struct ShotDetailPane: View {
                 Label("上传图床", systemImage: "arrow.up.circle")
             }
             .disabled(
-                AppSettings.shared.uploadEndpoint
+                settings.uploadEndpoint
                     .trimmingCharacters(in: .whitespaces).isEmpty
             )
         }
@@ -404,11 +411,11 @@ struct ShotDetailPane: View {
         // 警示色（黄）是状态语义，不是强调色也不参与深度表达。
         .background(
             RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
-                .fill(Color.yellow.opacity(0.18))
+                .fill(DS.statusWarningFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
-                .strokeBorder(Color.yellow.opacity(0.5), lineWidth: 1)
+                .strokeBorder(DS.statusWarningStroke, lineWidth: 1)
         )
     }
 
@@ -537,3 +544,15 @@ struct ShotDetailPane: View {
         )
     }
 }
+
+#if DEBUG
+#Preview {
+    let store = FakeShotStore.preview
+    if let shot = store.shots.first {
+        Text("ShotDetailPane · \(shot.windowTitle ?? "Untitled") · FakeShotStore")
+            .padding()
+    } else {
+        Text("No preview shots")
+    }
+}
+#endif

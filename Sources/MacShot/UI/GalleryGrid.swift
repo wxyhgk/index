@@ -48,11 +48,16 @@ private struct ShotSection: Identifiable {
 
 struct GalleryGrid: View {
 
-    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var store: ShotStore
     @ObservedObject private var selection = GallerySelection.shared
+
+    init(store: ShotStore = .shared, settings: AppSettings = .shared) {
+        _store = ObservedObject(wrappedValue: store)
+        _settings = ObservedObject(wrappedValue: settings)
+    }
     /// 只为一个开关订阅：逐卡滚动深度（`galleryScrollDepth`）。
     /// 设置项的变更频率是「用户偶尔点一下」，用它换「关掉开关立刻生效」是划算的。
-    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var settings: AppSettings
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -749,7 +754,7 @@ struct GalleryGrid: View {
         }
         Divider()
         Button("导出…") { export(shot) }
-        if !AppSettings.shared.uploadEndpoint.isEmpty {
+        if !settings.uploadEndpoint.isEmpty {
             Button("上传并复制链接") { upload(shot) }
         }
         Button("复制 Bug 报告") {
@@ -786,7 +791,7 @@ struct GalleryGrid: View {
     private func upload(_ shot: Shot) {
         guard let rendered = renderedImage(for: shot),
               let png = ImageCodec.pngData(from: rendered) else { return }
-        let settings = AppSettings.shared
+        let settings = self.settings
         let config = UploadConfig(
             endpoint: settings.uploadEndpoint,
             fieldName: settings.uploadFieldName,
@@ -870,3 +875,22 @@ struct GalleryGrid: View {
         }
     }
 }
+
+#if DEBUG
+#Preview {
+    // 轻量预览：FakeShotStore.preview 零 GRDB、零落盘，6 张样本直接可用。
+    // 此处不直接渲染 GalleryGrid（其 store 为 ShotStore 真库），而是用预览数据
+    // 验证 FakeShotStore 的轻量实现在 Preview 环境下可正常构造与读取。
+    let store = FakeShotStore.preview
+    VStack(alignment: .leading, spacing: 8) {
+        Text("GalleryGrid · FakeShotStore 预览").font(.headline)
+        Text("\(store.shots.count) 张样本 · 收藏 \(store.favoriteIDs.count) · 标签 \(store.allTags().count)")
+            .font(.subheadline).foregroundStyle(.secondary)
+        ForEach(store.shots) { shot in
+            Text(shot.windowTitle ?? shot.appName ?? "Untitled").font(.caption)
+        }
+    }
+    .padding()
+    .frame(width: 320)
+}
+#endif

@@ -100,6 +100,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         // 从图库钉出时元数据已齐；截图直钉时 URL 可能还没回填（同覆盖层）；
         // 没有 shot 时开信息栏只排得出日期（当下）—— 有什么排什么，开关不因此不可用。
         view.annotation.effectContext = { [base] in
+            let style = AppSettings.shared
             var context = EffectContext()
             context.imagePixelWidth = Double(base.width)
             context.imagePixelHeight = Double(base.height)
@@ -110,6 +111,13 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
                 name: shot?.appName, version: shot?.appVersion
             )
             context.capturedAt = shot?.capturedAt
+            context.watermarkText = style.watermarkText
+            context.watermarkMode = style.watermarkMode
+            context.watermarkAlpha = style.watermarkAlpha
+            context.backdropPaddingRatio = style.backdropPaddingRatio
+            context.backdropCornerRatio = style.backdropCornerRatio
+            context.backdropShadowRatio = style.backdropShadowRatio
+            context.backdropShadowAlpha = style.backdropShadowAlpha
             return context
         }
         panel.contentView = view

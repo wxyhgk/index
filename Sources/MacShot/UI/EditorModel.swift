@@ -18,9 +18,10 @@ final class EditorModel: ObservableObject {
     let shot: Shot
     /// 标注状态机。它自己是 ObservableObject —— 子视图直接订阅它，
     /// 不必经由本模型转发（转发等于把每个变更抄两遍）。
-    let annotation = AnnotationState()
+    let annotation: AnnotationState
 
-    private let store = ShotStore.shared
+    private let store: ShotStore
+    private let styleStore: any StyleStore
 
     // MARK: 图像
 
@@ -58,8 +59,11 @@ final class EditorModel: ObservableObject {
     private var autoSaveTask: Task<Void, Never>?
     private var annotationSubscription: AnyCancellable?
 
-    init(shot: Shot) {
+    init(shot: Shot, store: ShotStore = .shared, styleStore: any StyleStore = AppSettings.shared) {
         self.shot = shot
+        self.store = store
+        self.styleStore = styleStore
+        self.annotation = AnnotationState(styleStore: styleStore)
         annotationSubscription = annotation.objectWillChange.sink { [weak self] _ in
             // ⚠️ **必须转发**。视图观察的是 model，而 `annotation` 只是模型上的一个
             // 普通 `let` —— 它自己发的变更不会让任何 SwiftUI 视图失效。
@@ -83,7 +87,7 @@ final class EditorModel: ObservableObject {
         // 效果层的注入上下文（编辑器这一处，与覆盖层/钉图同一契约）：
         // 画布就是图像像素 —— 水印按原图宽烤字号、壳/信息栏按 shot.scale 缩放；
         // 元数据来自采集时落库的真实归因 —— 竞品的壳是空的，这里是真的。
-        annotation.effectContext = { [shot] in
+        annotation.effectContext = { [shot, styleStore] in
             var context = EffectContext()
             context.imagePixelWidth = Double(base.width)
             context.imagePixelHeight = Double(base.height)
@@ -94,6 +98,13 @@ final class EditorModel: ObservableObject {
                 name: shot.appName, version: shot.appVersion
             )
             context.capturedAt = shot.capturedAt
+            context.watermarkText = styleStore.watermarkText
+            context.watermarkMode = styleStore.watermarkMode
+            context.watermarkAlpha = styleStore.watermarkAlpha
+            context.backdropPaddingRatio = styleStore.backdropPaddingRatio
+            context.backdropCornerRatio = styleStore.backdropCornerRatio
+            context.backdropShadowRatio = styleStore.backdropShadowRatio
+            context.backdropShadowAlpha = styleStore.backdropShadowAlpha
             return context
         }
         revisions = store.revisions(for: shot)

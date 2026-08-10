@@ -60,8 +60,7 @@ final class GalleryWindowMode: ObservableObject {
     /// 按 ID 找 Shot：先查内存列表（语义结果可能不在常规列表里，两边都找），
     /// 都没有再兜底查一次库 —— `shots` 受搜索 / 筛选影响，正在编辑的记录
     /// 可能只是被筛掉了而不是被删了。
-    static func resolveShot(id: Int64) -> Shot? {
-        let store = ShotStore.shared
+    static func resolveShot(id: Int64, store: ShotReading = ShotStore.shared) -> Shot? {
         return store.displayShots.first { $0.id == id }
             ?? store.shots.first { $0.id == id }
             ?? store.allShots().first { $0.id == id }

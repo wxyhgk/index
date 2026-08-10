@@ -133,15 +133,15 @@ struct ShellIconButtonStyle: ButtonStyle {
         /// 这里改成「淡染 + accent 图标」：状态一样读得出，但不跟内容抢注意力。
         /// 强调色的归属留给**内容的选中态**，那才是用户真正要找的东西。
         private var fill: Color {
-            if isActive { return .accentColor.opacity(scheme == .dark ? 0.22 : 0.14) }
+            if isActive { return DS.accentFillActive(scheme) }
             guard hovering else { return .clear }
-            return scheme == .dark ? .white.opacity(0.09) : .black.opacity(0.06)
+            return DS.shellHoverFill(scheme)
         }
 
         var body: some View {
             configuration.label
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+                .foregroundStyle(isActive ? DS.accent : Color.primary)
                 .frame(width: side, height: side)
                 .background(fill, in: shape)
                 .contentShape(shape)
@@ -207,8 +207,13 @@ struct GalleryInspectorPanel: View {
 
     @Binding var isPresented: Bool
 
-    @ObservedObject private var store = ShotStore.shared
+    @ObservedObject private var store: ShotStore
     @ObservedObject private var selection = GallerySelection.shared
+
+    init(isPresented: Binding<Bool>, store: ShotStore = .shared) {
+        self._isPresented = isPresented
+        self._store = ObservedObject(wrappedValue: store)
+    }
 
     var body: some View {
         content

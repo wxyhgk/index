@@ -1,6 +1,45 @@
 import AppKit
 import VisionKit
 
+/// 选字（Live Text）在覆盖层里的宿主状态。`container` 与 `overlay` 的挂载由
+/// `wantsLiveTextOverlay` 驱动（tool == nil && pointerEngaged），`analysis`
+/// 键含选区矩形与马赛克图层。由宿主 `OverlayView` 以组合方式持有，避免把
+/// 视图层级与异步任务散在主视图里。
+final class LiveTextOverlayHost {
+    var container: LiveTextHitTestView?
+    var overlay: ImageAnalysisOverlayView?
+    /// 键含选区矩形与马赛克图层，任一变了都要重跑分析。
+    var analysis: (rect: CGRect, pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
+    var isActive: Bool { overlay != nil }
+}
+
+/// 鼠标模式下包住系统选字层的命中测试包装。
+///
+/// `ImageAnalysisOverlayView` 是 final，没法覆写它的 hitTest，所以在外面包一层，
+/// 明确规定选区内事件的归属（自上而下）：
+///   1. 命中标注图层 / 缩放控制点 → 返回 nil，事件穿给 `OverlayView`（点图层 = 选图层）
+///   2. 命中系统层的可交互文字（`hasInteractiveItem`）→ 交给系统层（拖 = 选字）
+///   3. 其余 → 返回 nil，穿给 `OverlayView`（拖空白 = 调整选区）
+/// 不依赖系统层自身的穿透行为 —— 无论它吞不吞非文字区域的事件，三种手势都成立。
+final class LiveTextHitTestView: NSView {
+
+    /// 返回 true 表示这个点该交还宿主处理（参数是本视图局部坐标）。
+    var passesToHost: ((CGPoint) -> Bool)?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // 约定入参在父视图坐标系（NSView.hitTest 的语义）。
+        guard let superview else { return nil }
+        let local = convert(point, from: superview)
+        guard bounds.contains(local) else { return nil }
+        if passesToHost?(local) == true { return nil }
+        guard let overlay = subviews.first as? ImageAnalysisOverlayView,
+              overlay.hasInteractiveItem(at: overlay.convert(local, from: self))
+        else { return nil }
+        // overlay 的 hitTest 期望父视图（= 本视图）坐标。
+        return overlay.hitTest(local) ?? overlay
+    }
+}
+
 // MARK: - 选字（Live Text）
 // 从 OverlayView.swift 拆出，保持行为一致。
 extension OverlayView {
@@ -15,13 +54,13 @@ extension OverlayView {
             selection: geometry.annotationRect(fromGlobal: rect),
             scale: model.snapshot.scale
         ).filter { $0.kind == .pixelate }
-        if let cached = liveTextAnalysis, cached.rect == rect, cached.pixelates == pixelates {
+        if let cached = liveTextHost.analysis, cached.rect == rect, cached.pixelates == pixelates {
             return
         }
         guard let crop = model.makeCroppedImage() else { return }
-        liveTextAnalysis?.task.cancel()
+        liveTextHost.analysis?.task.cancel()
         let image = pixelates.isEmpty ? crop : LayerRenderer.render(base: crop, layers: pixelates)
-        liveTextAnalysis = (rect, pixelates, Task { await LiveTextAnalyzer.analyze(image) })
+        liveTextHost.analysis = (rect, pixelates, Task { await LiveTextAnalyzer.analyze(image) })
     }
 
     /// 鼠标模式（tool == nil && pointerEngaged）下应当挂着系统选字层。
@@ -37,7 +76,7 @@ extension OverlayView {
     }
 
     func mountLiveTextOverlay() {
-        guard liveTextOverlay == nil, let rect = model.confirmedRect else { return }
+        guard liveTextHost.overlay == nil, let rect = model.confirmedRect else { return }
         prepareLiveTextAnalysis()
         let overlay = ImageAnalysisOverlayView()
         overlay.preferredInteractionTypes = [.textSelection]
@@ -56,47 +95,48 @@ extension OverlayView {
                 || self.annotation.layer(at: canvas) != nil
         }
         addSubview(container)
-        liveTextContainer = container
-        liveTextOverlay = overlay
+        liveTextHost.container = container
+        liveTextHost.overlay = overlay
         applyLiveTextAnalysis()
         redraw()
     }
 
     func unmountLiveTextOverlay() {
-        guard liveTextOverlay != nil else { return }
-        liveTextContainer?.removeFromSuperview()
-        liveTextContainer = nil
-        liveTextOverlay = nil
+        guard liveTextHost.overlay != nil else { return }
+        liveTextHost.container?.removeFromSuperview()
+        liveTextHost.container = nil
+        liveTextHost.overlay = nil
         window?.makeFirstResponder(self)
         redraw()
     }
 
     /// 选区被微调 / 拖动后，把选字层贴回新位置并套用按新选区重跑的分析。
     func syncLiveTextOverlayFrame() {
-        guard let container = liveTextContainer, let rect = model.confirmedRect else { return }
+        guard let container = liveTextHost.container, let rect = model.confirmedRect else { return }
         container.frame = geometry.viewLocal(fromGlobal: rect)
         applyLiveTextAnalysis()
     }
 
     private func applyLiveTextAnalysis() {
-        let task = liveTextAnalysis?.task
-        Task { [weak self, weak overlay = liveTextOverlay] in
+        let task = liveTextHost.analysis?.task
+        let overlay = liveTextHost.overlay
+        Task { [weak self, weak overlay] in
             let analysis = await task?.value
-            guard let self, let overlay, overlay === self.liveTextOverlay else { return }
+            guard let self, let overlay, overlay === self.liveTextHost.overlay else { return }
             overlay.analysis = analysis
         }
     }
 
     /// 鼠标模式下的 ⌘C：有选中文字就复制文字（而不是整张图）。返回是否已处理。
     func copyLiveTextSelection() -> Bool {
-        guard let overlay = liveTextOverlay, overlay.hasActiveTextSelection else { return false }
+        guard let overlay = liveTextHost.overlay, overlay.hasActiveTextSelection else { return false }
         Clipboard.copy(text: overlay.selectedText)
         return true
     }
 
     /// 选字层里有选中的文字时清掉它 —— Esc / 右键退出链的第一级。返回是否已处理。
     func clearLiveTextSelection() -> Bool {
-        guard let overlay = liveTextOverlay, overlay.hasActiveTextSelection else { return false }
+        guard let overlay = liveTextHost.overlay, overlay.hasActiveTextSelection else { return false }
         overlay.resetSelection()
         return true
     }
