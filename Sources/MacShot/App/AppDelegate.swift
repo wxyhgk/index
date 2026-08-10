@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         registerCaptureSources()
 
+        setupMainMenu()
         setupStatusItem()
         setupHotKeys()
 
@@ -310,6 +311,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openSettings() {
         GalleryWindowController.shared.show()
         GalleryWindowMode.shared.openSettings()
+    }
+
+    // MARK: - 主菜单（Edit → Copy / Select All 走 responder chain）
+
+    /// LSUIElement 常驻时菜单栏仅在 `.regular`（图库/设置窗口期）可见，
+    /// 但键等价（⌘C/⌘A）始终生效。Edit 项用标准 `copy:`/`selectAll:`，
+    /// 文本框聚焦时由 NSTextView 自行处理，图库网格时冒泡到 GalleryWindowController。
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        // App 菜单（至少要有一个，系统才认为 mainMenu 合法）
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "关于 MacShot", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(title: "退出 MacShot", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenuItem.submenu = appMenu
+
+        // Edit 菜单：Copy / Select All 走标准 selector，validation 由窗口控制器决定
+        // copy: 声明在 NSText，用其 selector 避免直接写字符串
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(title: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "全选", action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a"))
+        editMenuItem.submenu = editMenu
+
+        // Window 菜单：让系统自动管理窗口列表
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "Window")
+        NSApp.windowsMenu = windowMenu
+        windowMenuItem.submenu = windowMenu
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    // Edit 菜单的实际执行与校验兜底（responder chain 未命中时由 App 兜住）
+    @objc func copy(_ sender: Any?) {
+        // 先让第一响应者的 NSTextView 处理文字复制，若未处理再复制图片
+        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+           textView.selectedRange().length > 0 {
+            return // 交由 NSTextView 自身的 copy: 处理
+        }
+        guard GalleryWindowMode.shared.mode == .library else { return }
+        let shots = GalleryBatch.selectedShots()
+        guard !shots.isEmpty else { return }
+        GalleryBatch.copyImages(shots)
+    }
+
+    @objc func selectAll(_ sender: Any?) {
+        // 文本框内有焦点时让其自行全选
+        if NSApp.keyWindow?.firstResponder is NSTextView { return }
+        guard GalleryWindowMode.shared.mode == .library else { return }
+        Task {
+            let ids = await ShotStore.shared.allMatchingIDs()
+            GallerySelection.shared.selectAll(ids)
+        }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(NSText.copy(_:)):
+            if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.selectedRange().length > 0 {
+                return true
+            }
+            return GalleryWindowMode.shared.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+        case #selector(NSResponder.selectAll(_:)):
+            if NSApp.keyWindow?.firstResponder is NSTextView { return true }
+            return GalleryWindowMode.shared.mode == .library
+        default:
+            return true
+        }
+    }
+
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if let menuItem = item as? NSMenuItem {
+            switch menuItem.action {
+            case #selector(NSText.copy(_:)):
+                if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.selectedRange().length > 0 {
+                    return true
+                }
+                return GalleryWindowMode.shared.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+            case #selector(NSResponder.selectAll(_:)):
+                if NSApp.keyWindow?.firstResponder is NSTextView { return true }
+                return GalleryWindowMode.shared.mode == .library
+            default: break
+            }
+        }
+        return true
     }
 
     // MARK: - 服务菜单

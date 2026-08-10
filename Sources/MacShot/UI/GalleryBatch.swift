@@ -11,9 +11,9 @@ import Foundation
 enum GalleryBatch {
 
     /// 按展示顺序解析当前选中集合。语义结果可能不在常规列表里，两边找齐（去重）。
-    static func selectedShots() -> [Shot] {
+    static func selectedShots(reader: ShotReading = ShotStore.shared) -> [Shot] {
         let selection = GallerySelection.shared
-        let store = ShotStore.shared
+        let store = reader
         var picked = store.displayShots.filter { selection.isSelected($0.id) }
         let seen = Set(picked.compactMap(\.id))
         picked += store.shots.filter { shot in
@@ -34,8 +34,8 @@ enum GalleryBatch {
     ///
     /// 返回成功复制的张数，供调用方判断要不要提示。
     @discardableResult
-    static func copyImages(_ shots: [Shot]) -> Int {
-        let store = ShotStore.shared
+    static func copyImages(_ shots: [Shot], reader: ShotReading = ShotStore.shared) -> Int {
+        let store = reader
         let images = shots.compactMap { shot -> CGImage? in
             guard let base = store.originalImage(for: shot) else { return nil }
             let layers = store.latestRevision(for: shot)?.imageLayers ?? Layers()
@@ -46,17 +46,18 @@ enum GalleryBatch {
         return images.count
     }
 
-    static func allFavorited(_ shots: [Shot]) -> Bool {
-        !shots.isEmpty && shots.allSatisfy { $0.id.map(ShotStore.shared.isFavorite) ?? false }
+    static func allFavorited(_ shots: [Shot], reader: ShotReading = ShotStore.shared) -> Bool {
+        !shots.isEmpty && shots.allSatisfy { $0.id.map(reader.isFavorite) ?? false }
     }
 
     /// 全部收藏 / 全部取消收藏：已经是目标状态的跳过，动作幂等。
-    static func toggleFavorites(_ shots: [Shot]) {
-        let store = ShotStore.shared
-        let targetFavorited = !allFavorited(shots)
+    static func toggleFavorites(_ shots: [Shot], writer: ShotWriting = ShotStore.shared, reader: ShotReading = ShotStore.shared) {
+        let store: ShotReading = reader
+        let w = writer
+        let targetFavorited = !allFavorited(shots, reader: reader)
         for shot in shots {
             guard let id = shot.id, store.isFavorite(shotID: id) != targetFavorited else { continue }
-            store.toggleFavorite(shot)
+            w.toggleFavorite(shot)
         }
     }
 
@@ -70,7 +71,7 @@ enum GalleryBatch {
     /// 批量导出：选目录（面板收敛在 SystemNavigator，视图里不裸跑 runModal），
     /// 逐张渲染成品（含最新标注）按文件名模板写入，
     /// 重名由 ImageExporter.writePNG 自动加 -2 / -3 … 序号。返回成功张数（取消 = 0）。
-    static func exportAll(_ shots: [Shot]) async -> Int {
+    static func exportAll(_ shots: [Shot], reader: ShotReading = ShotStore.shared) async -> Int {
         guard let directory = SystemNavigator.chooseDirectory(
             message: "选择 \(shots.count) 张截图的导出目录",
             prompt: "导出到此处",
@@ -78,7 +79,7 @@ enum GalleryBatch {
                 .urls(for: .desktopDirectory, in: .userDomainMask).first
         ) else { return 0 }
 
-        let store = ShotStore.shared
+        let store = reader
         let jobs = shots.map { shot in
             ExportJob(
                 url: store.originalURL(for: shot),

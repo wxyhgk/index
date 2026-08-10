@@ -14,7 +14,12 @@ enum StorageJanitor {
 
     @MainActor
     static func runIfNeeded() {
-        let settings = AppSettings.shared
+        runIfNeeded(settings: AppSettings.shared)
+    }
+
+    /// 可注入版本：便于单测无需触碰 UserDefaults。
+    @MainActor
+    static func runIfNeeded(settings: AppSettings) {
         guard settings.autoCleanupEnabled else { return }
 
         let days = settings.autoCleanupDays

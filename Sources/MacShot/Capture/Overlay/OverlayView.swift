@@ -32,17 +32,17 @@ final class OverlayView: NSView {
     /// 鼠标（指针）模式下叠在选区上的系统选字层（Live Text）及其命中测试包装。
     /// 不再是独立开关 —— 挂载与否由 `syncLiveTextOverlay()` 从鼠标模式推导：
     /// tool == nil && pointerEngaged 时挂载，其余时候拆掉。
-    private var liveTextContainer: LiveTextHitTestView?
-    private var liveTextOverlay: ImageAnalysisOverlayView?
+    var liveTextContainer: LiveTextHitTestView?
+    var liveTextOverlay: ImageAnalysisOverlayView?
 
     var isLiveTextActive: Bool { liveTextOverlay != nil }
     /// 选区确认后预跑的分析。键含选区矩形和马赛克图层 —— 任一变了都要重跑，
     /// 马赛克参与是因为分析输入取打码后的画面（打了码的字不该还能选出来）。
-    private var liveTextAnalysis: (rect: CGRect, pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
+    var liveTextAnalysis: (rect: CGRect, pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
 
     /// 光标位置（视图局部）与该处的像素采样。选区阶段才有意义。
-    private var cursor: CGPoint?
-    private(set) var cursorSample: PixelSample?
+    var cursor: CGPoint?
+    var cursorSample: PixelSample?
 
     /// ⌥ 是否按着。悬停窗口时按住 ⌥ = 整窗捕获模式（紫框 +「完整窗口」标签）。
     private var optionHeld = false
@@ -50,18 +50,6 @@ final class OverlayView: NSView {
     /// 整窗捕获只在正式截图模式下开放 —— 录屏选区和滚动截图只要一个矩形。
     private var allowsFullWindowCapture: Bool {
         mode == .capture && !finishOnConfirm
-    }
-
-    /// 只在「正在挑位置」时显示：确认之后画面已经定了，放大镜只会挡住工具条。
-    private var magnifierPayload: (sample: PixelSample, cursor: CGPoint)? {
-        guard AppSettings.shared.showMagnifier, !model.isInactive else { return nil }
-        switch model.phase {
-        case .idle, .dragging, .adjusting:
-            guard let cursor, let cursorSample else { return nil }
-            return (cursorSample, cursor)
-        case .confirmed:
-            return nil
-        }
     }
 
     var geometry: OverlayGeometry {
@@ -83,7 +71,7 @@ final class OverlayView: NSView {
     ///
     /// 尺寸只由可见控件决定：选区从很小拖到全屏，工具条一个像素都不变，
     /// 变的只有它贴在选区下方（放不下时上方 / 内侧）的位置。
-    private var slots: [ToolbarSlot] {
+    var slots: [ToolbarSlot] {
         guard mode == .capture, model.phase == .confirmed,
               let rect = model.confirmedRect else { return [] }
         return ToolbarLayout.slots(
@@ -190,16 +178,6 @@ final class OverlayView: NSView {
 
     private func localPoint(of event: NSEvent) -> CGPoint {
         convert(event.locationInWindow, from: nil)
-    }
-
-    /// 光标一动就重新采样。采的是一小块（21×21 像素）+ 单个像素，都是内存操作。
-    private func updateCursor(_ local: CGPoint) {
-        guard AppSettings.shared.showMagnifier else {
-            if cursor != nil { cursor = nil; cursorSample = nil }
-            return
-        }
-        cursor = local
-        cursorSample = model.snapshot.sample(aroundGlobal: geometry.global(fromViewLocal: local))
     }
 
     // MARK: - 鼠标
@@ -471,118 +449,8 @@ final class OverlayView: NSView {
         }
     }
 
-    // MARK: - 选字（Live Text）
-
-    /// 选区确认 / 调整后立即后台预跑分析 —— 等用户进入鼠标模式时结果多半已经就绪。
-    /// 幂等：键（选区矩形 + 马赛克图层）没变就直接复用在跑 / 跑完的任务。
-    /// 键盘扩展（方向键微调）也要调，所以不是 private。
-    func prepareLiveTextAnalysis() {
-        guard LiveTextAnalyzer.isSupported, mode == .capture, !finishOnConfirm,
-              model.phase == .confirmed, let rect = model.confirmedRect else { return }
-        let pixelates = annotation.exportLayers(
-            selection: geometry.annotationRect(fromGlobal: rect),
-            scale: model.snapshot.scale
-        ).filter { $0.kind == .pixelate }
-        if let cached = liveTextAnalysis, cached.rect == rect, cached.pixelates == pixelates {
-            return
-        }
-        guard let crop = model.makeCroppedImage() else { return }
-        liveTextAnalysis?.task.cancel()
-        // 分析输入取打码后的画面 —— 马赛克底下的字不该还能被拖选出来。
-        let image = pixelates.isEmpty ? crop : LayerRenderer.render(base: crop, layers: pixelates)
-        liveTextAnalysis = (rect, pixelates, Task { await LiveTextAnalyzer.analyze(image) })
-    }
-
-    /// 鼠标模式（tool == nil && pointerEngaged）下应当挂着系统选字层。
-    private var wantsLiveTextOverlay: Bool {
-        LiveTextAnalyzer.isSupported && mode == .capture && !finishOnConfirm
-            && model.phase == .confirmed
-            && annotation.tool == nil && annotation.pointerEngaged
-    }
-
-    /// 让选字层的挂载状态与鼠标模式对齐。
-    /// 任何切换工具 / 进出鼠标模式的路径（控件点击、快捷键、Esc、右键）都要经过它。
-    /// 键盘扩展也要调，所以不是 private。
-    func syncLiveTextOverlay() {
-        wantsLiveTextOverlay ? mountLiveTextOverlay() : unmountLiveTextOverlay()
-    }
-
-    private func mountLiveTextOverlay() {
-        guard liveTextOverlay == nil, let rect = model.confirmedRect else { return }
-        // 马赛克可能是确认选区之后才画的，挂载前把分析对齐到当前状态。
-        prepareLiveTextAnalysis()
-
-        // 系统层直接盖在选区上：分析的就是选区裁剪图，内容与 view bounds 一比一，
-        // 归一化坐标默认按 bounds 映射即对齐，无需 trackingImageView。
-        let overlay = ImageAnalysisOverlayView()
-        overlay.preferredInteractionTypes = [.textSelection]
-
-        // 命中测试包装（见 `LiveTextHitTestView`）：图层命中交还本视图（点图层 =
-        // 选图层），可交互文字给系统层（拖 = 选字），其余穿透（拖空白 = 调选区）——
-        // 三种手势在鼠标模式下共存。
-        let container = LiveTextHitTestView(frame: geometry.viewLocal(fromGlobal: rect))
-        overlay.frame = container.bounds
-        overlay.autoresizingMask = [.width, .height]
-        container.addSubview(overlay)
-        container.passesToHost = { [weak self, weak container] point in
-            guard let self, let container else { return false }
-            let local = self.convert(point, from: container)
-            // 画布太小时工具条会压进选区内侧 —— 工具条命中永远优先于选字。
-            if self.slots.contains(where: { $0.control != nil && $0.frame.contains(local) }) {
-                return true
-            }
-            let canvas = self.geometry.annotationPoint(fromViewLocal: local)
-            return self.annotation.resizeHandle(at: canvas) != nil
-                || self.annotation.layer(at: canvas) != nil
-        }
-        addSubview(container)
-        liveTextContainer = container
-        liveTextOverlay = overlay
-        applyLiveTextAnalysis()
-        redraw()
-    }
-
-    private func unmountLiveTextOverlay() {
-        guard liveTextOverlay != nil else { return }
-        liveTextContainer?.removeFromSuperview()
-        liveTextContainer = nil
-        liveTextOverlay = nil
-        window?.makeFirstResponder(self)
-        redraw()
-    }
-
-    /// 选区被微调 / 拖动后，把选字层贴回新位置并套用按新选区重跑的分析。
-    /// 调用方先跑 `prepareLiveTextAnalysis()`。键盘扩展（方向键微调）也要调。
-    func syncLiveTextOverlayFrame() {
-        guard let container = liveTextContainer, let rect = model.confirmedRect else { return }
-        container.frame = geometry.viewLocal(fromGlobal: rect)
-        applyLiveTextAnalysis()
-    }
-
-    /// 等分析任务出结果后塞进当前的系统层。任务可能是复用的（早就跑完，立即返回）；
-    /// 拆层 / 换层后迟到的结果直接丢弃。
-    private func applyLiveTextAnalysis() {
-        let task = liveTextAnalysis?.task
-        Task { [weak self, weak overlay = liveTextOverlay] in
-            let analysis = await task?.value
-            guard let self, let overlay, overlay === self.liveTextOverlay else { return }
-            overlay.analysis = analysis
-        }
-    }
-
-    /// 鼠标模式下的 ⌘C：有选中文字就复制文字（而不是整张图）。返回是否已处理。
-    func copyLiveTextSelection() -> Bool {
-        guard let overlay = liveTextOverlay, overlay.hasActiveTextSelection else { return false }
-        Clipboard.copy(text: overlay.selectedText)
-        return true
-    }
-
-    /// 选字层里有选中的文字时清掉它 —— Esc / 右键退出链的第一级。返回是否已处理。
-    func clearLiveTextSelection() -> Bool {
-        guard let overlay = liveTextOverlay, overlay.hasActiveTextSelection else { return false }
-        overlay.resetSelection()
-        return true
-    }
+    // Live Text 已抽至 OverlayView+LiveText.swift
+    // 保留 wantsLiveTextOverlay 的访问级别供扩展读取
 
     // MARK: - 收尾
 
@@ -641,7 +509,7 @@ final class OverlayView: NSView {
 ///   2. 命中系统层的可交互文字（`hasInteractiveItem`）→ 交给系统层（拖 = 选字）
 ///   3. 其余 → 返回 nil，穿给 `OverlayView`（拖空白 = 调整选区）
 /// 不依赖系统层自身的穿透行为 —— 无论它吞不吞非文字区域的事件，三种手势都成立。
-private final class LiveTextHitTestView: NSView {
+final class LiveTextHitTestView: NSView {
 
     /// 返回 true 表示这个点该交还宿主处理（参数是本视图局部坐标）。
     var passesToHost: ((CGPoint) -> Bool)?

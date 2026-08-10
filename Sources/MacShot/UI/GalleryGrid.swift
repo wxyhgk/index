@@ -532,6 +532,7 @@ struct GalleryGrid: View {
     }
 
     /// 点击 = 单选；⌘点击 = toggle；⇧点击 = 锚点到落点的全局顺序区间。
+    /// 选中后显式让搜索框等文本输入失焦，使后续 ⌘C 走图片路径而非空文本路径。
     private func handleTap(_ shot: Shot) {
         guard let id = shot.id else { return }
         let flags = currentModifiers()
@@ -541,6 +542,11 @@ struct GalleryGrid: View {
             selection.selectRange(to: id, in: store.displayShots.compactMap(\.id))
         } else {
             selection.select(only: id)
+        }
+        // SwiftUI TapGesture 不会自动移走 field editor 的 firstResponder，
+        // 若搜索框仍是 firstResponder，后续 ⌘C 会被本应让位的文本路径误判。
+        if GalleryWindowController.shared.window?.firstResponder is NSTextView {
+            GalleryWindowController.shared.window?.makeFirstResponder(nil)
         }
     }
 

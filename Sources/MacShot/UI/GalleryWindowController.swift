@@ -87,6 +87,49 @@ final class GalleryWindowController: NSWindowController {
         QuickLookController.shared.detach(from: panel)
     }
 
+    // MARK: - Edit 菜单（⌘C/⌘A 走 responder chain）
+
+    @objc func copy(_ sender: Any?) {
+        // 仅在图库模式且有选中时复制成品（与右键/⌘C monitor 同一渲染口径）。
+        // 不再以 firstResponder/keyWindow 守卫，文本框有选区时 NSTextView 先响应，冒泡到这里时自然是图片路径。
+        guard GalleryWindowMode.shared.mode == .library else { return }
+        let shots = GalleryBatch.selectedShots()
+        guard !shots.isEmpty else { return }
+        GalleryBatch.copyImages(shots)
+    }
+
+    @objc override func selectAll(_ sender: Any?) {
+        guard GalleryWindowMode.shared.mode == .library else { return }
+        Task {
+            let ids = await ShotStore.shared.allMatchingIDs()
+            GallerySelection.shared.selectAll(ids)
+        }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(NSText.copy(_:)):
+            return GalleryWindowMode.shared.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+        case #selector(selectAll(_:)):
+            return GalleryWindowMode.shared.mode == .library
+        default:
+            return true
+        }
+    }
+
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if let menuItem = item as? NSMenuItem {
+            switch menuItem.action {
+            case #selector(NSText.copy(_:)):
+                return GalleryWindowMode.shared.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+            case #selector(selectAll(_:)):
+                return GalleryWindowMode.shared.mode == .library
+            default: break
+            }
+        }
+        return true
+    }
+
     func show(selecting shot: Shot? = nil) {
         ShotStore.shared.reload()
         if let shot {

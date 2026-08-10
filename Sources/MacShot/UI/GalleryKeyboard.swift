@@ -63,7 +63,7 @@ final class GalleryKeyboard {
             GalleryWindowMode.shared.openEditor(shotID: id)
             return true
 
-        case KeyCode.a where flags == .command:
+        case KeyCode.a where isCommandOnly(flags):
             // ⌘A：全选**符合当前筛选/搜索的全部截图**，而不是「已经滚出来的那些」。
             //
             // 分页之后这两者不再等价：`displayShots` 只是已加载的前几页，
@@ -75,7 +75,7 @@ final class GalleryKeyboard {
             }
             return true
 
-        case KeyCode.c where flags == .command:
+        case KeyCode.c where isCommandOnly(flags):
             // ⌘C：把选中的截图（成品，含标注）复制到剪贴板。
             //
             // 让位判定已经在入口那道 `GalleryKeyContext` 里做过了 ——
@@ -93,7 +93,7 @@ final class GalleryKeyboard {
             selection.collapseToPrimary()
             return true
 
-        case KeyCode.delete where flags == .command:
+        case KeyCode.delete where isCommandOnly(flags):
             // ⌘⌫ 删除所有选中。不直接弹 NSAlert —— 写 pendingDeleteIDs，
             // 由 GalleryGrid 上唯一的 confirmationDialog 出确认框（和右键同一套）。
             let selection = GallerySelection.shared
@@ -176,5 +176,11 @@ final class GalleryKeyboard {
         // 不在当前列表里的残留选中（筛选变化）兜底带上，保证删得干净。
         let rest = selected.subtracting(inDisplay)
         return inDisplay + rest.sorted()
+    }
+
+    /// 仅含 ⌘ 的判定（忽略 CapsLock/Function 等与意图无关的位）。
+    /// 用交集精确匹配替代 `== .command`，大小写锁定打开时仍命中。
+    nonisolated func isCommandOnly(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.command, .shift, .control, .option]) == .command
     }
 }

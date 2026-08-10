@@ -86,8 +86,13 @@ enum ImageExporter {
     /// 按用户模板渲染的建议文件名（含 .png 后缀）。
     /// 存盘面板、图库导出、自动副本全走这一个入口 —— 改模板处处生效。
     static func suggestedName(for shot: Shot?) -> String {
+        suggestedName(for: shot, template: AppSettings.shared.exportNameTemplate)
+    }
+
+    /// 可注入版本：便于单测与预览无需触碰 UserDefaults。
+    static func suggestedName(for shot: Shot?, template: String) -> String {
         renderName(
-            template: AppSettings.shared.exportNameTemplate,
+            template: template,
             date: shot?.capturedAt ?? Date(),
             appName: shot?.appName,
             windowTitle: shot?.windowTitle
