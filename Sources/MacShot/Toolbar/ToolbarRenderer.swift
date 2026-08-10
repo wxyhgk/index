@@ -10,10 +10,10 @@ enum ToolbarRenderer {
         // 两行各自圆角底板（PixPin 双胶囊），行间留 `interRowGap` 缝。
         for row in ToolbarLayout.rowFrames(of: slots) {
             let bg = row
-            NSColor(calibratedWhite: 0.13, alpha: 0.96).setFill()
+            DS.toolbarBackground.setFill()
             let path = NSBezierPath(roundedRect: bg, xRadius: 8, yRadius: 8)
             path.fill()
-            NSColor.white.withAlphaComponent(0.14).setStroke()
+            DS.toolbarStroke.setStroke()
             path.lineWidth = 1
             path.stroke()
         }
@@ -30,8 +30,7 @@ enum ToolbarRenderer {
             )
 
             if state.isSelected || state.isHovered {
-                NSColor.controlAccentColor
-                    .withAlphaComponent(state.isSelected ? 0.9 : 0.5)
+                (state.isSelected ? DS.toolbarSelected : DS.toolbarHover)
                     .setFill()
                 NSBezierPath(
                     roundedRect: slot.frame.insetBy(dx: 2.5, dy: 3.5),
@@ -44,7 +43,7 @@ enum ToolbarRenderer {
     }
 
     private static func drawSeparator(in frame: CGRect) {
-        NSColor.white.withAlphaComponent(0.18).setFill()
+        DS.toolbarSeparator.setFill()
         NSRect(x: frame.midX - 0.5, y: frame.minY + 9, width: 1, height: frame.height - 18).fill()
     }
 }

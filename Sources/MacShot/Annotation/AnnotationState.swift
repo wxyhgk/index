@@ -71,6 +71,8 @@ final class AnnotationState: ObservableObject {
 
     private(set) var layers = Layers<CanvasSpace>() { willSet { publishChange() } }
     private(set) var editingTextID: UUID? { willSet { publishChange() } }
+    /// 输入法合成中的标注文本（marked text），不入撤销栈，仅作预览。
+    var markedText: String? { willSet { publishChange() } }
 
     /// 指针模式下选中的图层。选中后可以拖动、删除、改样式。
     private(set) var selectedID: UUID? { willSet { publishChange() } }
@@ -210,11 +212,16 @@ final class AnnotationState: ObservableObject {
         return makeLayer(tool: tool, from: a, to: b)
     }
 
-    /// 交给渲染层的完整列表：已提交的 + 正在拖的；正在输入的文字带一个光标。
+    /// 交给渲染层的完整列表：已提交的 + 正在拖的；正在输入的文字带一个光标或合成预览。
     var displayLayers: Layers<CanvasSpace> {
         var result = layers
         if let editingTextID, let index = result.firstIndex(id: editingTextID) {
-            result[index].text += "|"
+            if let marked = markedText, !marked.isEmpty {
+                // 合成中：原文 + 带下划线的合成串（渲染层仍按普通文字画，候选窗口由系统绘制）。
+                result[index].text += marked
+            } else {
+                result[index].text += "|"
+            }
         }
         if let pendingLayer {
             result.append(pendingLayer)
@@ -724,6 +731,8 @@ final class AnnotationState: ObservableObject {
     /// 入栈时机在这里而不是落点时：新建层写出了内容算 add，
     /// 空着丢弃算「add 的取消」不入栈；已有层内容变了算 style。
     func endTextEditing() {
+        // 清掉合成态，避免下一次编辑带着上次的拼音残影。
+        markedText = nil
         guard let id = editingTextID else { return }
         editingTextID = nil
         let original = editingTextOriginal

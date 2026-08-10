@@ -611,6 +611,13 @@ extension DS {
     // MARK: - 遮罩与边缘（视图不再裸写 .black.opacity）
     static let maskTransparent = Color.black.opacity(0)
     static let maskOpaque = Color.black
+
+    // MARK: - 工具条 AppKit 令牌（ToolbarRenderer 专用，避免裸写 NSColor）
+    static let toolbarBackground = NSColor(calibratedWhite: 0.13, alpha: 0.96)
+    static let toolbarStroke = NSColor.white.withAlphaComponent(0.14)
+    static let toolbarSeparator = NSColor.white.withAlphaComponent(0.18)
+    static let toolbarSelected = NSColor.controlAccentColor.withAlphaComponent(0.9)
+    static let toolbarHover = NSColor.controlAccentColor.withAlphaComponent(0.5)
 }
 
 extension NSAppearance {

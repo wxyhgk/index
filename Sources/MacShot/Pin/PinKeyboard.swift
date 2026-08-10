@@ -10,12 +10,23 @@ extension PinImageView {
         defer { onToolbarInvalidated?() }
 
         if annotation.isEditingText {
+            if annotation.markedText != nil {
+                interpretKeyEvents([event])
+                needsDisplay = true
+                onAnnotationsChanged?()
+                return
+            }
             switch event.keyCode {
             case KeyCode.escape, KeyCode.returnKey, KeyCode.keypadEnter:
                 annotation.endTextEditing()
             case KeyCode.delete:
                 annotation.deleteBackward()
             default:
+                if let inputContext = inputContext, inputContext.handleEvent(event) {
+                    needsDisplay = true
+                    onAnnotationsChanged?()
+                    return
+                }
                 guard let text = event.characters, !text.isEmpty,
                       !event.modifierFlags.contains(.command) else { return }
                 annotation.insertText(text)
@@ -93,4 +104,89 @@ extension PinImageView {
             super.keyDown(with: event)
         }
     }
+}
+
+// MARK: - 中文输入（与 OverlayView 同款，复用 annotation.markedText）
+extension PinImageView: NSTextInputClient {
+
+    func hasMarkedText() -> Bool { annotation.markedText != nil }
+
+    func markedRange() -> NSRange {
+        guard let marked = annotation.markedText else { return NSRange(location: NSNotFound, length: 0) }
+        let committed = annotation.layers.elements.first(where: { $0.id == annotation.editingTextID })?.text ?? ""
+        return NSRange(location: (committed as NSString).length, length: (marked as NSString).length)
+    }
+
+    func selectedRange() -> NSRange {
+        let committed = annotation.layers.elements.first(where: { $0.id == annotation.editingTextID })?.text ?? ""
+        let markedLen = (annotation.markedText as NSString?)?.length ?? 0
+        return NSRange(location: (committed as NSString).length + markedLen, length: 0)
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let s: String
+        if let str = string as? String { s = str }
+        else if let attr = string as? NSAttributedString { s = attr.string }
+        else { s = "" }
+        annotation.markedText = s.isEmpty ? nil : s
+        needsDisplay = true
+        onAnnotationsChanged?()
+    }
+
+    func unmarkText() {
+        if let marked = annotation.markedText, !marked.isEmpty { annotation.insertText(marked) }
+        annotation.markedText = nil
+        needsDisplay = true
+        onAnnotationsChanged?()
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [.foregroundColor, .backgroundColor, .underlineStyle] }
+
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
+        let committed = annotation.layers.elements.first(where: { $0.id == annotation.editingTextID })?.text ?? ""
+        let marked = annotation.markedText ?? ""
+        let full = committed + marked
+        let nsFull = full as NSString
+        let loc = max(0, min(range.location, nsFull.length))
+        let rlen = min(range.length, nsFull.length - loc)
+        actualRange?.pointee = NSRange(location: loc, length: rlen)
+        return NSAttributedString(string: nsFull.substring(with: NSRange(location: loc, length: rlen)))
+    }
+
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        annotation.markedText = nil
+        let s: String
+        if let str = string as? String { s = str }
+        else if let attr = string as? NSAttributedString { s = attr.string }
+        else { return }
+        guard !s.isEmpty else { needsDisplay = true; return }
+        if s == "\n" || s == "\r" { annotation.endTextEditing() }
+        else { annotation.insertText(s) }
+        needsDisplay = true
+        onAnnotationsChanged?()
+    }
+
+    func characterIndex(for point: NSPoint) -> Int {
+        (annotation.layers.elements.first(where: { $0.id == annotation.editingTextID })?.text as NSString?)?.length ?? 0
+    }
+
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        guard let id = annotation.editingTextID, let idx = annotation.layers.firstIndex(id: id) else {
+            actualRange?.pointee = NSRange(location: NSNotFound, length: 0)
+            return NSRect.zero
+        }
+        let layer = annotation.layers[idx]
+        let font = NSFont.systemFont(ofSize: CGFloat(layer.fontSize), weight: .semibold)
+        let full = layer.text + (annotation.markedText ?? "")
+        let prefixLen = min(range.location, (full as NSString).length)
+        let prefix = (full as NSString).substring(to: prefixLen)
+        let width = (prefix as NSString).size(withAttributes: [.font: font]).width
+        // Pin 画布坐标即图片像素，已在 draw 时按倍率缩放，这里近似用 layer.rect
+        let rect = NSRect(x: layer.rect.x + width, y: layer.rect.y, width: 8, height: CGFloat(layer.fontSize) + 6)
+        let viewRect = convert(rect, to: nil)
+        let screenRect = window?.convertToScreen(viewRect) ?? viewRect
+        actualRange?.pointee = NSRange(location: range.location, length: min(range.length, (full as NSString).length - range.location))
+        return screenRect
+    }
+
 }

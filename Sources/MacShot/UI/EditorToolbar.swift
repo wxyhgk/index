@@ -8,9 +8,10 @@ struct EditorToolbar: View {
     @ObservedObject var model: EditorModel
     var textFieldFocused: FocusState<Bool>.Binding
 
-    private static let toolOrder: [AnnotationTool?] =
-        [nil, .rect, .ellipse, .arrow, .line, .text, .counter, .highlight, .spotlight,
-         .dimension, .pixelate, .crop]
+    /// 唯一真相：跟覆盖层/钉图的 `ToolControl` 同源 `BuiltinTools.all`，声明顺序即展示顺序。
+    private static var toolOrder: [AnnotationTool?] {
+        [nil] + BuiltinTools.all.map(\.tool)
+    }
 
     var body: some View {
         HStack(spacing: DS.s3) {

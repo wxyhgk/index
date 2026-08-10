@@ -92,12 +92,21 @@ extension OverlayView {
     }
 
     private func handleTextInput(_ event: NSEvent) {
+        // 已接管输入法时交给 NSTextInputContext 处理合成，避免直插破坏拼音候选。
+        if annotation.markedText != nil {
+            interpretKeyEvents([event])
+            return
+        }
         switch event.keyCode {
         case KeyCode.escape, KeyCode.returnKey, KeyCode.keypadEnter:
             annotation.endTextEditing()
         case KeyCode.delete:
             annotation.deleteBackward()
         default:
+            // 有输入法上下文时先让其解释按键（会回调 setMarkedText/insertText）
+            if let inputContext = inputContext, inputContext.handleEvent(event) {
+                return
+            }
             guard let text = event.characters, !text.isEmpty,
                   !event.modifierFlags.contains(.command) else { return }
             annotation.insertText(text)
@@ -141,4 +150,107 @@ extension OverlayView {
             redraw()
         }
     }
+}
+
+// MARK: - 中文输入（NSTextInputClient）
+//
+// 文字工具的旧实现直接 `event.characters` 插入，绕过了输入法的合成阶段，
+// 导致拼音+候选窗口无法出现。此处让视图成为 NSTextInputClient，合成中的
+// 字符串经 `setMarkedText` 预览在 `annotation.markedText`，提交时经
+// `insertText` 落库，`firstRect` 供候选窗口跟随。
+extension OverlayView: NSTextInputClient {
+
+    func hasMarkedText() -> Bool { annotation.markedText != nil }
+
+    func markedRange() -> NSRange {
+        guard let marked = annotation.markedText else { return NSRange(location: NSNotFound, length: 0) }
+        let committed = annotation.layers.elements.first(where: { $0.id == annotation.editingTextID })?.text ?? ""
+        return NSRange(location: (committed as NSString).length, length: (marked as NSString).length)
+    }
+
+    func selectedRange() -> NSRange {
+        let committed = annotation.layers.elements.first(where: { $0.id == annotation.editingTextID })?.text ?? ""
+        let markedLen = (annotation.markedText as NSString?)?.length ?? 0
+        return NSRange(location: (committed as NSString).length + markedLen, length: 0)
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let s: String
+        if let str = string as? String { s = str }
+        else if let attr = string as? NSAttributedString { s = attr.string }
+        else { s = "" }
+        annotation.markedText = s.isEmpty ? nil : s
+        redraw()
+    }
+
+    func unmarkText() {
+        if let marked = annotation.markedText, !marked.isEmpty {
+            annotation.insertText(marked)
+        }
+        annotation.markedText = nil
+        redraw()
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        [.foregroundColor, .backgroundColor, .underlineStyle]
+    }
+
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
+        let committed = annotation.layers.elements.first(where: { $0.id == annotation.editingTextID })?.text ?? ""
+        let marked = annotation.markedText ?? ""
+        let full = committed + marked
+        let nsFull = full as NSString
+        let len = nsFull.length
+        let loc = max(0, min(range.location, len))
+        let rlen = min(range.length, len - loc)
+        let sub = nsFull.substring(with: NSRange(location: loc, length: rlen))
+        actualRange?.pointee = NSRange(location: loc, length: rlen)
+        return NSAttributedString(string: sub)
+    }
+
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        // 提交合成或直插：先清合成预览，再把 string 当提交文本
+        annotation.markedText = nil
+        let s: String
+        if let str = string as? String { s = str }
+        else if let attr = string as? NSAttributedString { s = attr.string }
+        else { return }
+        guard !s.isEmpty else { redraw(); return }
+        // 回车等控制字符在上层已处理，这里只处理可见文本
+        if s == "\n" || s == "\r" {
+            annotation.endTextEditing()
+        } else {
+            annotation.insertText(s)
+        }
+        redraw()
+    }
+
+    func characterIndex(for point: NSPoint) -> Int {
+        let committed = annotation.layers.elements.first(where: { $0.id == annotation.editingTextID })?.text ?? ""
+        return (committed as NSString).length
+    }
+
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        guard let id = annotation.editingTextID,
+              let idx = annotation.layers.firstIndex(id: id) else {
+            actualRange?.pointee = NSRange(location: NSNotFound, length: 0)
+            return NSRect.zero
+        }
+        let layer = annotation.layers[idx]
+        let font = NSFont.systemFont(ofSize: CGFloat(layer.fontSize), weight: .semibold)
+        let committed = layer.text
+        let marked = annotation.markedText ?? ""
+        let full = committed + marked
+        let prefixLen = min(range.location, (full as NSString).length)
+        let prefix = (full as NSString).substring(to: prefixLen)
+        let width = (prefix as NSString).size(withAttributes: [.font: font]).width
+        // Overlay 的 layers 以“显示器局部、左上原点”为画布，需翻到 NSView 的左下原点
+        let viewY = bounds.height - layer.rect.y - CGFloat(layer.fontSize)
+        let viewRect = NSRect(x: layer.rect.x + width, y: viewY, width: 8, height: CGFloat(layer.fontSize) + 6)
+        let windowRect = convert(viewRect, to: nil)
+        let screenRect = window?.convertToScreen(windowRect) ?? windowRect
+        actualRange?.pointee = NSRange(location: range.location, length: min(range.length, (full as NSString).length - range.location))
+        return screenRect
+    }
+
 }
