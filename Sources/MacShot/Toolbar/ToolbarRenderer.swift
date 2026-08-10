@@ -7,9 +7,11 @@ enum ToolbarRenderer {
     static func draw(_ slots: [ToolbarSlot], hovered: String?, context: ToolbarContext) {
         guard !slots.isEmpty else { return }
 
-        if let row = ToolbarLayout.rowFrame(of: slots) {
+        // 两行各自圆角底板（PixPin 双胶囊），行间留 `interRowGap` 缝。
+        for row in ToolbarLayout.rowFrames(of: slots) {
+            let bg = row
             NSColor(calibratedWhite: 0.13, alpha: 0.96).setFill()
-            let path = NSBezierPath(roundedRect: row, xRadius: 8, yRadius: 8)
+            let path = NSBezierPath(roundedRect: bg, xRadius: 8, yRadius: 8)
             path.fill()
             NSColor.white.withAlphaComponent(0.14).setStroke()
             path.lineWidth = 1
