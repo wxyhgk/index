@@ -409,7 +409,7 @@ final class AppSettings: ObservableObject {
             Keys.autoCleanupDays: 30,
             Keys.recordSystemAudio: true,
             Keys.recordMicrophone: false,
-            Keys.recordingSaveToLibrary: false,
+            Keys.recordingSaveToLibrary: true,
             Keys.galleryScrollDepth: true
         ])
 

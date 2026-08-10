@@ -25,6 +25,8 @@ final class PinToolbarView: NSView {
     var onHoverChanged: (() -> Void)?
     /// 在工具条空白处拖动 = 拖整个钉图，保住「拖条带挪窗口」的老手感。
     var onDragBy: ((CGSize) -> Void)?
+    /// 滚轮在工具条上改粗细后，通知宿主重绘与重新布局。
+    var onWidthStepped: (() -> Void)?
 
     var attachment: Attachment = .below {
         didSet { if attachment != oldValue { needsDisplay = true } }
@@ -128,6 +130,20 @@ final class PinToolbarView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         dragsWindow = false
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        // 工具条上滚轮改粗细（与截图覆盖层一致，右侧调节区直连滚轮）
+        if let context = context?(),
+           context.annotation.styleAxes.contains(.width) {
+            let delta = event.scrollingDeltaY
+            if delta != 0, context.annotation.stepWidth(by: delta > 0 ? 1 : -1) {
+                needsDisplay = true
+                onWidthStepped?()
+                return
+            }
+        }
+        super.scrollWheel(with: event)
     }
 
     // MARK: - 绘制

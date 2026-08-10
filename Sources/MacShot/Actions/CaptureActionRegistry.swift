@@ -51,4 +51,7 @@ enum ActionID {
     static let copyText = "copy-text"
     /// 只完成，不做别的。没有按钮，只由回车触发。
     static let finish = "finish"
+    /// 截图工具条上常驻：点一下直接进录屏 / 长截图，不再经状态栏菜单
+    static let record = "record"
+    static let scrollCapture = "scroll-capture"
 }

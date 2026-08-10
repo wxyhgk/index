@@ -109,7 +109,7 @@ final class FakeStyleStore: ObservableObject, StyleStore {
     @Published var autoCopyDirectory: String = ""
     @Published var autoCleanupEnabled: Bool = false
     @Published var autoCleanupDays: Int = 30
-    @Published var recordingSaveToLibrary: Bool = false
+    @Published var recordingSaveToLibrary: Bool = true
     @Published var showMagnifier: Bool = true
 
     @Published var captureShortcut: KeyboardShortcut = .captureDefault

@@ -143,6 +143,10 @@ extension OverlayView {
         default: return
         }
         if model.nudge(dx: dx, dy: dy, resizing: modifiers.contains(.option)) {
+            if !modifiers.contains(.option) {
+                // 整体平移：标注跟截图框走（Y 需翻转，同 mouseDragged）
+                annotation.translateAll(by: CGPoint(x: dx, y: -dy))
+            }
             // 选区变了，预跑的选字分析跟着重跑（幂等，没确认选区时是空操作）；
             // 鼠标模式下选字层也贴回新位置。
             prepareLiveTextAnalysis()

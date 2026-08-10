@@ -39,6 +39,24 @@ final class ScrollCaptureController {
         )
     }
 
+    /// 供截图工具条复用已选区域：直接以该区域启动滚动采集
+    func begin(with region: CGRect, display: DisplayInfo) {
+        guard session == nil, !overlay.isActive else { return }
+        let previousApp = SystemNavigator.frontmostApplication
+        let ctx = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        guard let dummy = ctx.makeImage() else { return }
+        let result = SelectionResult(
+            region: region,
+            display: display,
+            window: nil,
+            actionID: ActionID.scrollCapture,
+            image: dummy,
+            layers: Layers<ImageSpace>(),
+            windowCaptureRequest: nil
+        )
+        startSession(with: result, previousApp: previousApp)
+    }
+
     /// 菜单 / 快捷键入口。采集进行中再按一次快捷键 = 完成（⎋ = 取消）。
     func begin() {
         if let session {

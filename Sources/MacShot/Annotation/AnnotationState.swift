@@ -178,6 +178,19 @@ final class AnnotationState: ObservableObject {
 
     func styleIndex(for axis: ToolStyleAxis) -> Int { currentStyle.index(for: axis) }
 
+    /// 滚轮步进宽度（PixPin：右侧调节 + 滚轮改粗细）。上滚变粗、下滚变细。
+    @discardableResult
+    func stepWidth(by delta: Int) -> Bool {
+        guard styleAxes.contains(.width) else { return false }
+        let steps = ToolStyleAxisDescriptor.descriptor(for: .width).steps
+        let cur = styleIndex(for: .width)
+        let next = min(max(cur + delta, 0), steps.count - 1)
+        guard next != cur else { return false }
+        let changed = setStyleIndex(next, for: .width)
+        if changed { applyStyleToSelection(.width) }
+        return changed
+    }
+
     /// 改当前工具某根轴的档位，并落盘。返回是否真的变了。
     @discardableResult
     func setStyleIndex(_ index: Int, for axis: ToolStyleAxis) -> Bool {
@@ -395,6 +408,17 @@ final class AnnotationState: ObservableObject {
         layers[index].rect.y += point.y - last.y
         moveLastPoint = point
         return true
+    }
+
+    /// 选区整体平移时，画布上的所有标注一起平移 ——
+    /// 保持“跟截图框走”而非“跟屏幕走”（见 `Layers.projected` 导出时才减选区原点）。
+    /// 缩放不跟随：扩边只是多露内容。
+    func translateAll(by delta: CGPoint) {
+        guard delta != .zero, !layers.isEmpty else { return }
+        for i in layers.elements.indices {
+            layers[i].rect.x += delta.x
+            layers[i].rect.y += delta.y
+        }
     }
 
     /// 结束拖动。马赛克的位置变了，预算好的贴片必须按新位置重裁。

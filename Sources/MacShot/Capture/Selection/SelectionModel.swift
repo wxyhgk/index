@@ -40,6 +40,8 @@ final class SelectionModel {
     private var dragCurrent: CGPoint?
 
     private var activeHandle: Handle?
+    /// 覆盖层判断是否为整体平移（`inside`）时用 —— `activeHandle` 私有，暴露只读。
+    var adjustingHandle: Handle? { activeHandle }
     private var adjustAnchorRect: CGRect?
     private var adjustStartPoint: CGPoint?
 

@@ -77,10 +77,38 @@ struct FinishAction: CaptureAction {
     }
 }
 
+struct RecordAction: CaptureAction {
+    let id = ActionID.record
+    let title = "录屏"
+    let symbolName = "video"
+    let scopes: Set<ActionScope> = [.capture]
+    let suppressesAutoCopy = true
+
+    func perform(_ context: CaptureContext) async throws {
+        // 截图工具条上直接进录屏：不入库当前选区，避免多一张无用截图
+        // 真正的选区由 RecordingCoordinator 的 plain 覆盖层重新框选
+        await MainActor.run { RecordingCoordinator.shared.toggle() }
+    }
+}
+
+struct ScrollCaptureAction: CaptureAction {
+    let id = ActionID.scrollCapture
+    let title = "长截图"
+    let symbolName = "arrow.down.doc"
+    let scopes: Set<ActionScope> = [.capture]
+    let suppressesAutoCopy = true
+
+    func perform(_ context: CaptureContext) async throws {
+        await MainActor.run { ScrollCaptureController.shared.begin() }
+    }
+}
+
 extension CaptureActionRegistry {
     /// 在这里登记。顺序即工具条上的显示顺序。
     static func registerBuiltins(into registry: CaptureActionRegistry) {
         registry.register(PinAction())
+        registry.register(RecordAction())
+        registry.register(ScrollCaptureAction())
         registry.register(CopyAction())
         registry.register(SaveAction())
         registry.register(CopyTextAction())

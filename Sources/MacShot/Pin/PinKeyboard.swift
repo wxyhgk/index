@@ -64,9 +64,15 @@ extension PinImageView {
         }
 
         if let tool = AnnotationTool.shortcut(forKeyCode: event.keyCode), !cmd {
-            exitLiveText()
             annotation.endTextEditing()
             annotation.tool = tool
+            annotation.pointerEngaged = tool == nil
+            // 同步选字与鼠标
+            if tool == nil, annotation.pointerEngaged {
+                if !isLiveTextActive { enterLiveText() }
+            } else {
+                if isLiveTextActive { exitLiveText() }
+            }
             needsDisplay = true
             return
         }

@@ -130,6 +130,11 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         }
         toolbarPanel.toolbarView.onHoverChanged = { [weak self] in self?.refreshHover() }
         toolbarPanel.toolbarView.onDragBy = { [weak self] delta in self?.moveWindow(by: delta) }
+        toolbarPanel.toolbarView.onWidthStepped = { [weak view] in
+            view?.needsDisplay = true
+            view?.onAnnotationsChanged?()
+            view?.onToolbarInvalidated?()
+        }
 
         // 用户拖动钉图时子窗口自动跟着走，但贴屏幕下边缘要翻到上方；
         // 缩放改的是父窗口尺寸，工具条得重新居中。两种都靠这两条通知兜住。
@@ -275,6 +280,8 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
             animate: false
         )
         window.invalidateShadow()
+        // 选字层跟随缩放：bounds 变了，归一化坐标需重贴，分析结果复用（像素未变）
+        imageView?.didZoom()
     }
 
     private func applyOpacity(_ step: CGFloat) {

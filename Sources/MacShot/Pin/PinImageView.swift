@@ -117,9 +117,11 @@ final class PinImageView: NSView {
     func activateToolbarControl(_ control: any ToolbarControl) {
         syncStrokeScale()
         control.activate(toolbarContext)
-        // 选字模式下点了别的工具（画笔 / 指针）→ 自动退出选字。
-        if isLiveTextActive, control.group == .tools, control.id != LiveTextControl.controlID {
-            exitLiveText()
+        // 选字并进鼠标：与截图覆盖层一致，鼠标（tool==nil && pointerEngaged）即选字
+        if annotation.tool == nil && annotation.pointerEngaged {
+            if !isLiveTextActive { enterLiveText() }
+        } else {
+            if isLiveTextActive { exitLiveText() }
         }
         refreshCanvas()
         needsDisplay = true
@@ -159,11 +161,42 @@ final class PinImageView: NSView {
     /// 自己接管拖动，AppKit 不要插手 —— 否则点工具条会被当成拖窗口。
     override var mouseDownCanMoveWindow: Bool { false }
 
+    /// 选字时空白处应透传给自身以便拖动窗口（PixPin 行为）。
+    /// 系统 overlay 铺满整图，默认 hitTest 会把所有点击都拦给 overlay，
+    /// 导致空白处拖不动。命中文字才交给 overlay，其余返回自身。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard isLiveTextActive, let overlay = liveTextOverlay else {
+            return super.hitTest(point)
+        }
+        // point 在 superview 坐标，先转到自身
+        let local = convert(point, from: superview)
+        guard bounds.contains(local) else { return super.hitTest(point) }
+        let overlayPoint = overlay.convert(local, from: self)
+        guard overlay.bounds.contains(overlayPoint) else { return super.hitTest(point) }
+        if overlay.hasInteractiveItem(at: overlayPoint) {
+            // 文字上：让系统层处理（I-beam、拖选）
+            return overlay.hitTest(overlayPoint) ?? overlay
+        }
+        // 空白：交回自身，后续 mouseDown 会走 performDrag 移动窗口
+        return self
+    }
+
     /// 窗口缩放会改变图片显示区，选字层跟着贴齐。
     /// 分析结果是归一化坐标，只改 frame 不用重跑。
     override func layout() {
         super.layout()
         liveTextOverlay?.frame = bounds
+    }
+
+    /// 供 PinWindowController 在滚轮缩放后调用，确保 overlay 坐标与新的 bounds 同步。
+    /// 不重跑 OCR（像素未变），仅重贴 frame 并刷新一次分析绑定。
+    func didZoom() {
+        // layout 已在窗口 setFrame 后触发，这里再显式同步一次以覆盖动画期间的中间态
+        liveTextOverlay?.frame = bounds
+        if isLiveTextActive {
+            // 重新绑定已有分析，避免 hasInteractiveItem 在缩放后的首帧误判为空白/文字
+            applyLiveTextAnalysis()
+        }
     }
 
     override func updateTrackingAreas() {
@@ -190,8 +223,13 @@ final class PinImageView: NSView {
     override func mouseMoved(with event: NSEvent) {
         onHoverChanged?()
         let point = convert(event.locationInWindow, from: nil)
-        if isLiveTextActive {
-            // 图像区域的光标（I-beam）由系统 overlay 自己管，这里不抢。
+        if isLiveTextActive, let overlay = liveTextOverlay {
+            let overlayLocal = overlay.convert(point, from: self)
+            if overlay.hasInteractiveItem(at: overlayLocal) {
+                // 文字上由系统层显示 I-beam
+                return
+            }
+            NSCursor.arrow.set()
             return
         }
         if annotation.tool == nil {
@@ -212,9 +250,14 @@ final class PinImageView: NSView {
 
         let point = convert(event.locationInWindow, from: nil)
 
-        // 选字模式：事件全归系统 overlay（子视图铺满，命中优先），
-        // 退出只走控件 / Esc / 切工具 / 右键。
-        if isLiveTextActive { return }
+        // 选字模式：命中文字交系统层（拖=选字），空白处落回拖窗口（PixPin 行为）。
+        if isLiveTextActive, let overlay = liveTextOverlay {
+            let overlayLocal = overlay.convert(point, from: self)
+            if overlay.hasInteractiveItem(at: overlayLocal) {
+                return
+            }
+            // 非文字空白：允许穿透到下面的拖窗口/取消选中逻辑
+        }
 
         if annotation.tool != nil {
             syncStrokeScale()
@@ -294,6 +337,18 @@ final class PinImageView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        // PixPin：选中框选工具时滚轮直接改粗细（右侧调节区），否则保持缩放
+        if !event.modifierFlags.contains(.command),
+           annotation.styleAxes.contains(.width),
+           (annotation.tool == .rect || annotation.tool == .ellipse) {
+            let delta = event.scrollingDeltaY
+            if delta != 0, annotation.stepWidth(by: delta > 0 ? 1 : -1) {
+                needsDisplay = true
+                onAnnotationsChanged?()
+                onToolbarInvalidated?()
+                return
+            }
+        }
         if event.modifierFlags.contains(.command) {
             onOpacityStep?(event.scrollingDeltaY > 0 ? 0.05 : -0.05)
         } else {
@@ -347,7 +402,16 @@ final class PinImageView: NSView {
         isLiveTextActive ? exitLiveText() : enterLiveText()
     }
 
-    private func enterLiveText() {
+    /// 钉图后自动进入选字（PixPin 行为）：用户无需再点一次「选字」即可拖选文字。
+    /// 仅当设备支持且尚未进入时触发，切换工具/穿透等仍会按原逻辑退出。
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, !isLiveTextActive, LiveTextAnalyzer.isSupported {
+            enterLiveText()
+        }
+    }
+
+    func enterLiveText() {
         guard !isLiveTextActive else { return }
         annotation.endTextEditing()
         annotation.select(nil)

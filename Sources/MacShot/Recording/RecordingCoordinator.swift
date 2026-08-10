@@ -18,6 +18,9 @@ final class RecordingCoordinator {
     private let shotStore: any ShotWriting
     private let styleStore: any StyleStore
     private var borderPanel: NSPanel?
+    private var controlPanel: RecordingControlPanel?
+    private var recordingStartDate: Date?
+    private var timer: Timer?
 
     /// 暂停/继续切换进行中（stopCapture / startCapture 在途）。
     /// 期间丢弃新的暂停与停止请求，避免同一段被并发收尾。
@@ -62,12 +65,15 @@ final class RecordingCoordinator {
         Task {
             defer { isTogglingPause = false }
             do {
+                let willPause = !ScreenRecorder.shared.isPaused
                 if ScreenRecorder.shared.isPaused {
                     try await ScreenRecorder.shared.resume()
                 } else {
                     try await ScreenRecorder.shared.pause()
                 }
                 setBorderPaused(ScreenRecorder.shared.isPaused)
+                // 控制条计时与菜单同步
+                freezeTimer(paused: willPause)
                 onStateChanged?()
             } catch {
                 NSLog("[MacShot] 录屏暂停/继续失败: \(error)")
@@ -120,12 +126,20 @@ final class RecordingCoordinator {
 
     // MARK: - 录制
 
+    /// 供截图工具条直接复用已选区域：跳过二次框选，直接开录
+    func startDirectly(region: CGRect, display: DisplayInfo) {
+        guard !ScreenRecorder.shared.isRecording, !overlay.isActive else { return }
+        Task { await startRecording(region: region, display: display) }
+    }
+
     private func startRecording(region: CGRect, display: DisplayInfo) async {
         do {
             try await ScreenRecorder.shared.start(region: region, display: display)
             lastRegion = region
             lastDisplay = display
             showBorder(around: region)
+            showControls(around: region, display: display)
+            startTimer()
             onStateChanged?()
         } catch {
             NSLog("[MacShot] 录屏启动失败: \(error)")
@@ -137,11 +151,17 @@ final class RecordingCoordinator {
         // 暂停中按停止 = 正常收尾拼接；暂停/继续切换在途时丢弃（再按一次即可）。
         guard ScreenRecorder.shared.isRecording, !isTogglingPause else { return }
         hideBorder()
+        hideControls()
+        stopTimer()
         do {
             let url = try await ScreenRecorder.shared.stop()
             onStateChanged?()
-            if styleStore.recordingSaveToLibrary {
-                await saveAnchorShot(for: url)
+            // 直接入库到图库：录屏完成后在图库可见（首帧当封面，路径挂 recording.path）
+            // 保留设置开关作二次过滤，但默认已改为 true，满足“直接存在图库”的预期
+            await saveAnchorShot(for: url)
+            if !styleStore.recordingSaveToLibrary {
+                // 开关被用户手动关掉时，入库后立即标记为不需要显示？目前仍入库，
+                // 仅作提示：文件已在 ~/Library/Application Support/MacShot/recordings
             }
             presentResult(url)
         } catch {
@@ -231,6 +251,58 @@ final class RecordingCoordinator {
     /// 暂停中把红框虚线化，一眼看出「框还在、没在录」。
     private func setBorderPaused(_ paused: Bool) {
         (borderPanel?.contentView as? RecordingBorderView)?.paused = paused
+        controlPanel?.isPaused = paused
+    }
+
+    // MARK: - 底部控制条
+
+    private func showControls(around region: CGRect, display: DisplayInfo) {
+        let panel = RecordingControlPanel()
+        panel.onPauseResume = { [weak self] in self?.pauseOrResume() }
+        panel.onStop = { [weak self] in Task { await self?.stopAndPresent() } }
+        panel.show(near: region, on: display)
+        controlPanel = panel
+    }
+
+    private func hideControls() {
+        controlPanel?.dismiss()
+        controlPanel = nil
+    }
+
+    private func startTimer() {
+        stopTimer()
+        recordingStartDate = Date()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, let start = self.recordingStartDate else { return }
+            let elapsed = max(0, Int(Date().timeIntervalSince(start)))
+            self.controlPanel?.updateTime(elapsed: elapsed)
+        }
+        RunLoop.main.add(timer!, forMode: .common)
+        controlPanel?.updateTime(elapsed: 0)
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+        recordingStartDate = nil
+    }
+
+    // 暂停期间计时不走：把已用时长冻结，继续时从该时长接着计时
+    private func freezeTimer(paused: Bool) {
+        if paused {
+            timer?.invalidate()
+            timer = nil
+        } else {
+            // 重建：用已显示的 elapsed 反推 startDate
+            let current = controlPanel?.currentElapsed ?? 0
+            recordingStartDate = Date().addingTimeInterval(TimeInterval(-current))
+            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                guard let self, let start = self.recordingStartDate else { return }
+                let elapsed = max(0, Int(Date().timeIntervalSince(start)))
+                self.controlPanel?.updateTime(elapsed: elapsed)
+            }
+            RunLoop.main.add(timer!, forMode: .common)
+        }
     }
 
     // MARK: - 结果
@@ -271,6 +343,130 @@ final class RecordingCoordinator {
     private func presentError(_ title: String, _ error: Error) {
         AppAlert.error(title, error: error)
     }
+}
+
+// MARK: - 录制底部控制条（暂停/继续/停止）
+
+@MainActor
+private final class RecordingControlPanel: NSObject {
+
+    var onPauseResume: (() -> Void)?
+    var onStop: (() -> Void)?
+
+    private var panel: NSPanel?
+    private var timeLabel: NSTextField?
+    private var pauseButton: NSButton?
+    private var stopButton: NSButton?
+
+    private var elapsed: Int = 0
+    var currentElapsed: Int { elapsed }
+    var isPaused: Bool = false {
+        didSet {
+            let name = isPaused ? "play.fill" : "pause.fill"
+            pauseButton?.image = NSImage(
+                systemSymbolName: name,
+                accessibilityDescription: isPaused ? "继续" : "暂停"
+            )
+            pauseButton?.toolTip = isPaused ? "继续" : "暂停"
+        }
+    }
+
+    func show(near region: CGRect, on display: DisplayInfo) {
+        guard panel == nil else { return }
+
+        let size = CGSize(width: 320, height: 64)
+        let screen = display.frame
+
+        var origin = CGPoint(x: region.midX - size.width / 2, y: region.minY - size.height - 16)
+        if origin.y < screen.minY + 8 {
+            origin.y = region.maxY + 12
+            if origin.y + size.height > screen.maxY - 8 {
+                origin.y = region.maxY - size.height - 12
+            }
+        }
+        origin.x = min(max(screen.minX + 8, origin.x), screen.maxX - size.width - 8)
+
+        let panel = NSPanel(
+            contentRect: CGRect(origin: origin, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.isReleasedWhenClosed = false
+        panel.ignoresMouseEvents = false
+
+        let content = NSView(frame: CGRect(origin: .zero, size: size))
+        content.wantsLayer = true
+        content.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.82).cgColor
+        content.layer?.cornerRadius = 10
+
+        let time = NSTextField(labelWithString: "00:00")
+        time.font = .monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
+        time.textColor = .white
+        time.alignment = .center
+
+        let pause = NSButton(title: "", target: self, action: #selector(pauseTapped))
+        pause.bezelStyle = .circular
+        pause.controlSize = .regular
+        pause.image = NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "暂停")
+        pause.imagePosition = .imageOnly
+        pause.toolTip = "暂停"
+
+        let stop = NSButton(title: "", target: self, action: #selector(stopTapped))
+        stop.bezelStyle = .circular
+        stop.controlSize = .regular
+        stop.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "停止")
+        stop.imagePosition = .imageOnly
+        stop.toolTip = "停止"
+        stop.keyEquivalent = "\r"
+
+        let buttons = NSStackView(views: [pause, stop])
+        buttons.orientation = .horizontal
+        buttons.spacing = 10
+
+        let stack = NSStackView(views: [time, buttons])
+        stack.orientation = .horizontal
+        stack.spacing = 14
+        stack.alignment = .centerY
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -14)
+        ])
+
+        panel.contentView = content
+        panel.orderFrontRegardless()
+
+        self.panel = panel
+        self.timeLabel = time
+        self.pauseButton = pause
+        self.stopButton = stop
+        self.elapsed = 0
+    }
+
+    func updateTime(elapsed: Int) {
+        self.elapsed = elapsed
+        timeLabel?.stringValue = String(format: "%02d:%02d", elapsed / 60, elapsed % 60)
+    }
+
+    func dismiss() {
+        panel?.orderOut(nil)
+        panel = nil
+        timeLabel = nil
+        pauseButton = nil
+        stopButton = nil
+    }
+
+    @objc private func pauseTapped() { onPauseResume?() }
+    @objc private func stopTapped() { onStop?() }
 }
 
 /// 录制中的选区描边：细红框 + 四角加粗，一眼看出正在录哪块。

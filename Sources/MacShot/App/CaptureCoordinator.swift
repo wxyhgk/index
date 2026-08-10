@@ -128,6 +128,15 @@ final class CaptureCoordinator {
     }
 
     private func handle(_ result: SelectionResult, previousApp: NSRunningApplication?) {
+        // 工具条上直接转录屏/长截图：不产生一张截图，避免图库多一张无用记录
+        if result.actionID == ActionID.record {
+            RecordingCoordinator.shared.startDirectly(region: result.region, display: result.display)
+            return
+        }
+        if result.actionID == ActionID.scrollCapture {
+            ScrollCaptureController.shared.begin(with: result.region, display: result.display)
+            return
+        }
         // ⌥+单击整窗：异步用 SCK 重拍不被遮挡的完整窗口（透明背景 + 可选系统阴影）。
         // 冻结画面的裁剪只在窗口已经消失（被关掉）时兜底。
         if let request = result.windowCaptureRequest {

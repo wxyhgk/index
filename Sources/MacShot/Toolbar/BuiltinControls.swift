@@ -67,9 +67,10 @@ struct LiveTextControl: ToolbarControl {
     /// 工具组尾部（画笔在 0 起的小序号，这里刻意拉开距离）。
     var order: Int { 1000 }
 
-    /// "text.viewfinder" 已被「取字」动作占用，这里用 I-beam 光标的符号。
-    func isVisible(_ context: ToolbarContext) -> Bool { context.toggleLiveText != nil }
-    func isSelected(_ context: ToolbarContext) -> Bool { context.isLiveTextActive() }
+    /// 已收敛到鼠标模式：钉图现在与截图一致，选字并进「鼠标」不再需要独立按钮。
+    /// 保留类型仅作兼容，永不显示（见 PinImageView.viewDidMoveToWindow 自动进入）。
+    func isVisible(_ context: ToolbarContext) -> Bool { false }
+    func isSelected(_ context: ToolbarContext) -> Bool { false }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         ToolbarStyle.drawCenteredSymbol("character.cursor.ibeam", in: frame)
@@ -77,6 +78,43 @@ struct LiveTextControl: ToolbarControl {
 
     func activate(_ context: ToolbarContext) {
         context.toggleLiveText?()
+    }
+}
+
+// MARK: - 形状变体（PixPin 第二行左侧：矩形↔圆形）
+//
+// 矩形与椭圆共用同一把画笔的“样式”—— PixPin 在选中矩形后，下行左侧露出
+// 两个可切的形状（□/○），而非顶行再占一个椭圆按钮。此处用两个
+// 样式行控件复刻：任一“框选类”工具（rect/ellipse）激活时同时露面，
+// 点选即切工具，其余样式（颜色/粗细）随切后的工具自动刷新。
+// 只在截图与钉图两种场景露面，排序置于样式行最前（order < 0）。
+struct ShapeVariantControl: ToolbarControl {
+    let tool: AnnotationTool
+
+    var id: String { "shape.\(tool.layerKind.rawValue)" }
+    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var group: ToolbarGroup { .style }
+    // 方在前、圆在后；都小于颜色/粗细的 0/100，确保在样式行最左侧。
+    var order: Int { tool == .rect ? -20 : -19 }
+
+    func isVisible(_ context: ToolbarContext) -> Bool {
+        guard let cur = context.annotation.styleTool else { return false }
+        return cur == .rect || cur == .ellipse
+    }
+
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.tool == tool
+    }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        // 与顶行工具共用同套符号，保证视觉一致；PixPin 第二行左侧即此意。
+        ToolbarStyle.drawCenteredSymbol(tool.symbolName, in: frame, pointSize: 14)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        context.annotation.endTextEditing()
+        context.annotation.tool = tool
+        context.annotation.pointerEngaged = false
     }
 }
 
@@ -369,6 +407,9 @@ extension ToolbarRegistry {
         }
 
         registry.register(LiveTextControl())
+        // PixPin：选中矩形后下行左侧出矩形/圆形两格变体
+        registry.register(ShapeVariantControl(tool: .rect))
+        registry.register(ShapeVariantControl(tool: .ellipse))
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
         // 数值轴 × 三档全部注册；哪些真正出现在条上由当前工具的描述符决定
         // （`ToolParamControl.isVisible` → `ToolRegistry.descriptor(for:).axes`）。

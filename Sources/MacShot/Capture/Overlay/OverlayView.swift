@@ -372,11 +372,57 @@ final class OverlayView: NSView {
         let global = geometry.global(fromViewLocal: local)
         switch model.phase {
         case .adjusting:
+            let oldRect = model.confirmedRect
+            let wasMove = model.adjustingHandle?.isMove == true
             model.updateAdjust(to: global)
+            if wasMove, let oldRect, let newRect = model.confirmedRect {
+                let dx = newRect.origin.x - oldRect.origin.x
+                let dy = newRect.origin.y - oldRect.origin.y
+                // AppKit Y 向上，画布 Y 向下
+                let deltaCanvas = CGPoint(x: dx, y: -dy)
+                annotation.translateAll(by: deltaCanvas)
+            }
         default:
             model.updateDrag(to: global)
         }
         redraw()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        // PixPin：工具条右侧调节区 + 滚轮改粗细。只要当前工具有 width 轴，
+        // 且滚轮发生在工具条范围内（或hover在样式控件上），就步进粗细。
+        // 不与选区缩放手势冲突：滚动量很小时不吞事件，让父视图/系统处理。
+        guard model.phase == .confirmed,
+              annotation.styleAxes.contains(.width)
+        else {
+            super.scrollWheel(with: event)
+            return
+        }
+        let local = localPoint(of: event)
+        let styleSlots = slots.filter { $0.control?.group == .style }
+        let isOverStyle = styleSlots.contains { $0.frame.contains(local) }
+        // 兼容触摸板：任意在样式行上的滚轮即视为意图；不在样式行则仅当有hover时忽略，
+        // 避免在画布中间滚轮误改粗细。
+        let shouldHandle: Bool = {
+            if isOverStyle { return true }
+            // 悬停在任意样式控件上（如刚从工具条移开但仍有hoveredControlID）
+            if let hovered = hoveredControlID,
+               styleSlots.contains(where: { $0.control?.id == hovered }) { return true }
+            // PixPin 也支持在画布上直接滚轮改粗细：当已选框选工具时，滚轮即改粗细
+            if annotation.tool == .rect || annotation.tool == .ellipse { return true }
+            return false
+        }()
+        guard shouldHandle else {
+            super.scrollWheel(with: event)
+            return
+        }
+        let delta = event.scrollingDeltaY
+        guard delta != 0 else { super.scrollWheel(with: event); return }
+        // 小数防抖：触控板连续小增量，累积到阈值再步进
+        let step = delta > 0 ? 1 : -1
+        if annotation.stepWidth(by: step) {
+            redraw()
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
