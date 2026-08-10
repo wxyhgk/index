@@ -270,6 +270,15 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             .sorted { $0.count != $1.count ? $0.count > $1.count : $0.name < $1.name }
     }
 
+    func shotsMissingAttribute(key: String) -> [Shot] {
+        shots.filter { shot in
+            guard let id = shot.id else { return false }
+            if key == AttributeKey.ocrText, let t = shot.ocrText, !t.isEmpty { return false }
+            if key == AttributeKey.sourceURL, let u = shot.sourceURL, !u.isEmpty { return false }
+            return payloadStore[id]?[key] == nil
+        }
+    }
+
     var totalCount: Int { shots.count }
 
     // MARK: - 额外读辅助（供 GalleryBatch 以外调用方）
@@ -403,6 +412,39 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             tagsStore[id] = set
         }
         if filter == .tag(tag) { filter = .all }
+        objectWillChange.send()
+    }
+
+    /// 通用属性写入（供 Pipeline 注入使用）。`ocrText`/`sourceURL` 写回 Shot，通用 key 进 payload。
+    func writeAttribute(shotID: Int64, key: String, value: AttributeValue) {
+        switch (key, value) {
+        case (AttributeKey.ocrText, .text(let text)):
+            if let idx = shots.firstIndex(where: { $0.id == shotID }) {
+                shots[idx].ocrText = text
+            }
+        case (AttributeKey.sourceURL, .text(let url)):
+            if let idx = shots.firstIndex(where: { $0.id == shotID }) {
+                shots[idx].sourceURL = url
+            }
+        default:
+            var map = payloadStore[shotID] ?? [:]
+            if let data = value.payload {
+                map[key] = data
+            } else if let text = value.searchableText {
+                map[key] = Data(text.utf8)
+            } else {
+                map[key] = Data()
+            }
+            payloadStore[shotID] = map
+        }
+        objectWillChange.send()
+    }
+
+    func removeAttribute(shotID: Int64, key: String) {
+        payloadStore[shotID]?[key] = nil
+        if payloadStore[shotID]?.isEmpty == true {
+            payloadStore[shotID] = nil
+        }
         objectWillChange.send()
     }
 

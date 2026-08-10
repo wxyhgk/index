@@ -15,6 +15,8 @@ final class RecordingCoordinator {
     static let shared = RecordingCoordinator()
 
     private let overlay = SelectionOverlayController()
+    private let shotStore: any ShotWriting
+    private let styleStore: any StyleStore
     private var borderPanel: NSPanel?
 
     /// 暂停/继续切换进行中（stopCapture / startCapture 在途）。
@@ -31,7 +33,18 @@ final class RecordingCoordinator {
     /// 正在框选录制区域。截图入口用它和 `ScreenRecorder.isRecording` 一起做互斥。
     var isSelecting: Bool { overlay.isActive }
 
-    private init() {}
+    init(
+        shotStore: (any ShotWriting)? = nil,
+        styleStore: (any StyleStore)? = nil
+    ) {
+        self.shotStore = shotStore ?? ShotStore.shared
+        self.styleStore = styleStore ?? AppSettings.shared
+    }
+
+    /// 预览可用 Fake
+    static var preview: RecordingCoordinator {
+        RecordingCoordinator(shotStore: FakeShotStore(), styleStore: FakeStyleStore())
+    }
 
     /// 菜单和快捷键的唯一入口：没在录 = 开始框选，录制中或暂停中 = 停止。
     func toggle() {
@@ -77,8 +90,8 @@ final class RecordingCoordinator {
         guard case .idle = ScreenRecorder.shared.state, !overlay.isActive else { return }
         // 截图流程进行中不叠加录屏，反过来 CaptureCoordinator.begin 也会查我们。
         guard !CaptureCoordinator.shared.isBusy else { return }
-        guard ScreenRecordingPermission.isGranted else {
-            ScreenRecordingPermission.request()
+        guard MacScreenCapturer.shared.isPermissionGranted else {
+            _ = MacScreenCapturer.shared.requestPermission()
             presentInfo(
                 "需要「屏幕录制」权限",
                 "请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 MacShot，授权后重新启动。"
@@ -90,7 +103,7 @@ final class RecordingCoordinator {
             do {
                 // 冻结画面只用于框选预览，真正录的是实时屏幕。
                 let snapshots = try await ImmediateScreenSource().makeSnapshots()
-                let windowList = WindowLister.onScreenWindows(
+                let windowList = MacWindowLister.shared.onScreenWindows(
                     excludingPID: ProcessInfo.processInfo.processIdentifier
                 )
                 overlay.begin(snapshots: snapshots, windowList: windowList, mode: .plain) {
@@ -127,7 +140,7 @@ final class RecordingCoordinator {
         do {
             let url = try await ScreenRecorder.shared.stop()
             onStateChanged?()
-            if AppSettings.shared.recordingSaveToLibrary {
+            if styleStore.recordingSaveToLibrary {
                 await saveAnchorShot(for: url)
             }
             presentResult(url)
@@ -163,15 +176,28 @@ final class RecordingCoordinator {
                 meta.displayName = display.name
             }
 
-            let shot = try ShotStore.shared.save(image: frame, metadata: meta)
+            let shot = try shotStore.save(image: frame, metadata: meta)
             if let shotID = shot.id {
-                ShotStore.shared.writeAttribute(
-                    shotID: shotID,
-                    key: AttributeKey.recordingPath,
-                    value: .data(Data(url.path.utf8), searchableText: nil)
-                )
-            }
-        } catch {
+                if let s = shotStore as? ShotStore {
+                    s.writeAttribute(
+                        shotID: shotID,
+                        key: AttributeKey.recordingPath,
+                        value: .data(Data(url.path.utf8), searchableText: nil)
+                    )
+                } else if let f = shotStore as? FakeShotStore {
+                    f.writeAttribute(
+                        shotID: shotID,
+                        key: AttributeKey.recordingPath,
+                        value: .data(Data(url.path.utf8), searchableText: nil)
+                    )
+                } else {
+                    ShotStore.shared.writeAttribute(
+                        shotID: shotID,
+                        key: AttributeKey.recordingPath,
+                        value: .data(Data(url.path.utf8), searchableText: nil)
+                    )
+                }
+            }        } catch {
             NSLog("[MacShot] 录屏首帧入库失败: \(error)")
         }
     }

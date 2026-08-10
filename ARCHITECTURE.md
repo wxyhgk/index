@@ -49,7 +49,7 @@
 | 禁止 | 现存违例（2026-07 对账） |
 |---|---|
 | 领域层引用 App 配置 | `Annotation/AnnotationState` 读写 `AppSettings.shared`（init 取种子默认值 + `setStyleIndex` 落盘单工具样式）；效果层水印描述符读 `AppSettings`（开关语义，`CapturePostProcessor.isEnabled` 同款先例，可辩护但记录在案） |
-| 各层散读 `AppSettings` | `Storage/StorageJanitor`、`Platform/ImageExporter`、`Capture/OverlayView` 等 5 处（轻，逐步随重构下沉为注入参数） |
+| 各层散读 `AppSettings` | `Platform/ImageExporter`、`Capture/OverlayView` 等 4 处（轻，App 层 20+ 处已收敛为 `StyleStore` 注入，剩余随重构下沉） |
 | ~~界面层绕过注册表~~ | **已清零**（2026-07）：pin 直调与 `UploadAction()` 直接实例化都已迁回 `CaptureActionRegistry`。全仓再无界面层绕过注册表的地方 |
 | 平台副作用散落 | `NSCursor` 5 个文件各自 set；`NSWorkspace` 2 处（取图标 / 开系统设置）。低优先级，暂不收敛 |
 

@@ -14,6 +14,11 @@ final class CaptureCoordinator {
 
     private let overlay = SelectionOverlayController()
     private let sources: CaptureSourceRegistry
+    private let windowListing: WindowListing
+    private let screenCapturer: ScreenCapturing
+    private let shotStore: any ShotWriting
+    private let styleStore: any StyleStore
+    private let pipeline: CapturePipeline
     private var isPreparing = false
     /// 进行中的准备任务（冻结屏幕 / 延时等待）。取消它就打断整次捕获。
     private var prepareTask: Task<Void, Never>?
@@ -25,8 +30,29 @@ final class CaptureCoordinator {
 
     /// 注册表可注入（测试用替身）；不传就用全局共享的那份。
     /// 默认值在方法体里取而不是写成默认参数 —— 默认参数在调用方上下文求值，拿不到主线程隔离。
-    init(sources: CaptureSourceRegistry? = nil) {
+    init(
+        sources: CaptureSourceRegistry? = nil,
+        windowListing: WindowListing? = nil,
+        screenCapturer: ScreenCapturing? = nil,
+        shotStore: (any ShotWriting)? = nil,
+        styleStore: (any StyleStore)? = nil,
+        pipeline: CapturePipeline? = nil
+    ) {
         self.sources = sources ?? .shared
+        self.windowListing = windowListing ?? MacWindowLister.shared
+        self.screenCapturer = screenCapturer ?? MacScreenCapturer.shared
+        self.shotStore = shotStore ?? ShotStore.shared
+        self.styleStore = styleStore ?? AppSettings.shared
+        self.pipeline = pipeline ?? CapturePipeline.shared
+    }
+
+    /// 预览/测试便利：直接注入具体假实现。
+    static var preview: CaptureCoordinator {
+        CaptureCoordinator(
+            shotStore: FakeShotStore(),
+            styleStore: FakeStyleStore(),
+            pipeline: CapturePipeline(writer: ShotStoreAttributeWriter(store: FakeShotStore()))
+        )
     }
 
     /// 截图流程是否进行中（准备或框选）。录屏入口用它做互斥。
@@ -51,7 +77,7 @@ final class CaptureCoordinator {
             return
         }
 
-        guard ScreenRecordingPermission.isGranted else {
+        guard screenCapturer.isPermissionGranted else {
             requestPermissionThenPrompt()
             return
         }
@@ -84,7 +110,7 @@ final class CaptureCoordinator {
                 // 必须在覆盖层出现前记下来。放在捕获之后记 —— 延时等待期间用户可能切换了 App，
                 // 定格瞬间的前台应用才是截图的真实来源。
                 let previousApp = SystemNavigator.frontmostApplication
-                let windowList = WindowLister.onScreenWindows(
+                let windowList = windowListing.onScreenWindows(
                     excludingPID: ProcessInfo.processInfo.processIdentifier
                 )
 
@@ -108,10 +134,10 @@ final class CaptureCoordinator {
             Task {
                 var image = result.image
                 do {
-                    image = try await WindowCapturer.capture(
+                    image = try await screenCapturer.captureWindow(
                         windowID: request.windowID,
                         scale: result.display.scale,
-                        includeShadow: AppSettings.shared.windowCaptureShadow
+                        includeShadow: styleStore.windowCaptureShadow
                     )
                 } catch {
                     NSLog("[MacShot] 整窗捕获失败，退回冻结画面裁剪: \(error)")
@@ -130,7 +156,7 @@ final class CaptureCoordinator {
         image: CGImage,
         previousApp: NSRunningApplication?
     ) {
-        let sourceWindow = result.window ?? WindowLister.bestMatch(
+        let sourceWindow = result.window ?? windowListing.bestMatch(
             for: result.region,
             excludingPID: ProcessInfo.processInfo.processIdentifier
         )
@@ -146,7 +172,7 @@ final class CaptureCoordinator {
             // 不管用户点了哪个按钮，都先入库 —— 自动保存是这个 App 的前提。
             // 注意存进去的是**未标注**的原始像素：截图时画的标注和后期编辑一样，
             // 只是一条 revision，原图永远保持干净、可回溯。
-            let shot = try ShotStore.shared.save(image: image, metadata: metadata)
+            let shot = try shotStore.save(image: image, metadata: metadata)
 
             // 「导出自动加水印」只挂在截图路径这一处：设置开着、配了文案、
             // 截图时没手动开过水印（单例语义的查重），就追加一层 —— 造层走
@@ -155,7 +181,7 @@ final class CaptureCoordinator {
             // （pixelScale 保持 1），它和手画的标注一样进修订链，
             // 图库里能看到、能删。编辑器/钉图的手动开关不受这里影响。
             var layers = result.layers
-            let settings = AppSettings.shared
+            let settings: any StyleStore = styleStore
             if settings.autoWatermark,
                !settings.trimmedWatermarkText.isEmpty,
                !layers.elements.contains(where: { $0.kind == .watermark }),
@@ -203,7 +229,7 @@ final class CaptureCoordinator {
             }
 
             if !layers.isEmpty {
-                ShotStore.shared.appendRevision(
+                shotStore.appendRevision(
                     shot: shot,
                     layers: layers,
                     note: "截图时标注"
@@ -214,7 +240,7 @@ final class CaptureCoordinator {
                 // 派生处理全部交给流水线。协调器不知道有几个处理器、各自做什么。
                 // 新增能力不会改动这里 —— 这正是此前 OCR 和浏览器地址各写一份
                 // 「detached → 算 → MainActor.run → updateXXX」拷贝的原因。
-                CapturePipeline.shared.run(PostProcessInput(
+                pipeline.run(PostProcessInput(
                     shotID: id,
                     image: image,   // 跑原图，标注可能盖住文字
                     appBundleID: metadata.appBundleID
@@ -236,7 +262,7 @@ final class CaptureCoordinator {
             run(actionID: result.actionID, context: context)
 
             // 暂存卡片：拖出去就是文件。钉图除外 —— 用户已经得到一个窗口了。
-            if result.actionID != ActionID.pin, AppSettings.shared.showShelfCard {
+            if result.actionID != ActionID.pin, styleStore.showShelfCard {
                 ShelfController.shared.present(image: context.rendered(), shot: shot)
             }
         } catch {
@@ -249,7 +275,7 @@ final class CaptureCoordinator {
     /// 配合 Obsidian 等监听文件夹让截图直接进知识库。
     /// 尽力而为 —— 未开启、目录不存在都静默跳过，写失败只记日志不打扰。
     private func saveAutoCopy(of context: CaptureContext) {
-        let settings = AppSettings.shared
+        let settings: any StyleStore = styleStore
         guard settings.autoCopyEnabled else { return }
 
         let path = settings.autoCopyDirectory
@@ -287,7 +313,7 @@ final class CaptureCoordinator {
 
         // 动作自己管剪贴板时不要再叠加一次。此前这里是个 switch 的 default 分支，
         // 新动作会默认吃到自动复制 —— 「上传图床」会顺手覆盖剪贴板。
-        if AppSettings.shared.copyToClipboard && !action.suppressesAutoCopy {
+        if styleStore.copyToClipboard && !action.suppressesAutoCopy {
             Clipboard.copy(context.rendered())
         }
 
@@ -306,7 +332,7 @@ final class CaptureCoordinator {
     /// 滚动截图入口也复用这份引导，避免出现第二份权限弹窗实现。
     func requestPermissionThenPrompt() {
         // 这一步会触发系统的授权弹窗（首次）。
-        ScreenRecordingPermission.request()
+        _ = screenCapturer.requestPermission()
 
         let choice = AppAlert.confirm(
             "需要「屏幕录制」权限",

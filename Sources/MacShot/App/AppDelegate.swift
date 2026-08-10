@@ -4,13 +4,40 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
-    private let settings = AppSettings.shared
+    private let settings: any StyleStore
+    private let shotStore: any ShotReading & ShotWriting & ShotObserving
+    private let pipeline: CapturePipeline
     /// 录制中每秒刷一次菜单里的「停止录制（mm:ss）」计时。
     private var recordingTimer: Timer?
 
     // MARK: - URL scheme（macshot://）
 
-    private let urlRouter = URLCommandRouter()
+    private let urlRouter: URLCommandRouter
+
+    init(
+        settings: (any StyleStore)? = nil,
+        shotStore: (any ShotReading & ShotWriting & ShotObserving)? = nil,
+        pipeline: CapturePipeline? = nil,
+        urlRouter: URLCommandRouter? = nil
+    ) {
+        self.settings = settings ?? AppSettings.shared
+        self.shotStore = shotStore ?? ShotStore.shared
+        self.pipeline = pipeline ?? CapturePipeline.shared
+        self.urlRouter = urlRouter ?? URLCommandRouter()
+        super.init()
+    }
+
+    /// 预览/测试可用 Fake
+    static var preview: AppDelegate {
+        let fakeStore = FakeShotStore.preview
+        let fakeStyle = FakeStyleStore()
+        return AppDelegate(
+            settings: fakeStyle,
+            shotStore: fakeStore,
+            pipeline: CapturePipeline(writer: ShotStoreAttributeWriter(store: fakeStore)),
+            urlRouter: .preview
+        )
+    }
     /// 冷启动经 URL 打开时，`application(_:open:)` 先于 `applicationDidFinishLaunching`
     /// 到达（URL 以 Apple Event 随启动派发）—— 此时注册表还没装配，先存起来，
     /// didFinishLaunching 末尾统一重放。
@@ -26,19 +53,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        _ = ShotStore.shared          // 提前建库，避免第一次截图时卡顿
+        _ = shotStore          // 提前建库，避免第一次截图时卡顿
         CaptureActionRegistry.registerBuiltins(into: .shared)
-        CapturePipeline.registerBuiltins(into: .shared)
+        CapturePipeline.registerBuiltins(into: pipeline, styleStore: settings)
         ToolbarRegistry.registerBuiltins(into: .shared)
         GalleryDestinationRegistry.registerBuiltins(into: .shared)
 
         // 修订落库后重画缩略图所需的两件事，在这里接线 ——
         // Storage 不许认识 Render（渲染）和 UI（缓存），所以由编排层注入。
-        ShotStore.shared.revisionThumbnailRenderer = { base, layers in
-            LayerRenderer.render(base: base, layers: layers)
-        }
-        ShotStore.shared.thumbnailInvalidator = { shot in
-            ThumbnailCache.shared.remove(forKey: shot.sha256)
+        if let store = shotStore as? ShotStore {
+            store.revisionThumbnailRenderer = { base, layers in
+                LayerRenderer.render(base: base, layers: layers)
+            }
+            store.thumbnailInvalidator = { shot in
+                ThumbnailCache.shared.remove(forKey: shot.sha256)
+            }
         }
         registerCaptureSources()
 
@@ -46,11 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupHotKeys()
 
-        AttributeBackfill.runIfNeeded()   // 给老截图补缺失的派生属性，后台串行，不影响启动
-        StorageJanitor.runIfNeeded()      // 清理过期且无价值（未收藏、未标注）的旧截图
+        AttributeBackfill.runIfNeeded(styleStore: settings, store: shotStore)   // 给老截图补缺失的派生属性，后台串行，不影响启动
+        StorageJanitor.runIfNeeded(settings: settings, store: shotStore)      // 清理过期且无价值（未收藏、未标注）的旧截图
         ShelfController.cleanupDragFiles()   // 上次会话拖出的临时 PNG，此刻才能安全删
 
-        settings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
+        if let appSettings = settings as? AppSettings {
+            appSettings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
+        }
         RecordingCoordinator.shared.onStateChanged = { [weak self] in
             self?.recordingStateChanged()
         }
@@ -76,10 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 延时秒数由闭包注入 —— 采集层不引用 AppSettings，配置只在这里交汇。
     /// `macshot://capture?delay=N` 的一次性覆盖也在这里消费，优先于设置值。
     private func registerCaptureSources() {
-        let immediate = ImmediateScreenSource()
+        let immediate = ImmediateScreenSource(capturer: MacScreenCapturer.shared)
         CaptureSourceRegistry.shared.register(immediate)
-        CaptureSourceRegistry.shared.register(DelayedScreenSource(wrapping: immediate) { [urlRouter] in
-            urlRouter.consumeDelayOverride() ?? AppSettings.shared.captureDelay
+        CaptureSourceRegistry.shared.register(DelayedScreenSource(wrapping: immediate) { [urlRouter, settings] in
+            urlRouter.consumeDelayOverride() ?? settings.captureDelay
         })
     }
 
@@ -366,8 +397,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 文本框内有焦点时让其自行全选
         if NSApp.keyWindow?.firstResponder is NSTextView { return }
         guard GalleryWindowMode.shared.mode == .library else { return }
-        Task {
-            let ids = await ShotStore.shared.allMatchingIDs()
+        Task { [shotStore] in
+            let ids = await shotStore.allMatchingIDs()
             GallerySelection.shared.selectAll(ids)
         }
     }

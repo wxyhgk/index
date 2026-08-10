@@ -37,6 +37,25 @@ protocol ScreenshotCapturing {
     func makeSnapshots() async throws -> [DisplaySnapshot]
 }
 
+/// 屏幕捕获抽象：把 ScreenCaptureKit / CGWindowListCreateImage 等 macOS 专有调用
+/// 隔离在 Platform/macOS/，调用方只依赖此协议。
+@MainActor
+protocol ScreenCapturing {
+    var isPermissionGranted: Bool { get }
+    @discardableResult
+    func requestPermission() -> Bool
+    func captureDisplays() async throws -> [DisplaySnapshot]
+    func captureWindow(windowID: CGWindowID, scale: CGFloat, includeShadow: Bool) async throws -> CGImage
+}
+
+/// 窗口列表抽象：把 CGWindowListCopyWindowInfo 隔离在 Platform/macOS/。
+@MainActor
+protocol WindowListing {
+    func onScreenWindows(excludingPID pid: pid_t) -> [WindowInfo]
+    func frontmostWindow(at point: CGPoint, excludingPID pid: pid_t) -> WindowInfo?
+    func bestMatch(for region: CGRect, excludingPID pid: pid_t) -> WindowInfo?
+}
+
 @MainActor
 protocol WindowPinning {
     func pin(image: CGImage, layers: Layers<ImageSpace>)
@@ -59,9 +78,12 @@ protocol WindowPinning {
 // | LiveText 分析 | LiveTextAnalyzer | LiveTextAnalyzing | WinLiveTextAnalyzer |
 // | 面板摆放 | PanelPlacement | PanelPlacing | WinPanelPlacement |
 // | 剪贴板 | Clipboard / MacClipboard | ClipboardWriting (已落地) | WinClipboard |
+// | 屏幕捕获 | MacScreenCapturer | ScreenCapturing (已落地) | WinScreenCapturer |
+// | 窗口列表 | MacWindowLister | WindowListing (已落地) | WinWindowLister |
 //
 // 约束：新增协议保持 @MainActor + 小接口（1–3 方法），避免把 AppKit 类型
 // 泄漏到上层；CGImage / URL / String 等跨平台值类型优先。
+// 边界总表见 Platform/README.md（macOS 专有符号零泄漏至 Capture/Overlay）。
 // ============================================================
 
 /// macOS 实现（现 `Clipboard` 的包装，未来 `WinClipboard` 另实现）

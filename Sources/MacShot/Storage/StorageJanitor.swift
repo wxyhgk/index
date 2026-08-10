@@ -13,24 +13,27 @@ enum StorageJanitor {
     static let batchLimit = 200
 
     @MainActor
-    static func runIfNeeded() {
-        runIfNeeded(settings: AppSettings.shared)
-    }
-
-    /// 可注入版本：便于单测无需触碰 UserDefaults。
-    @MainActor
-    static func runIfNeeded(settings: AppSettings) {
+    static func runIfNeeded(
+        settings: any StyleStore = AppSettings.shared,
+        store: any ShotReading & ShotWriting = ShotStore.shared
+    ) {
         guard settings.autoCleanupEnabled else { return }
 
         let days = settings.autoCleanupDays
         guard days > 0 else { return }
         let cutoff = Date().addingTimeInterval(-TimeInterval(days) * 86_400)
 
-        let candidates = ShotStore.shared.cleanupCandidates(olderThan: cutoff, limit: batchLimit)
+        let candidates = store.cleanupCandidates(olderThan: cutoff, limit: batchLimit)
         guard !candidates.isEmpty else { return }
 
         // 单事务批量删除：逐张删会在启动时打出最多 batchLimit 轮全量 reload。
-        ShotStore.shared.delete(candidates)
+        store.delete(candidates)
         NSLog("[MacShot] 存储清理：删除 \(candidates.count) 张（超过 \(days) 天、未收藏、无标签、未标注）")
+    }
+
+    /// 兼容旧调用点（具体类型）。仍走注入主路径，默认值保持 `shared`。
+    @MainActor
+    static func runIfNeeded(settings: AppSettings) {
+        runIfNeeded(settings: settings as any StyleStore, store: ShotStore.shared)
     }
 }

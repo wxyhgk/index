@@ -7,8 +7,13 @@ import Foundation
 /// 文字识别。结果进全文索引，于是「搜截图里的字」直接可用。
 struct OCRProcessor: CapturePostProcessor {
     let id = "ocr"
+    private let styleStore: any StyleStore
 
-    @MainActor var isEnabled: Bool { AppSettings.shared.runOCR }
+    init(styleStore: any StyleStore = AppSettings.shared) {
+        self.styleStore = styleStore
+    }
+
+    @MainActor var isEnabled: Bool { styleStore.runOCR }
 
     func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
         let text = await VisionOCR().recognizeText(in: input.image)
@@ -35,8 +40,13 @@ struct BrowserURLProcessor: CapturePostProcessor {
 /// 于是搜「代码」「聊天」直接命中对应分类的截图。
 struct CategoryProcessor: CapturePostProcessor {
     let id = "category"
+    private let styleStore: any StyleStore
 
-    @MainActor var isEnabled: Bool { AppSettings.shared.autoClassify }
+    init(styleStore: any StyleStore = AppSettings.shared) {
+        self.styleStore = styleStore
+    }
+
+    @MainActor var isEnabled: Bool { styleStore.autoClassify }
 
     func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
         let category = ShotClassifier.classify(bundleID: input.appBundleID)
@@ -47,8 +57,13 @@ struct CategoryProcessor: CapturePostProcessor {
 /// Vision 场景标签。辅助信号，规则分类失手时至少还能按内容搜到。
 struct VisionLabelsProcessor: CapturePostProcessor {
     let id = "vision-labels"
+    private let styleStore: any StyleStore
 
-    @MainActor var isEnabled: Bool { AppSettings.shared.autoClassify }
+    init(styleStore: any StyleStore = AppSettings.shared) {
+        self.styleStore = styleStore
+    }
+
+    @MainActor var isEnabled: Bool { styleStore.autoClassify }
 
     func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
         let labels = await VisionSceneLabels().labels(in: input.image)
@@ -80,9 +95,14 @@ struct FeaturePrintProcessor: CapturePostProcessor {
 /// 开关关闭或模型还没下载好时直接跳过 —— 模型就绪后由回填补齐。
 struct CLIPEmbeddingProcessor: CapturePostProcessor {
     let id = "clip-embedding"
+    private let styleStore: any StyleStore
+
+    init(styleStore: any StyleStore = AppSettings.shared) {
+        self.styleStore = styleStore
+    }
 
     @MainActor var isEnabled: Bool {
-        AppSettings.shared.semanticSearch && CLIPModelStore.shared.isReady
+        styleStore.semanticSearch && CLIPModelStore.shared.isReady
     }
 
     func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
@@ -101,8 +121,13 @@ struct CLIPEmbeddingProcessor: CapturePostProcessor {
 /// 但密钥本身绝不进索引。没检测到就什么都不写。
 struct SensitiveContentProcessor: CapturePostProcessor {
     let id = "sensitive-content"
+    private let styleStore: any StyleStore
 
-    @MainActor var isEnabled: Bool { AppSettings.shared.detectSensitive }
+    init(styleStore: any StyleStore = AppSettings.shared) {
+        self.styleStore = styleStore
+    }
+
+    @MainActor var isEnabled: Bool { styleStore.detectSensitive }
 
     func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
         let regions = await SensitiveContentDetector().detect(in: input.image)
@@ -121,14 +146,17 @@ struct SensitiveContentProcessor: CapturePostProcessor {
 }
 
 extension CapturePipeline {
-    /// 在这里登记。
-    static func registerBuiltins(into pipeline: CapturePipeline) {
-        pipeline.register(OCRProcessor())
+    /// 在这里登记。注入式：预览/测试可传 `FakeStyleStore`，默认走 `AppSettings.shared`。
+    static func registerBuiltins(
+        into pipeline: CapturePipeline,
+        styleStore: any StyleStore = AppSettings.shared
+    ) {
+        pipeline.register(OCRProcessor(styleStore: styleStore))
         pipeline.register(BrowserURLProcessor())
-        pipeline.register(CategoryProcessor())
-        pipeline.register(VisionLabelsProcessor())
+        pipeline.register(CategoryProcessor(styleStore: styleStore))
+        pipeline.register(VisionLabelsProcessor(styleStore: styleStore))
         pipeline.register(FeaturePrintProcessor())
-        pipeline.register(CLIPEmbeddingProcessor())
-        pipeline.register(SensitiveContentProcessor())
+        pipeline.register(CLIPEmbeddingProcessor(styleStore: styleStore))
+        pipeline.register(SensitiveContentProcessor(styleStore: styleStore))
     }
 }

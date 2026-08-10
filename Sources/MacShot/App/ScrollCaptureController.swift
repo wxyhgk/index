@@ -16,12 +16,28 @@ final class ScrollCaptureController {
 
     /// 与普通截图各用各的覆盖层实例，互不干扰。
     private let overlay = SelectionOverlayController()
+    private let shotStore: any ShotWriting
+    private let pipeline: CapturePipeline
     private var session: ScrollCaptureSession?
 
     /// 采集期间临时监听 ⎋ 用的绑定名（参考延时截图的 bindTransient 用法）。
     private static let cancelHotKeyName = "cancel-scroll-capture"
 
-    private init() {}
+    init(
+        shotStore: (any ShotWriting)? = nil,
+        pipeline: CapturePipeline? = nil
+    ) {
+        self.shotStore = shotStore ?? ShotStore.shared
+        self.pipeline = pipeline ?? CapturePipeline.shared
+    }
+
+    /// 预览可用 Fake
+    static var preview: ScrollCaptureController {
+        ScrollCaptureController(
+            shotStore: FakeShotStore(),
+            pipeline: CapturePipeline(writer: ShotStoreAttributeWriter(store: FakeShotStore()))
+        )
+    }
 
     /// 菜单 / 快捷键入口。采集进行中再按一次快捷键 = 完成（⎋ = 取消）。
     func begin() {
@@ -31,7 +47,7 @@ final class ScrollCaptureController {
         }
         guard !overlay.isActive else { return }
 
-        guard ScreenRecordingPermission.isGranted else {
+        guard MacScreenCapturer.shared.isPermissionGranted else {
             CaptureCoordinator.shared.requestPermissionThenPrompt()
             return
         }
@@ -46,7 +62,7 @@ final class ScrollCaptureController {
 
                 // 覆盖层拿到焦点前记下前台 App —— 之后 frontmostApplication 就是我们自己了。
                 let previousApp = SystemNavigator.frontmostApplication
-                let windowList = WindowLister.onScreenWindows(
+                let windowList = MacWindowLister.shared.onScreenWindows(
                     excludingPID: ProcessInfo.processInfo.processIdentifier
                 )
 
@@ -100,10 +116,10 @@ final class ScrollCaptureController {
         )
 
         do {
-            let shot = try ShotStore.shared.save(image: image, metadata: metadata)
+            let shot = try shotStore.save(image: image, metadata: metadata)
 
             if let id = shot.id {
-                CapturePipeline.shared.run(PostProcessInput(
+                pipeline.run(PostProcessInput(
                     shotID: id,
                     image: image,
                     appBundleID: metadata.appBundleID

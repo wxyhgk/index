@@ -16,28 +16,31 @@ enum AttributeBackfill {
     }
 
     @MainActor
-    private static func jobs() -> [Job] {
+    private static func jobs(styleStore: any StyleStore = AppSettings.shared) -> [Job] {
         var jobs: [Job] = [
             Job(key: AttributeKey.featurePrint, processor: FeaturePrintProcessor())
         ]
-        if AppSettings.shared.autoClassify {
-            jobs.append(Job(key: AttributeKey.category, processor: CategoryProcessor()))
-            jobs.append(Job(key: AttributeKey.visionLabels, processor: VisionLabelsProcessor()))
+        if styleStore.autoClassify {
+            jobs.append(Job(key: AttributeKey.category, processor: CategoryProcessor(styleStore: styleStore)))
+            jobs.append(Job(key: AttributeKey.visionLabels, processor: VisionLabelsProcessor(styleStore: styleStore)))
         }
-        if AppSettings.shared.detectSensitive {
-            jobs.append(Job(key: AttributeKey.sensitiveRegions, processor: SensitiveContentProcessor()))
+        if styleStore.detectSensitive {
+            jobs.append(Job(key: AttributeKey.sensitiveRegions, processor: SensitiveContentProcessor(styleStore: styleStore)))
         }
         // 仅在模型就绪时回填 —— 未下载时排进任务只会逐张空跑一遍。
-        if AppSettings.shared.semanticSearch && CLIPModelStore.shared.isReady {
-            jobs.append(Job(key: AttributeKey.clipEmbedding, processor: CLIPEmbeddingProcessor()))
+        if styleStore.semanticSearch && CLIPModelStore.shared.isReady {
+            jobs.append(Job(key: AttributeKey.clipEmbedding, processor: CLIPEmbeddingProcessor(styleStore: styleStore)))
         }
         return jobs
     }
 
     @MainActor
-    static func runIfNeeded() {
-        let store = ShotStore.shared
-        let jobs = jobs()
+    static func runIfNeeded(
+        styleStore: any StyleStore = AppSettings.shared,
+        store: any ShotReading = ShotStore.shared,
+        injectedWriter: ShotAttributeWriter? = nil
+    ) {
+        let jobs = jobs(styleStore: styleStore)
 
         // 按截图聚合缺失项：一张图不管缺几个 key，原图只解码一次。
         // 后台线程不能碰 @MainActor 的 ShotStore，先在主 actor 上备好路径。
@@ -67,7 +70,16 @@ enum AttributeBackfill {
         let pending = Array(pendingByID.values)
         NSLog("[MacShot] 属性回填：\(pending.count) 张待处理")
 
-        let writer = ShotStoreAttributeWriter()
+        let effectiveWriter: ShotAttributeWriter
+        if let w = injectedWriter {
+            effectiveWriter = w
+        } else if let fake = store as? FakeShotStore {
+            effectiveWriter = ShotStoreAttributeWriter(store: fake)
+        } else if let s = store as? ShotStore {
+            effectiveWriter = ShotStoreAttributeWriter(store: s)
+        } else {
+            effectiveWriter = ShotStoreAttributeWriter()
+        }
 
         Task.detached(priority: .utility) {
             for item in pending {
@@ -75,7 +87,7 @@ enum AttributeBackfill {
                     // 原图丢了：分类不依赖像素，仍写入避免每次启动重扫这一张；
                     // 依赖像素的 key（标签、特征指纹）只能跳过。
                     if item.jobIndexes.contains(where: { jobs[$0].key == AttributeKey.category }) {
-                        await writer.write(
+                        await effectiveWriter.write(
                             shotID: item.shotID,
                             key: AttributeKey.category,
                             value: .text(ShotClassifier.classify(bundleID: item.bundleID).rawValue)
@@ -89,7 +101,7 @@ enum AttributeBackfill {
                     appBundleID: item.bundleID
                 )
                 for index in item.jobIndexes {
-                    await jobs[index].processor.process(input, writer: writer)
+                    await jobs[index].processor.process(input, writer: effectiveWriter)
                 }
             }
         }

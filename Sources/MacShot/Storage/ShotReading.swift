@@ -25,6 +25,7 @@ protocol ShotReading: AnyObject {
     func attributePayload(shotID: Int64, key: String) -> Data?
     func allMatchingIDs() async -> [Int64]
     func allTags() -> [(name: String, count: Int)]
+    func shotsMissingAttribute(key: String) -> [Shot]
     var totalCount: Int { get }
 }
 
