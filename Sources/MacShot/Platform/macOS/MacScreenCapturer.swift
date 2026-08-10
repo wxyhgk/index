@@ -14,14 +14,26 @@ final class MacScreenCapturer: ScreenCapturing {
 
     func captureDisplays() async throws -> [DisplaySnapshot] {
         guard isPermissionGranted else { throw CaptureError.noPermission }
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        } catch {
+            NSLog("[MacShot] SCShareableContent 失败: \(error)")
+            throw error
+        }
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let ownApps = content.applications.filter { $0.processID == ownPID }
         var snapshots: [DisplaySnapshot] = []
+        // 过滤已销毁的虚拟 display（如 spike 残留的 displayID 4），单屏失败不影响整批
+        let validDisplayIDs = Set(content.displays.map(\.displayID))
         for screen in NSScreen.screens {
-            guard let info = DisplayInfo(screen: screen),
+            guard let info = DisplayInfo(screen: screen) else { continue }
+            guard validDisplayIDs.contains(info.id),
                   let display = content.displays.first(where: { $0.displayID == info.id })
-            else { continue }
+            else {
+                NSLog("[MacShot] 跳过无效 displayID=\(info.id) name=\(info.name)")
+                continue
+            }
             let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
             let config = SCStreamConfiguration()
             config.width = Int((info.frame.width * info.scale).rounded())
@@ -31,10 +43,18 @@ final class MacScreenCapturer: ScreenCapturing {
             config.captureResolution = .best
             config.ignoreShadowsDisplay = true
             config.colorSpaceName = CGColorSpace.sRGB
-            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-            snapshots.append(DisplaySnapshot(display: info, image: image))
+            do {
+                let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                snapshots.append(DisplaySnapshot(display: info, image: image))
+            } catch {
+                NSLog("[MacShot] 单屏捕获失败 displayID=\(info.id) error=\(error)  跳过")
+                continue
+            }
         }
-        guard !snapshots.isEmpty else { throw CaptureError.noDisplays }
+        guard !snapshots.isEmpty else {
+            NSLog("[MacShot] 捕获失败：无可用 display（已跳过无效/失败的屏）")
+            throw CaptureError.noDisplays
+        }
         return snapshots
     }
 
