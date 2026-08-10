@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 
 // MARK: - 工具样式契约
 //
@@ -28,39 +30,279 @@ enum ToolStyleAxis: String, Codable, CaseIterable {
     /// 聚光灯区域外的压暗程度。
     case dim
 
-    /// 每根轴的档位值。一律三档，工具条上就是三个点。
-    var steps: [Double] {
-        switch self {
-        case .color:     return []                  // 颜色走调色板，不是数值轴
-        case .width:     return [2, 4, 8]
-        case .fontSize:  return [16, 24, 40]        // 旧公式 线宽×4+8 的等价三档
-        case .opacity:   return [0.25, 0.40, 0.60]  // 中档 = 旧硬编码值
-        case .blockSize: return [0.6, 1.0, 1.8]     // 中档 = 旧硬编码公式
-        case .dim:       return [0.40, 0.55, 0.75]  // 中档 = 旧硬编码值
-        }
+    /// 轴的元数据由 `ToolStyleAxisDescriptor` 统一声明。
+    var descriptor: ToolStyleAxisDescriptor {
+        ToolStyleAxisDescriptor.descriptor(for: self)
     }
+
+    /// 每根轴的档位值。一律三档，工具条上就是三个点。
+    var steps: [Double] { descriptor.steps }
 
     /// 工具条上的排序（颜色最前，其余按声明顺序）。
-    var order: Int {
-        switch self {
-        case .color:     return 0
-        case .width:     return 100
-        case .fontSize:  return 200
-        case .opacity:   return 300
-        case .blockSize: return 400
-        case .dim:       return 500
-        }
-    }
+    var order: Int { descriptor.order }
 
-    var title: String {
-        switch self {
-        case .color:     return "颜色"
-        case .width:     return "粗细"
-        case .fontSize:  return "字号"
-        case .opacity:   return "透明度"
-        case .blockSize: return "颗粒"
-        case .dim:       return "压暗"
+    var title: String { descriptor.title }
+}
+
+/// 单根样式轴的完整声明 —— **唯一改动点**。
+///
+/// 新增一根轴只需在这里加一项：steps / order / title / 默认档位 / 存储位置
+/// / 绘制 / 落盘键 / 应用与烤制逻辑全部同处，ToolStyle／AnnotationState／
+/// BuiltinControls／EditorToolbar 不再各自 switch。
+struct ToolStyleAxisDescriptor {
+    let axis: ToolStyleAxis
+    let order: Int
+    let title: String
+    let steps: [Double]
+    let defaultIndex: Int
+    let codingKey: String
+    let keyPath: WritableKeyPath<ToolStyle, Int>
+
+    /// AppKit 工具条上的图标绘制（BuiltinControls.ToolParamControl）。
+    /// nil 表示不走数值图标（如颜色走 ColorControl）。
+    let toolbarDraw: ((CGRect, Int) -> Void)?
+
+    /// SwiftUI 编辑器工具栏的图标。
+    let editorIcon: ((Int, Bool) -> AnyView)?
+
+    /// 把当前样式应用到已选图层。返回是否生效（blockSize 固定 false）。
+    /// strokeScale 仅 width / fontSize 需要。
+    let applyToLayer: ((inout Layer, ToolStyle, Double) -> Bool)?
+
+    /// 新建图层时把样式烤进图层（blockScale / dim / opacity 等可选字段）。
+    let bakeToLayer: ((inout Layer, ToolStyle) -> Void)?
+
+    // MARK: - 注册表（唯一真相）
+
+    static let all: [ToolStyleAxisDescriptor] = [
+        ToolStyleAxisDescriptor(
+            axis: .color,
+            order: 0,
+            title: "颜色",
+            steps: [],
+            defaultIndex: 0,
+            codingKey: "colorIndex",
+            keyPath: \ToolStyle.colorIndex,
+            toolbarDraw: nil,
+            editorIcon: nil,
+            applyToLayer: { layer, style, _ in
+                let idx = style.colorIndex
+                let palette = AnnotationState.palette
+                let base = palette.indices.contains(idx) ? palette[idx] : palette[0]
+                var c = base
+                if layer.kind == .highlight {
+                    c.a = style.value(for: .opacity)
+                }
+                layer.color = c
+                return true
+            },
+            bakeToLayer: nil
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .width,
+            order: 100,
+            title: "粗细",
+            steps: [2, 4, 8],
+            defaultIndex: 1,
+            codingKey: "widthIndex",
+            keyPath: \ToolStyle.widthIndex,
+            toolbarDraw: { frame, index in
+                let steps: [Double] = [2, 4, 8]
+                guard steps.indices.contains(index) else { return }
+                let radius = CGFloat(steps[index]) / 2 + 1.5
+                NSColor.white.setFill()
+                NSBezierPath(ovalIn: NSRect(
+                    x: frame.midX - radius, y: frame.midY - radius,
+                    width: radius * 2, height: radius * 2
+                )).fill()
+            },
+            editorIcon: { index, isSelected in
+                let steps: [Double] = [2, 4, 8]
+                let radius = steps.indices.contains(index) ? CGFloat(steps[index]) / 2 + 1.5 : 3.5
+                let diameter = radius * 2
+                return AnyView(
+                    Circle()
+                        .fill(isSelected ? DS.accent : DS.primaryOpacity(0.55))
+                        .frame(width: diameter, height: diameter)
+                        .frame(width: 20, height: 20)
+                )
+            },
+            applyToLayer: { layer, style, strokeScale in
+                layer.lineWidth = style.value(for: .width) * strokeScale
+                return true
+            },
+            bakeToLayer: nil
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .fontSize,
+            order: 200,
+            title: "字号",
+            steps: [16, 24, 40],
+            defaultIndex: 1,
+            codingKey: "fontSizeIndex",
+            keyPath: \ToolStyle.fontSizeIndex,
+            toolbarDraw: { frame, index in
+                let size = 9 + CGFloat(index) * 3
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: size, weight: .semibold),
+                    .foregroundColor: NSColor.white
+                ]
+                let text = "A" as NSString
+                let bounds = text.size(withAttributes: attrs)
+                text.draw(
+                    at: NSPoint(x: frame.midX - bounds.width / 2, y: frame.midY - bounds.height / 2),
+                    withAttributes: attrs
+                )
+            },
+            editorIcon: { index, isSelected in
+                let size = 9 + CGFloat(index) * 3
+                return AnyView(
+                    Text("A")
+                        .font(.system(size: size, weight: .semibold))
+                        .foregroundStyle(isSelected ? DS.accent : DS.primaryOpacity(0.85))
+                        .frame(width: 20, height: 20)
+                )
+            },
+            applyToLayer: { layer, style, strokeScale in
+                layer.fontSize = style.value(for: .fontSize) * strokeScale
+                return true
+            },
+            bakeToLayer: nil
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .opacity,
+            order: 300,
+            title: "透明度",
+            steps: [0.25, 0.40, 0.60],
+            defaultIndex: 1,
+            codingKey: "opacityIndex",
+            keyPath: \ToolStyle.opacityIndex,
+            toolbarDraw: { frame, index in
+                let steps: [Double] = [0.25, 0.40, 0.60]
+                guard steps.indices.contains(index) else { return }
+                NSColor.white.withAlphaComponent(steps[index]).setFill()
+                NSBezierPath(ovalIn: NSRect(
+                    x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12
+                )).fill()
+            },
+            editorIcon: { index, isSelected in
+                let steps: [Double] = [0.25, 0.40, 0.60]
+                let alpha = steps.indices.contains(index) ? steps[index] : 0.40
+                return AnyView(
+                    Circle()
+                        .fill(DS.whiteOpacity(alpha))
+                        .overlay(Circle().strokeBorder(isSelected ? DS.accent : Color.clear, lineWidth: 1.5))
+                        .frame(width: 12, height: 12)
+                        .frame(width: 20, height: 20)
+                )
+            },
+            applyToLayer: { layer, style, _ in
+                layer.color.a = style.value(for: .opacity)
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.color.a = style.value(for: .opacity)
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .blockSize,
+            order: 400,
+            title: "颗粒",
+            steps: [0.6, 1.0, 1.8],
+            defaultIndex: 1,
+            codingKey: "blockSizeIndex",
+            keyPath: \ToolStyle.blockSizeIndex,
+            toolbarDraw: { frame, index in
+                let counts = [4, 3, 2]
+                let n = counts[min(index, counts.count - 1)]
+                let side: CGFloat = 12
+                let cell = side / CGFloat(n)
+                NSColor.white.setFill()
+                for row in 0..<n {
+                    for col in 0..<n where (row + col) % 2 == 0 {
+                        NSBezierPath(rect: NSRect(
+                            x: frame.midX - side / 2 + CGFloat(col) * cell,
+                            y: frame.midY - side / 2 + CGFloat(row) * cell,
+                            width: cell, height: cell
+                        )).fill()
+                    }
+                }
+            },
+            editorIcon: { index, isSelected in
+                let counts = [4, 3, 2]
+                let n = counts[min(index, counts.count - 1)]
+                return AnyView(
+                    ZStack {
+                        ForEach(0..<n, id: \.self) { row in
+                            ForEach(0..<n, id: \.self) { col in
+                                if (row + col) % 2 == 0 {
+                                    Rectangle()
+                                        .fill(isSelected ? DS.accent : DS.primaryOpacity(0.85))
+                                        .frame(width: 12 / CGFloat(n), height: 12 / CGFloat(n))
+                                        .offset(x: CGFloat(col) * 12 / CGFloat(n) - 6 + 6 / CGFloat(n),
+                                                y: CGFloat(row) * 12 / CGFloat(n) - 6 + 6 / CGFloat(n))
+                                }
+                            }
+                        }
+                    }
+                    .frame(width: 20, height: 20)
+                )
+            },
+            applyToLayer: { _, _, _ in false },
+            bakeToLayer: { layer, style in
+                layer.blockScale = style.value(for: .blockSize)
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .dim,
+            order: 500,
+            title: "压暗",
+            steps: [0.40, 0.55, 0.75],
+            defaultIndex: 1,
+            codingKey: "dimIndex",
+            keyPath: \ToolStyle.dimIndex,
+            toolbarDraw: { frame, index in
+                let steps: [Double] = [0.40, 0.55, 0.75]
+                guard steps.indices.contains(index) else { return }
+                NSColor.black.withAlphaComponent(steps[index]).setFill()
+                let dot = NSRect(x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12)
+                NSBezierPath(ovalIn: dot).fill()
+                NSColor.white.withAlphaComponent(0.5).setStroke()
+                let ring = NSBezierPath(ovalIn: dot)
+                ring.lineWidth = 1
+                ring.stroke()
+            },
+            editorIcon: { index, isSelected in
+                let steps: [Double] = [0.40, 0.55, 0.75]
+                let alpha = steps.indices.contains(index) ? steps[index] : 0.55
+                return AnyView(
+                    ZStack {
+                        Circle()
+                            .fill(DS.blackOpacity(alpha))
+                            .frame(width: 12, height: 12)
+                        Circle()
+                            .strokeBorder(DS.whiteOpacity(0.5), lineWidth: 1)
+                            .frame(width: 12, height: 12)
+                    }
+                    .overlay(Circle().strokeBorder(isSelected ? DS.accent : Color.clear, lineWidth: 1.5))
+                    .frame(width: 20, height: 20)
+                )
+            },
+            applyToLayer: { layer, style, _ in
+                layer.dim = style.value(for: .dim)
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.dim = style.value(for: .dim)
+            }
+        ),
+    ]
+
+    static func descriptor(for axis: ToolStyleAxis) -> ToolStyleAxisDescriptor {
+        guard let found = all.first(where: { $0.axis == axis }) else {
+            fatalError("Missing descriptor for axis \(axis)")
         }
+        return found
     }
 }
 
@@ -82,36 +324,48 @@ struct ToolStyle: Codable, Equatable {
 
     /// 手写解码：合成的 Codable **不会**使用默认值，缺键就整条失败。
     /// 用户的旧偏好里没有新加的轴，必须逐项 `decodeIfPresent` 兜底。
+    /// 现由描述符注册表驱动，新增轴无需再改这里。
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex) ?? 0
-        widthIndex = try c.decodeIfPresent(Int.self, forKey: .widthIndex) ?? 1
-        fontSizeIndex = try c.decodeIfPresent(Int.self, forKey: .fontSizeIndex) ?? 1
-        opacityIndex = try c.decodeIfPresent(Int.self, forKey: .opacityIndex) ?? 1
-        blockSizeIndex = try c.decodeIfPresent(Int.self, forKey: .blockSizeIndex) ?? 1
-        dimIndex = try c.decodeIfPresent(Int.self, forKey: .dimIndex) ?? 1
+        // 先填默认值，再按描述符逐项覆盖
+        self.init()
+        struct DynamicKey: CodingKey {
+            var stringValue: String
+            init(stringValue: String) { self.stringValue = stringValue }
+            var intValue: Int? { nil }
+            init?(intValue: Int) { nil }
+        }
+        let c = try decoder.container(keyedBy: DynamicKey.self)
+        for desc in ToolStyleAxisDescriptor.all {
+            let key = DynamicKey(stringValue: desc.codingKey)
+            if let value = try c.decodeIfPresent(Int.self, forKey: key) {
+                self[keyPath: desc.keyPath] = value
+            } else {
+                self[keyPath: desc.keyPath] = desc.defaultIndex
+            }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: DynamicCodingKey.self)
+        for desc in ToolStyleAxisDescriptor.all {
+            let key = DynamicCodingKey(stringValue: desc.codingKey)
+            try c.encode(self[keyPath: desc.keyPath], forKey: key)
+        }
+    }
+
+    private struct DynamicCodingKey: CodingKey {
+        var stringValue: String
+        init(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int? { nil }
+        init?(intValue: Int) { nil }
     }
 
     func index(for axis: ToolStyleAxis) -> Int {
-        switch axis {
-        case .color:     return colorIndex
-        case .width:     return widthIndex
-        case .fontSize:  return fontSizeIndex
-        case .opacity:   return opacityIndex
-        case .blockSize: return blockSizeIndex
-        case .dim:       return dimIndex
-        }
+        self[keyPath: axis.descriptor.keyPath]
     }
 
     mutating func setIndex(_ value: Int, for axis: ToolStyleAxis) {
-        switch axis {
-        case .color:     colorIndex = value
-        case .width:     widthIndex = value
-        case .fontSize:  fontSizeIndex = value
-        case .opacity:   opacityIndex = value
-        case .blockSize: blockSizeIndex = value
-        case .dim:       dimIndex = value
-        }
+        self[keyPath: axis.descriptor.keyPath] = value
     }
 
     /// 取某根轴的**数值**（颜色轴无数值，返回 0）。越界一律回中档，

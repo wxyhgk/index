@@ -560,16 +560,10 @@ final class AnnotationState: ObservableObject {
     func applyStyleToSelection(_ axis: ToolStyleAxis) -> Bool {
         guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return false }
         let before = layers[index]
-
-        switch axis {
-        case .color:     return applyColorToSelection()
-        case .width:     layers[index].lineWidth = lineWidth
-        case .fontSize:  layers[index].fontSize = fontSize
-        case .opacity:   layers[index].color.a = currentStyle.value(for: .opacity)
-        case .dim:       layers[index].dim = currentStyle.value(for: .dim)
-        case .blockSize: return false   // 见上
-        }
-
+        guard let descriptor = Optional(axis.descriptor),
+              let apply = descriptor.applyToLayer else { return false }
+        let applied = apply(&layers[index], currentStyle, strokeScale)
+        guard applied else { return false }
         if before != layers[index] {
             record(.style(id: selectedID, before: before, after: layers[index]))
         }

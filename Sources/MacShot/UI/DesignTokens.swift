@@ -117,6 +117,11 @@ enum DS {
     static let dotInactive = Color.secondary.opacity(0.55)
     static let overlayDim = Color.black.opacity(0.45)
     static let hoverBrighten = Color.white.opacity(0.05)
+
+    // MARK: - 动态透明度（样式轴图标等需按档位取不同 alpha，收敛到 DS 避免裸写 Color.*.opacity）
+    static func whiteOpacity(_ alpha: Double) -> Color { Color.white.opacity(alpha) }
+    static func blackOpacity(_ alpha: Double) -> Color { Color.black.opacity(alpha) }
+    static func primaryOpacity(_ alpha: Double) -> Color { Color.primary.opacity(alpha) }
 }
 
 // ============================================================

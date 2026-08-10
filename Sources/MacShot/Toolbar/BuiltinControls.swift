@@ -144,64 +144,9 @@ struct ToolParamControl: ToolbarControl {
     /// 每根轴用自己的视觉语言表达「三档」，光看图标就知道在调什么：
     /// 粗细 = 圆点由小到大；字号 = 字母 A 由小到大；透明度 = 同色不同浓淡；
     /// 颗粒 = 方格由密到疏；压暗 = 灰度由浅到深。
+    /// 绘制由 `ToolStyleAxisDescriptor` 统一声明，新增轴无需再改这里。
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
-        switch axis {
-        case .color:
-            break   // 颜色不走这里，见 ColorControl
-
-        case .width:
-            let radius = CGFloat(axis.steps[index]) / 2 + 1.5
-            NSColor.white.setFill()
-            NSBezierPath(ovalIn: NSRect(
-                x: frame.midX - radius, y: frame.midY - radius,
-                width: radius * 2, height: radius * 2
-            )).fill()
-
-        case .fontSize:
-            let size = 9 + CGFloat(index) * 3
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: size, weight: .semibold),
-                .foregroundColor: NSColor.white
-            ]
-            let text = "A" as NSString
-            let bounds = text.size(withAttributes: attrs)
-            text.draw(
-                at: NSPoint(x: frame.midX - bounds.width / 2, y: frame.midY - bounds.height / 2),
-                withAttributes: attrs
-            )
-
-        case .opacity:
-            NSColor.white.withAlphaComponent(axis.steps[index]).setFill()
-            NSBezierPath(ovalIn: NSRect(
-                x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12
-            )).fill()
-
-        case .blockSize:
-            // 格数随档位递减：密 → 疏，正好对应颗粒由细到粗。
-            let counts = [4, 3, 2]
-            let n = counts[min(index, counts.count - 1)]
-            let side: CGFloat = 12
-            let cell = side / CGFloat(n)
-            NSColor.white.setFill()
-            for row in 0..<n where row % 2 == 0 || true {
-                for col in 0..<n where (row + col) % 2 == 0 {
-                    NSBezierPath(rect: NSRect(
-                        x: frame.midX - side / 2 + CGFloat(col) * cell,
-                        y: frame.midY - side / 2 + CGFloat(row) * cell,
-                        width: cell, height: cell
-                    )).fill()
-                }
-            }
-
-        case .dim:
-            NSColor.black.withAlphaComponent(axis.steps[index]).setFill()
-            let dot = NSRect(x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12)
-            NSBezierPath(ovalIn: dot).fill()
-            NSColor.white.withAlphaComponent(0.5).setStroke()
-            let ring = NSBezierPath(ovalIn: dot)
-            ring.lineWidth = 1
-            ring.stroke()
-        }
+        axis.descriptor.toolbarDraw?(frame, index)
     }
 
     func activate(_ context: ToolbarContext) {
@@ -215,7 +160,7 @@ struct ToolParamControl: ToolbarControl {
 /// 效果层的开关控件。效果不是画笔而是**输出选项** —— 点一下经
 /// `AnnotationState.toggleEffect` 加/删一层对应的效果层（单例语义、可撤销），
 /// 参数与元数据由描述符（`EffectRegistry`）在开关那一刻烤入。
-/// 四个效果只差 id / 次序 / 图标 / kind，这里参数化成一个控件、登记处注册四次；
+/// 控件本身是参数化的，登记处按 `EffectRegistry.displayOrdered` 循环注册；
 /// 样式子选项（预设 / 模式 / 壳样式 / 字段勾选）在图库编辑器的效果面板里。
 struct EffectToggleControl: ToolbarControl {
     let id: String
@@ -223,6 +168,22 @@ struct EffectToggleControl: ToolbarControl {
     let order: Int
     let symbolName: String
     let kind: Layer.Kind
+
+    /// 从注册表描述符构造。新增效果只需在 `EffectRegistry` 声明一处，
+    /// 工具条与编辑器面板自动跟随，无需在此追加硬编码注册行。
+    init(descriptor: EffectDescriptor) {
+        self.id = descriptor.id
+        self.order = descriptor.toolbarOrder
+        self.symbolName = descriptor.symbolName
+        self.kind = descriptor.kind
+    }
+
+    init(id: String, order: Int, symbolName: String, kind: Layer.Kind) {
+        self.id = id
+        self.order = order
+        self.symbolName = symbolName
+        self.kind = kind
+    }
 
     /// 只在钉图上出现：截图工具条为保持精简撤掉了输出开关 ——
     /// 截图阶段要效果的用户可以钉图后再开，或去图库编辑器调。
@@ -411,21 +372,14 @@ extension ToolbarRegistry {
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
         // 数值轴 × 三档全部注册；哪些真正出现在条上由当前工具的描述符决定
         // （`ToolParamControl.isVisible` → `ToolRegistry.descriptor(for:).axes`）。
-        for axis in ToolStyleAxis.allCases where axis != .color {
-            axis.steps.indices.forEach { registry.register(ToolParamControl(axis: axis, index: $0)) }
+        // 档位数与轴清单均由 `ToolStyleAxisDescriptor` 统一声明。
+        for descriptor in ToolStyleAxisDescriptor.all where descriptor.axis != .color {
+            descriptor.steps.indices.forEach { registry.register(ToolParamControl(axis: descriptor.axis, index: $0)) }
         }
-        registry.register(EffectToggleControl(
-            id: "backdrop", order: 300, symbolName: "sparkles", kind: .backdrop
-        ))
-        registry.register(EffectToggleControl(
-            id: "frame", order: 310, symbolName: "macwindow", kind: .frame
-        ))
-        registry.register(EffectToggleControl(
-            id: "watermark", order: 320, symbolName: "signature", kind: .watermark
-        ))
-        registry.register(EffectToggleControl(
-            id: "captureInfo", order: 330, symbolName: "info.square", kind: .captureInfo
-        ))
+        // 效果开关统一由 `EffectRegistry` 驱动，新增效果只需在注册表声明一处。
+        for descriptor in EffectRegistry.displayOrdered {
+            registry.register(EffectToggleControl(descriptor: descriptor))
+        }
         registry.register(UndoControl())
         registry.register(RedoControl())
     }

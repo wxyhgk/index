@@ -177,16 +177,19 @@ struct EditorToolbar: View {
     }
 
     private func paramButton(_ axis: ToolStyleAxis, _ index: Int) -> some View {
-        let diameter = 5 + CGFloat(index) * 4
         let selected = annotation.styleIndex(for: axis) == index
         return Button {
             annotation.setStyleIndex(index, for: axis)
             annotation.applyStyleToSelection(axis)
         } label: {
-            Circle()
-                .fill(selected ? DS.accent : DS.dimPrimary)
-                .frame(width: diameter, height: diameter)
-                .frame(width: 20, height: 20)
+            if let icon = axis.descriptor.editorIcon {
+                icon(index, selected)
+            } else {
+                Circle()
+                    .fill(selected ? DS.accent : DS.dimPrimary)
+                    .frame(width: 5 + CGFloat(index) * 4, height: 5 + CGFloat(index) * 4)
+                    .frame(width: 20, height: 20)
+            }
         }
         .buttonStyle(.plain)
         .help("\(axis.title) \(index + 1)")

@@ -237,16 +237,16 @@ extension OverlayView: NSTextInputClient {
             return NSRect.zero
         }
         let layer = annotation.layers[idx]
-        let font = NSFont.systemFont(ofSize: CGFloat(layer.fontSize), weight: .semibold)
         let committed = layer.text
         let marked = annotation.markedText ?? ""
         let full = committed + marked
-        let prefixLen = min(range.location, (full as NSString).length)
-        let prefix = (full as NSString).substring(to: prefixLen)
-        let width = (prefix as NSString).size(withAttributes: [.font: font]).width
-        // Overlay 的 layers 以“显示器局部、左上原点”为画布，需翻到 NSView 的左下原点
-        let viewY = bounds.height - layer.rect.y - CGFloat(layer.fontSize)
-        let viewRect = NSRect(x: layer.rect.x + width, y: viewY, width: 8, height: CGFloat(layer.fontSize) + 6)
+        let viewRect = IMECaretGeometry.overlayViewRect(
+            layerRect: layer.rect.cg,
+            fullText: full,
+            fontSize: CGFloat(layer.fontSize),
+            prefixLength: range.location,
+            boundsHeight: bounds.height
+        )
         let windowRect = convert(viewRect, to: nil)
         let screenRect = window?.convertToScreen(windowRect) ?? windowRect
         actualRange?.pointee = NSRange(location: range.location, length: min(range.length, (full as NSString).length - range.location))

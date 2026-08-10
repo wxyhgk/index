@@ -176,15 +176,21 @@ extension PinImageView: NSTextInputClient {
             return NSRect.zero
         }
         let layer = annotation.layers[idx]
-        let font = NSFont.systemFont(ofSize: CGFloat(layer.fontSize), weight: .semibold)
         let full = layer.text + (annotation.markedText ?? "")
-        let prefixLen = min(range.location, (full as NSString).length)
-        let prefix = (full as NSString).substring(to: prefixLen)
-        let width = (prefix as NSString).size(withAttributes: [.font: font]).width
-        // Pin 画布坐标即图片像素，已在 draw 时按倍率缩放，这里近似用 layer.rect
-        let rect = NSRect(x: layer.rect.x + width, y: layer.rect.y, width: 8, height: CGFloat(layer.fontSize) + 6)
-        let viewRect = convert(rect, to: nil)
-        let screenRect = window?.convertToScreen(viewRect) ?? viewRect
+        let scale: CGFloat = {
+            guard base.width > 0, bounds.width > 0 else { return 1 }
+            return bounds.width / CGFloat(base.width)
+        }()
+        let viewRect = IMECaretGeometry.pinViewRect(
+            layerRect: layer.rect.cg,
+            fullText: full,
+            fontSize: CGFloat(layer.fontSize),
+            prefixLength: range.location,
+            boundsHeight: bounds.height,
+            displayScale: scale
+        )
+        let windowRect = convert(viewRect, to: nil)
+        let screenRect = window?.convertToScreen(windowRect) ?? windowRect
         actualRange?.pointee = NSRange(location: range.location, length: min(range.length, (full as NSString).length - range.location))
         return screenRect
     }

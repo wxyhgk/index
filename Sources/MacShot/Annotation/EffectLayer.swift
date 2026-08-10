@@ -71,6 +71,16 @@ struct EffectContext {
 struct EffectDescriptor {
     let kind: Layer.Kind
 
+    /// 工具条/面板侧的稳定标识（和 `Layer.Kind` 一一对应）。
+    let id: String
+    /// 工具条上的图标（SF Symbol）。
+    let symbolName: String
+    /// 工具条第二行内的次序（300…）。`ToolbarRegistry` 按它排序，
+    /// 与导出 `renderOrder` 无关 —— 导出次序只影响像素合成。
+    let toolbarOrder: Int
+    /// 面板里该效果卡片的标题（"美化"/"水印"/…）。
+    let panelTitle: String
+
     /// 导出时在裁剪之后的应用次序（小的先套）。`LayerRenderer.render`
     /// 按注册表这份次序编排：水印 → 捕获信息 → 外壳 → 美化。
     let renderOrder: Int
@@ -87,6 +97,9 @@ struct EffectDescriptor {
 
     /// 是否画进实时预览（`previewDraw` 的有无）。
     var participatesInPreview: Bool { previewDraw != nil }
+
+    /// `ToolbarControl` 侧为兼容历史 `order` 字段暴露的同义别名。
+    var order: Int { toolbarOrder }
 }
 
 /// 效果的有序注册表。四个内置效果各登记一个描述符；
@@ -107,6 +120,10 @@ enum EffectRegistry {
     /// 设置没配文案时用 `WatermarkSpec.defaultText` 兜底 —— 开关必须永远可用。
     static let watermark = EffectDescriptor(
         kind: .watermark,
+        id: "watermark",
+        symbolName: "signature",
+        toolbarOrder: 320,
+        panelTitle: "水印",
         renderOrder: 0,
         makeLayer: { context in
             let raw = context.watermarkText.trimmingCharacters(in: .whitespaces)
@@ -129,6 +146,10 @@ enum EffectRegistry {
     /// JSON —— 之后图层自带数据，导出不再回查。
     static let captureInfo = EffectDescriptor(
         kind: .captureInfo,
+        id: "captureInfo",
+        symbolName: "info.square",
+        toolbarOrder: 330,
+        panelTitle: "捕获信息",
         renderOrder: 1,
         makeLayer: { context in
             var layer = Layer(kind: .captureInfo, rect: LRect(x: 0, y: 0, w: 0, h: 0))
@@ -146,6 +167,10 @@ enum EffectRegistry {
     /// 外壳（带壳截图）：默认 macos 壳，标题/网址从注入的元数据自动填。
     static let frame = EffectDescriptor(
         kind: .frame,
+        id: "frame",
+        symbolName: "macwindow",
+        toolbarOrder: 310,
+        panelTitle: "外壳",
         renderOrder: 2,
         makeLayer: { context in
             var layer = Layer(kind: .frame, rect: LRect(x: 0, y: 0, w: 0, h: 0))
@@ -162,6 +187,10 @@ enum EffectRegistry {
     /// 美化：默认预设 + 固定留白/圆角。
     static let backdrop = EffectDescriptor(
         kind: .backdrop,
+        id: "backdrop",
+        symbolName: "sparkles",
+        toolbarOrder: 300,
+        panelTitle: "美化",
         renderOrder: 3,
         makeLayer: { context in
             // 留白 / 圆角 / 阴影三个参数都按**短边百分比**烤入，不用绝对像素：
@@ -205,7 +234,16 @@ enum EffectRegistry {
         [watermark, captureInfo, frame, backdrop]
             .sorted { $0.renderOrder < $1.renderOrder }
 
+    /// 工具条/面板的展示次序（`toolbarOrder` 升序），与导出次序无关。
+    /// 工具条与面板都按它展示，新增效果只需在注册表追加一行，两处自动跟随。
+    static let displayOrdered: [EffectDescriptor] =
+        ordered.sorted { $0.toolbarOrder < $1.toolbarOrder }
+
     static func descriptor(for kind: Layer.Kind) -> EffectDescriptor? {
         ordered.first { $0.kind == kind }
+    }
+
+    static func descriptor(for id: String) -> EffectDescriptor? {
+        ordered.first { $0.id == id }
     }
 }

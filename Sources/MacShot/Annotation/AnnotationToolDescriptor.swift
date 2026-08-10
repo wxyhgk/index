@@ -143,20 +143,17 @@ extension AnnotationToolDescriptor {
     /// 没声明的轴一律保持 nil —— 渲染器遇到 nil 走旧的硬编码默认，
     /// 旧图层因此行为不变。覆盖 `makeLayer` 的工具应当先调它再改自己那部分。
     func baseLayer(_ context: ToolLayerContext) -> Layer {
-        var color = context.color
-        if axes.contains(.opacity) {
-            color.a = context.style.value(for: .opacity)
-        }
         var layer = Layer(
             kind: tool.layerKind,
             rect: LRect(from: context.from, to: context.to),
-            color: color,
+            color: context.color,
             lineWidth: context.style.value(for: .width) * context.strokeScale,
             text: "",
             fontSize: context.style.value(for: .fontSize) * context.strokeScale
         )
-        if axes.contains(.blockSize) { layer.blockScale = context.style.value(for: .blockSize) }
-        if axes.contains(.dim) { layer.dim = context.style.value(for: .dim) }
+        for axis in axes {
+            axis.descriptor.bakeToLayer?(&layer, context.style)
+        }
         return layer
     }
 

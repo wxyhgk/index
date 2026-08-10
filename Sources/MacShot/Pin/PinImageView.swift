@@ -35,7 +35,7 @@ final class PinImageView: NSView {
 
     let annotation = AnnotationState()
 
-    private let base: CGImage
+    let base: CGImage
     /// 截图时画的标注，只读地叠在底图上。
     private let initialLayers: Layers<ImageSpace>
     /// 底图 + 已应用的马赛克。只在马赛克图层增减时重算，绝不逐帧跑 CoreImage。

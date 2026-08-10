@@ -7,8 +7,11 @@ import SwiftUI
 // 不碰画布几何、不碰缩放、不碰修订链。
 //
 // 效果本身的契约在 `Annotation/EffectLayer.swift`（描述符 + 注册表），
-// 这里只是它的一套界面：**加一个效果不该改这个文件**，
-// 但四个效果各自的子选项（预设 / 模式 / 壳样式 / 字段勾选）确实是各写各的。
+// **新增效果只需在 `EffectRegistry` 追加一个描述符**，工具条与本面板均按
+// `EffectRegistry.displayOrdered` 循环生成，种类列表不再硬编码；
+// 四宿主（覆盖层/钉图/编辑器/图库）的开关与展示因此自动跟随。
+// 子选项（预设 / 模式 / 壳样式 / 字段勾选）的具体控件仍按 kind 分发，
+// 但分发点收敛于 `effectOptions(for:)` 一处，不在面板与工具条两处镜像。
 struct EditorEffectsPanel: View {
 
     @ObservedObject var model: EditorModel
@@ -19,17 +22,75 @@ struct EditorEffectsPanel: View {
 
     /// 效果 tab：每个效果一行分组卡片（开关 + 展开的样式子选项）。
     /// 行样式对齐图库 inspector：quaternary 底 + DS.radiusCard + caption.semibold 组题。
+    /// 卡片由注册表驱动，新增效果自动出现，无需在此追加硬编码行。
     private var effectsPanel: some View {
         ScrollView {
             VStack(spacing: DS.s3) {
-                backdropCard
-                watermarkCard
-                frameCard
-                EditorCaptureInfoRow(annotation: annotation) {                }
+                ForEach(EffectRegistry.displayOrdered, id: \.kind) { descriptor in
+                    effectCard(descriptor: descriptor)
+                }
             }
             .padding(DS.s3)
         }
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// 通用卡片：标题与开关由描述符提供，内容按 kind 分发到 `effectOptions`。
+    private func effectCard(descriptor: EffectDescriptor) -> some View {
+        effectCard(
+            descriptor.panelTitle,
+            isOn: annotation.hasEffect(descriptor.kind),
+            toggle: { annotation.toggleEffect(descriptor.kind) }
+        ) {
+            effectOptions(for: descriptor)
+        }
+    }
+
+    /// 子选项按 kind 分发。新增带选项的效果在此追加一个 case 即可，
+    /// 种类列表本身仍由注册表驱动，不与工具条重复硬编码。
+    @ViewBuilder
+    private func effectOptions(for descriptor: EffectDescriptor) -> some View {
+        switch descriptor.kind {
+        case .backdrop:
+            HStack(spacing: DS.s2) {
+                ForEach(BackdropPreset.allCases, id: \.rawValue) { preset in
+                    backdropSwatch(preset)
+                }
+            }
+        case .watermark:
+            Picker("水印位置", selection: Binding(
+                get: { annotation.watermarkMode ?? .corner },
+                set: { mode in annotation.setWatermarkMode(mode) }
+            )) {
+                ForEach(WatermarkMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        case .frame:
+            Picker("壳样式", selection: Binding(
+                get: { annotation.frameStyle ?? .macos },
+                set: { style in annotation.setFrameStyle(style) }
+            )) {
+                ForEach(FrameSpec.Style.allCases, id: \.rawValue) { style in
+                    Text(style.displayName).tag(style)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        case .captureInfo:
+            HStack(spacing: DS.s3) {
+                ForEach(CaptureInfoSpec.Field.allCases, id: \.rawValue) { field in
+                    Toggle(field.displayName, isOn: fieldBinding(field))
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+                }
+                Spacer(minLength: 0)
+            }
+        default:
+            EmptyView()
+        }
     }
 
     /// 分组卡片骨架：组题 + 右侧开关，开着时展开子选项。
@@ -57,20 +118,6 @@ struct EditorEffectsPanel: View {
         .padding(DS.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.insetSurface, in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
-    }
-
-    /// 美化行。backdrop 只影响导出/复制/保存的成品 ——
-    /// 画布预览刻意不变（见 `AnnotationRenderer` 的说明），开关表达状态。
-    /// 预设色块点选即换（`setBackdropPreset`），作为一条可撤销的 style 记录。
-    private var backdropCard: some View {
-        effectCard("美化", isOn: annotation.hasEffect(.backdrop), toggle: {
-            annotation.toggleEffect(.backdrop)        }) {
-            HStack(spacing: DS.s2) {
-                ForEach(BackdropPreset.allCases, id: \.rawValue) { preset in
-                    backdropSwatch(preset)
-                }
-            }
-        }
     }
 
     /// 背景预设小色块：渐变预设画渐变、纯色预设画灰块，选中态描 accent 边。
@@ -119,44 +166,17 @@ struct EditorEffectsPanel: View {
         )
     }
 
-    /// 水印行。参数（设置里的文案/模式/透明度，没配文案时的 "MacShot" 兜底）
-    /// 都在描述符 `EffectRegistry.watermark` 里 —— 工具条开关、自动水印共用同一份。
-    /// 和美化不同，水印会画进画布预览 —— 它影响构图判断。
-    /// 位置三选走 `setWatermarkMode`，作为一条可撤销的 style 记录。
-    private var watermarkCard: some View {
-        effectCard("水印", isOn: annotation.hasEffect(.watermark), toggle: {
-            annotation.toggleEffect(.watermark)        }) {
-            Picker("水印位置", selection: Binding(
-                get: { annotation.watermarkMode ?? .corner },
-                set: { mode in
-                    annotation.setWatermarkMode(mode)                }
-            )) {
-                ForEach(WatermarkMode.allCases) { mode in
-                    Text(mode.displayName).tag(mode)
-                }
+    /// 捕获信息字段勾选（原 `EditorCaptureInfoRow` 的字段行，本面板内收敛）。
+    private func fieldBinding(_ field: CaptureInfoSpec.Field) -> Binding<Bool> {
+        Binding(
+            get: { annotation.captureInfoFields?.contains(field) ?? false },
+            set: { on in
+                guard let current = annotation.captureInfoFields else { return }
+                var selected = Set(current)
+                if on { selected.insert(field) } else { selected.remove(field) }
+                let ordered = CaptureInfoSpec.Field.allCases.filter(selected.contains)
+                _ = annotation.setCaptureInfoFields(ordered)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-        }
-    }
-
-    /// 外壳行。frame 只影响导出/复制/保存的成品，画布预览刻意不变（同美化的取舍）。
-    /// 开壳时把 shot 的真实窗口标题 / 网址烤进壳的参数 JSON（见 `load` 的注入上下文）；
-    /// 样式二选走 `setFrameStyle`，作为一条可撤销的 style 记录。
-    private var frameCard: some View {
-        effectCard("外壳", isOn: annotation.hasEffect(.frame), toggle: {
-            annotation.toggleEffect(.frame)        }) {
-            Picker("壳样式", selection: Binding(
-                get: { annotation.frameStyle ?? .macos },
-                set: { style in
-                    annotation.setFrameStyle(style)                }
-            )) {
-                ForEach(FrameSpec.Style.allCases, id: \.rawValue) { style in
-                    Text(style.displayName).tag(style)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-        }
+        )
     }
 }
