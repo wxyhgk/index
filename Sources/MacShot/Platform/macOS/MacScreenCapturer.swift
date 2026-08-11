@@ -2,34 +2,14 @@ import AppKit
 import CoreGraphics
 import ScreenCaptureKit
 
-private let macScreenScreenshotTimeout: TimeInterval = 5
-
-private final class CaptureContinuationGate<Value>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, any Error>?
-
-    init(_ continuation: CheckedContinuation<Value, any Error>) {
-        self.continuation = continuation
-    }
-
-    func resume(with result: Result<Value, any Error>) {
-        lock.lock()
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
-        continuation?.resume(with: result)
-    }
-}
-
 @MainActor
 final class MacScreenCapturer: ScreenCapturing {
 
     static let shared = MacScreenCapturer()
 
     private static let topologyRetryDelayNanoseconds: UInt64 = 150_000_000
-    private static let shareableContentTimeout: TimeInterval = 5
-
     private var topologyGeneration: UInt64 = 0
+    private var cachedDisplayContent: (generation: UInt64, content: SCShareableContent)?
     private var screenParametersObserver: NSObjectProtocol?
 
     private init() {
@@ -55,17 +35,26 @@ final class MacScreenCapturer: ScreenCapturing {
     @discardableResult
     func requestPermission() -> Bool { CGRequestScreenCaptureAccess() }
 
-    /// 在同一份 NSScreen/CoreGraphics 拓扑上冻结全部活动显示器。
-    /// 任意一块屏失败都不会返回半套结果；拓扑在采集中变化时最多重新取一次。
+    /// 在同一份显示器拓扑上冻结全部活动显示器；不得返回部分成功结果。
+    /// 拓扑在采集中变化时最多重新取一次。
+    ///
+    /// 主路径只走 ScreenCaptureKit：macOS 15 实测 `CGDisplayCreateImage` 与
+    /// `/usr/sbin/screencapture` 都会被转发到同一个 replayd 代理（详见
+    /// `docs/errors/2026-08-11-sidecar-capture-path-failure.md`），换 API 并不能
+    /// 绕过系统故障，只会丢掉冻结架构的所见即所得。所有 SCK 请求都有 5 秒
+    /// 单次完成门：故障会话里有界报错，健康会话里单屏约 0.1 秒。
     func captureDisplays() async throws -> [DisplaySnapshot] {
-        return try await captureDisplaysUsingCoreGraphics()
-    }
-
-    /// 普通全屏冻结直接读取各显示器的 CoreGraphics 帧缓冲。
-    /// 这条路径返回 Retina 原生像素，而且不建立 ScreenCaptureKit/replayd 会话；
-    /// ScreenCaptureKit 只保留给需要桌面无关窗口后备存储的整窗重拍。
-    private func captureDisplaysUsingCoreGraphics() async throws -> [DisplaySnapshot] {
         guard isPermissionGranted else { throw CaptureError.noPermission }
+        let session = try MacScreenCaptureBroker.shared.beginSession()
+        var completedSuccessfully = false
+        defer {
+            MacScreenCaptureBroker.shared.finishSession(session)
+            // replayd 重启或连接中断后，旧 SCShareableContent 对象不能继续复用。
+            // 失败后的下一次用户请求重新枚举；这里不会自动重试当前请求。
+            if !completedSuccessfully {
+                cachedDisplayContent = nil
+            }
+        }
 
         for attempt in 0..<2 {
             try Task.checkCancellation()
@@ -74,47 +63,78 @@ final class MacScreenCapturer: ScreenCapturing {
             let displays = currentDisplays()
             guard !displays.isEmpty else { throw CaptureError.noDisplays }
 
+            // 共享内容只枚举一次：之后每块屏的过滤器都从这里取。
+            // 这一步超时（5 秒门）即整个失败，不会逐屏放大等待。
+            let content = try await displayContent(
+                for: generation,
+                in: session
+            )
+            let ownPID = ProcessInfo.processInfo.processIdentifier
+            let ownApps = content.applications.filter { $0.processID == ownPID }
+
             let startedAt = Date()
             var snapshots: [DisplaySnapshot] = []
             var failedDisplays: [DisplayInfo] = []
 
             for display in displays {
                 try Task.checkCancellation()
-                guard let image = CGDisplayCreateImage(display.id) else {
+                guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
+                    NSLog("[MacShot] 共享内容中找不到显示器 displayID=%u name=%@", display.id, display.name)
                     failedDisplays.append(display)
                     continue
                 }
+                let filter = SCContentFilter(
+                    display: scDisplay,
+                    excludingApplications: ownApps,
+                    exceptingWindows: []
+                )
+                let config = SCStreamConfiguration()
+                config.width = Int((display.frame.width * display.scale).rounded())
+                config.height = Int((display.frame.height * display.scale).rounded())
+                config.scalesToFit = false
+                config.showsCursor = false
+                config.captureResolution = .best
+                config.ignoreShadowsDisplay = true
+                config.colorSpaceName = CGColorSpace.sRGB
 
-                let imageScaleX = CGFloat(image.width) / display.frame.width
-                let imageScaleY = CGFloat(image.height) / display.frame.height
-                guard imageScaleX.isFinite,
-                      imageScaleY.isFinite,
-                      abs(imageScaleX - imageScaleY) < 0.01
-                else {
+                do {
+                    let image = try await MacScreenCaptureBroker.shared.captureImage(
+                        filter: filter,
+                        configuration: config,
+                        in: session,
+                        operationName: "display:\(display.id)"
+                    )
+                    guard abs(image.width - config.width) <= 1,
+                          abs(image.height - config.height) <= 1 else {
+                        NSLog(
+                            "[MacShot] 显示器像素校验失败 displayID=%u name=%@ 请求=%dx%d 实得=%dx%d",
+                            display.id, display.name, config.width, config.height, image.width, image.height
+                        )
+                        failedDisplays.append(display)
+                        continue
+                    }
+                    snapshots.append(DisplaySnapshot(
+                        display: display,
+                        image: image,
+                        imageScale: CGFloat(image.width) / display.frame.width
+                    ))
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch let error as CaptureError where error.stopsCaptureBatch {
+                    throw error
+                } catch {
                     NSLog(
-                        "[MacShot] CoreGraphics 显示器像素比例异常 displayID=%u name=%@ points=%.0fx%.0f pixels=%dx%d",
-                        display.id,
-                        display.name,
-                        display.frame.width,
-                        display.frame.height,
-                        image.width,
-                        image.height
+                        "[MacShot] 显示器捕获失败 displayID=%u name=%@ error=%@",
+                        display.id, display.name, String(describing: error)
                     )
                     failedDisplays.append(display)
-                    continue
                 }
-
-                snapshots.append(DisplaySnapshot(
-                    display: display,
-                    image: image,
-                    imageScale: imageScaleX
-                ))
             }
 
             let topologyStillMatches = generation == topologyGeneration
                 && DisplayTopology.matches(displays, currentDisplays())
             guard topologyStillMatches else {
-                NSLog("[MacShot] CoreGraphics 捕获期间显示器拓扑变化 generation=%llu attempt=%d", generation, attempt + 1)
+                NSLog("[MacShot] 捕获期间显示器拓扑变化 generation=%llu attempt=%d", generation, attempt + 1)
                 if attempt == 0 {
                     try await waitForTopologyToSettle()
                     continue
@@ -124,20 +144,21 @@ final class MacScreenCapturer: ScreenCapturing {
 
             guard failedDisplays.isEmpty, snapshots.count == displays.count else {
                 let names = failedDisplays.isEmpty ? displays.map(\.name) : failedDisplays.map(\.name)
-                NSLog("[MacShot] CoreGraphics 显示器捕获失败 names=%@", names.joined(separator: ", "))
+                NSLog("[MacShot] 显示器捕获失败 names=%@", names.joined(separator: ", "))
                 throw CaptureError.displayCaptureFailed(names)
             }
 
             let imageSummary = snapshots.map { snapshot in
-                "\(snapshot.display.name)=\(snapshot.image.width)x\(snapshot.image.height)@\(String(format: "%.2f", snapshot.scale))x"
+                "\(snapshot.display.name)=\(snapshot.image.width)x\(snapshot.image.height)@\(String(format: "%.2f", snapshot.imageScale))x"
             }.joined(separator: ", ")
             NSLog(
-                "[MacShot] CoreGraphics 多屏冻结完成 generation=%llu elapsed=%.3fs count=%d images=%@",
+                "[MacShot] 多屏冻结完成 generation=%llu elapsed=%.3fs count=%d images=%@",
                 generation,
                 Date().timeIntervalSince(startedAt),
                 snapshots.count,
                 imageSummary
             )
+            completedSuccessfully = true
             return snapshots
         }
 
@@ -154,62 +175,33 @@ final class MacScreenCapturer: ScreenCapturing {
 
     private func displayTopologyDidChange() {
         topologyGeneration &+= 1
+        cachedDisplayContent = nil
         NSLog("[MacShot] 显示器拓扑变化 generation=%llu", topologyGeneration)
     }
 
-    private func requestShareableContent() async throws -> SCShareableContent {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = CaptureContinuationGate(continuation)
-            SCShareableContent.getExcludingDesktopWindows(
-                false,
-                onScreenWindowsOnly: true
-            ) { content, error in
-                if let content {
-                    gate.resume(with: .success(content))
-                } else if let error {
-                    gate.resume(with: .failure(error))
-                } else {
-                    gate.resume(with: .failure(CaptureError.screenCaptureUnavailable))
-                }
-            }
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(
-                deadline: .now() + Self.shareableContentTimeout
-            ) {
-                gate.resume(with: .failure(CaptureError.screenCaptureTimedOut))
-            }
+    private func displayContent(
+        for generation: UInt64,
+        in session: MacScreenCaptureBroker.Session
+    ) async throws -> SCShareableContent {
+        if let cachedDisplayContent,
+           cachedDisplayContent.generation == generation {
+            return cachedDisplayContent.content
         }
-    }
 
-    private nonisolated static func captureImage(
-        filter: SCContentFilter,
-        configuration: SCStreamConfiguration
-    ) async throws -> CGImage {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = CaptureContinuationGate(continuation)
-            SCScreenshotManager.captureImage(
-                contentFilter: filter,
-                configuration: configuration
-            ) { image, error in
-                if let image {
-                    gate.resume(with: .success(image))
-                } else if let error {
-                    gate.resume(with: .failure(error))
-                } else {
-                    gate.resume(with: .failure(CaptureError.screenCaptureUnavailable))
-                }
-            }
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(
-                deadline: .now() + macScreenScreenshotTimeout
-            ) {
-                gate.resume(with: .failure(CaptureError.screenCaptureTimedOut))
-            }
+        let content = try await MacScreenCaptureBroker.shared.shareableContent(in: session)
+        guard generation == topologyGeneration else {
+            return content
         }
+        cachedDisplayContent = (generation, content)
+        return content
     }
 
     func captureWindow(windowID: CGWindowID, scale: CGFloat, includeShadow: Bool) async throws -> CGImage {
         guard isPermissionGranted else { throw CaptureError.noPermission }
+        let session = try MacScreenCaptureBroker.shared.beginSession()
+        defer { MacScreenCaptureBroker.shared.finishSession(session) }
         // 窗口列表不能复用显示器冻结缓存：用户可能在选区期间新开/关闭窗口。
-        let content = try await requestShareableContent()
+        let content = try await MacScreenCaptureBroker.shared.shareableContent(in: session)
         guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
             throw CaptureError.windowNotFound
         }
@@ -223,7 +215,12 @@ final class MacScreenCapturer: ScreenCapturing {
         config.ignoreShadowsSingleWindow = !includeShadow
         config.backgroundColor = .clear
         config.colorSpaceName = CGColorSpace.sRGB
-        let image = try await Self.captureImage(filter: filter, configuration: config)
+        let image = try await MacScreenCaptureBroker.shared.captureImage(
+            filter: filter,
+            configuration: config,
+            in: session,
+            operationName: "window:\(windowID)"
+        )
         NSLog(
             "[MacShot] 整窗捕获: 请求 %dx%d 实得 %dx%d 阴影=%@",
             config.width,
@@ -240,8 +237,10 @@ enum CaptureError: Error, LocalizedError {
     case noPermission
     case noDisplays
     case displayTopologyChanged
-    case screenCaptureTimedOut
+    case screenCaptureTimedOut(String)
     case screenCaptureUnavailable
+    case screenCaptureRequestInFlight(String?)
+    case screenCaptureRequestQuarantined(String)
     case displayCaptureFailed([String])
     case windowNotFound
     case cropFailed
@@ -255,9 +254,13 @@ enum CaptureError: Error, LocalizedError {
         case .displayTopologyChanged:
             return "显示器连接状态在截图过程中发生了变化，请稍候再试。"
         case .screenCaptureTimedOut:
-            return "MacShot 等待 ScreenCaptureKit 响应超时，已停止本次请求以避免继续卡住。系统自带截图可能仍可用。"
+            return "MacShot 等待 ScreenCaptureKit 响应超过 5 秒。MacShot 已停止等待，但系统请求可能仍在结束中；在它真正结束前不会发送新的捕获请求。"
         case .screenCaptureUnavailable:
-            return "MacShot 未从 ScreenCaptureKit 收到截图结果；系统自带截图可能仍可用。"
+            return "MacShot 未从 ScreenCaptureKit 收到截图结果。"
+        case .screenCaptureRequestInFlight:
+            return "MacShot 正在处理上一条屏幕捕获请求，请稍候再试。"
+        case .screenCaptureRequestQuarantined:
+            return "上一条 ScreenCaptureKit 请求超时后仍未结束。MacShot 已暂停发送新的捕获请求，避免继续影响系统截图服务；请稍候再试。"
         case .displayCaptureFailed(let names):
             let displayDescription: String
             if names.count == 1 {
@@ -265,11 +268,23 @@ enum CaptureError: Error, LocalizedError {
             } else {
                 displayDescription = "显示器：\(names.joined(separator: "、"))"
             }
-            return "MacShot 的显示器捕获失败（\(displayDescription)）；macOS 系统截图可能仍可用。"
+            return "MacShot 的显示器捕获失败（\(displayDescription)）。"
         case .windowNotFound:
             return "找不到目标窗口"
         case .cropFailed:
             return "选区裁剪失败"
+        }
+    }
+
+    var stopsCaptureBatch: Bool {
+        switch self {
+        case .screenCaptureTimedOut,
+             .screenCaptureUnavailable,
+             .screenCaptureRequestInFlight,
+             .screenCaptureRequestQuarantined:
+            return true
+        default:
+            return false
         }
     }
 }

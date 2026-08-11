@@ -64,16 +64,45 @@ enum ToolbarLayout {
     /// 样式行判定：仅 `style` 组进下行，其余（tools/history/actions）进上行。
     private static func isStyleRow(_ group: ToolbarGroup) -> Bool { group == .style }
 
-    private static func rowWidth(_ controls: [any ToolbarControl], context: ToolbarContext) -> CGFloat {
+    private static func controlWidth(
+        _ control: any ToolbarControl,
+        context: ToolbarContext,
+        compactMain: Bool
+    ) -> CGFloat {
+        let natural = control.width(context)
+        guard compactMain, !isStyleRow(control.group) else { return natural }
+        return min(natural, ToolbarStyle.compactIconButtonWidth)
+    }
+
+    private static func separatorWidth(compactMain: Bool) -> CGFloat {
+        compactMain ? ToolbarStyle.compactSeparatorWidth : ToolbarStyle.separatorWidth
+    }
+
+    private static func rowWidth(
+        _ controls: [any ToolbarControl],
+        context: ToolbarContext,
+        compactMain: Bool = false
+    ) -> CGFloat {
         guard !controls.isEmpty else { return 0 }
         var width: CGFloat = 0
         var previous: ToolbarGroup?
         for c in controls {
-            if let p = previous, p != c.group { width += ToolbarStyle.separatorWidth }
-            width += c.width(context)
+            if let p = previous, p != c.group {
+                width += separatorWidth(compactMain: compactMain)
+            }
+            width += controlWidth(c, context: context, compactMain: compactMain)
             previous = c.group
         }
         return width
+    }
+
+    private static func usesCompactMainSpacing(
+        _ main: [any ToolbarControl],
+        context: ToolbarContext,
+        maximumWidth: CGFloat?
+    ) -> Bool {
+        guard let maximumWidth else { return false }
+        return rowWidth(main, context: context) > maximumWidth
     }
 
     /// 工具条尺寸。默认取自然宽；给出屏幕上限时可收起动作文字。
@@ -83,7 +112,12 @@ enum ToolbarLayout {
         guard !all.isEmpty else { return .zero }
         let main = all.filter { !isStyleRow($0.group) }
         let style = all.filter { isStyleRow($0.group) }
-        let mainWidth = rowWidth(main, context: context)
+        let compactMain = usesCompactMainSpacing(
+            main,
+            context: context,
+            maximumWidth: maximumWidth
+        )
+        let mainWidth = rowWidth(main, context: context, compactMain: compactMain)
         let styleWidth = rowWidth(style, context: context)
         let width = max(mainWidth, styleWidth)
         guard width > 0 else { return .zero }
@@ -92,20 +126,30 @@ enum ToolbarLayout {
         return CGSize(width: width, height: height)
     }
 
-    private static func rowSlots(controls: [any ToolbarControl], at origin: CGPoint, context: ToolbarContext) -> [ToolbarSlot] {
+    private static func rowSlots(
+        controls: [any ToolbarControl],
+        at origin: CGPoint,
+        context: ToolbarContext,
+        compactMain: Bool = false
+    ) -> [ToolbarSlot] {
         var slots: [ToolbarSlot] = []
         var x = origin.x
         var previousGroup: ToolbarGroup?
         for control in controls {
             if let previousGroup, previousGroup != control.group {
                 slots.append(ToolbarSlot(
-                    frame: CGRect(x: x, y: origin.y, width: ToolbarStyle.separatorWidth, height: rowHeight),
+                    frame: CGRect(
+                        x: x,
+                        y: origin.y,
+                        width: separatorWidth(compactMain: compactMain),
+                        height: rowHeight
+                    ),
                     control: nil
                 ))
-                x += ToolbarStyle.separatorWidth
+                x += separatorWidth(compactMain: compactMain)
             }
             previousGroup = control.group
-            let w = control.width(context)
+            let w = controlWidth(control, context: context, compactMain: compactMain)
             slots.append(ToolbarSlot(frame: CGRect(x: x, y: origin.y, width: w, height: rowHeight), control: control))
             x += w
         }
@@ -124,14 +168,29 @@ enum ToolbarLayout {
         let all = controls(context, maximumWidth: maximumWidth)
         let main = all.filter { !isStyleRow($0.group) }
         let style = all.filter { isStyleRow($0.group) }
+        let compactMain = usesCompactMainSpacing(
+            main,
+            context: context,
+            maximumWidth: maximumWidth
+        )
         if style.isEmpty {
-            return rowSlots(controls: main, at: origin, context: context)
+            return rowSlots(
+                controls: main,
+                at: origin,
+                context: context,
+                compactMain: compactMain
+            )
         }
         // 主行在上，样式行在下（贴近选区下方时主行最靠近选区）。
         let mainOrigin = CGPoint(x: origin.x, y: origin.y + rowHeight + interRowGap)
         let styleOrigin = origin
         var slots: [ToolbarSlot] = []
-        slots += rowSlots(controls: main, at: mainOrigin, context: context)
+        slots += rowSlots(
+            controls: main,
+            at: mainOrigin,
+            context: context,
+            compactMain: compactMain
+        )
         slots += rowSlots(controls: style, at: styleOrigin, context: context)
         return slots
     }
@@ -170,12 +229,22 @@ enum ToolbarLayout {
         }
         let main = all.filter { !isStyleRow($0.group) }
         let style = all.filter { isStyleRow($0.group) }
+        let compactMain = usesCompactMainSpacing(
+            main,
+            context: context,
+            maximumWidth: maximumWidth
+        )
         // y < anchor.minY → 贴在选区下方，主行在上；否则贴在上方，主行在下
         let isBelow = y < anchor.minY
         let mainY = isBelow ? y + rowHeight + interRowGap : y
         let styleY = isBelow ? y : y + rowHeight + interRowGap
         var result: [ToolbarSlot] = []
-        result += rowSlots(controls: main, at: CGPoint(x: x, y: mainY), context: context)
+        result += rowSlots(
+            controls: main,
+            at: CGPoint(x: x, y: mainY),
+            context: context,
+            compactMain: compactMain
+        )
         result += rowSlots(controls: style, at: CGPoint(x: x, y: styleY), context: context)
         return result
     }

@@ -83,8 +83,6 @@ struct RecordAction: CaptureAction {
     let symbolName = "video"
     let scopes: Set<ActionScope> = [.capture]
     let suppressesAutoCopy = true
-    /// 不是当前截图的出口，收进“更多”避免主工具条被模式切换入口挤满。
-    let isPrimaryAction = false
 
     func perform(_ context: CaptureContext) async throws {
         // 截图工具条上直接进录屏：不入库当前选区，避免多一张无用截图
@@ -99,7 +97,6 @@ struct ScrollCaptureAction: CaptureAction {
     let symbolName = "arrow.down.doc"
     let scopes: Set<ActionScope> = [.capture]
     let suppressesAutoCopy = true
-    let isPrimaryAction = false
 
     func perform(_ context: CaptureContext) async throws {
         await MainActor.run { ScrollCaptureController.shared.begin() }

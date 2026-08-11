@@ -53,7 +53,8 @@ if [ "$test_status" -eq 0 ]; then
 else
     printf "%s\n" "$test_output" \
         | grep -E "error:|signal|XCTAssert.*failed|failed \(" | head -20 | sed 's/^/    /'
-    bad "swift test 退出码 $test_status（${summary:-没跑完}）"
+    # 变量名必须加花括号：bash 3.2 会把紧随的全角「（」并进变量名，报 unbound variable。
+    bad "swift test 退出码 ${test_status}（${summary:-没跑完}）"
 fi
 
 # ------------------------------------------------------------ 架构纪律（静态）
@@ -131,6 +132,49 @@ if [ -z "$theme_hits" ]; then
 else
     printf "%s\n" "$theme_hits" | sed 's/^/    /'
     bad "新增 Theme/MacTheme 调用点 —— 请改为 DS（Theme 已收敛为兼容层）"
+fi
+
+section "纪律六：普通截图不准退回废弃的 CoreGraphics 代理"
+# macOS 15 会把这些 API 转发到 ReplayKit 的 proxyCoreGraphics；多屏串行调用
+# 会把一次系统故障放大成 N 次 5 秒超时。普通截图统一走带 5 秒完成门的 SCK 逐屏冻结。
+legacy_capture_hits=$(grep -rn "CGDisplayCreateImage\|CGWindowListCreateImage" \
+    --include="*.swift" Sources 2>/dev/null | code_only || true)
+if [ -z "$legacy_capture_hits" ]; then
+    ok "没有废弃的 CoreGraphics 截图调用"
+else
+    printf "%s\n" "$legacy_capture_hits" | sed 's/^/    /'
+    bad "不要恢复 CGDisplayCreateImage/CGWindowListCreateImage —— macOS 15 会转发到旧 ReplayKit 代理"
+fi
+
+section "纪律七：运行中的 App 不得被原地覆盖"
+# 旧 PID 存活时删除/重建同一路径 bundle，会让进程 audit token 对应的旧 code object
+# 与磁盘上的新签名不一致。必须旁路签名、退出旧进程，再原子替换；无证书时
+# 也不得静默退回 ad-hoc。
+unsafe_bundle_replace=$(grep -nF 'rm -rf "$APP_BUNDLE"' build.sh || true)
+if [ -z "$unsafe_bundle_replace" ] \
+    && grep -q 'STAGED_APP=' build.sh \
+    && grep -q 'running_pids()' build.sh \
+    && grep -qF 'mv "$STAGED_APP" "$APP_BUNDLE"' build.sh \
+    && grep -q 'MACSHOT_ALLOW_ADHOC' build.sh; then
+    ok "Release 先旁路签名，旧进程退出后再替换，ad-hoc 只能显式启用"
+else
+    [ -n "$unsafe_bundle_replace" ] && printf "%s\n" "$unsafe_bundle_replace" | sed 's/^/    /'
+    bad "build.sh 必须保持 staging → 退出旧 PID → 原子替换，并禁止隐式 ad-hoc"
+fi
+
+section "纪律八：ScreenCaptureKit 初始化只走统一事务门"
+# 内容枚举、静态截图和 SCStream 启动必须串成完整事务。若录屏/长截图直接调用，
+# 就可能和普通截图在 replayd 内交错，把一次超时扩散成多个在途请求。
+sck_entry_hits=$(grep -rn \
+    "SCShareableContent\.getExcludingDesktopWindows\|SCShareableContent\.excludingDesktopWindows\|SCScreenshotManager\.captureImage\|stream\.startCapture(" \
+    --include="*.swift" Sources/MacShot 2>/dev/null \
+    | grep -v "Platform/macOS/MacScreenCaptureBroker\.swift" \
+    | code_only || true)
+if [ -z "$sck_entry_hits" ]; then
+    ok "截图、录屏和长截图的 SCK 初始化都经过 MacScreenCaptureBroker"
+else
+    printf "%s\n" "$sck_entry_hits" | sed 's/^/    /'
+    bad "不得绕过 MacScreenCaptureBroker 直接枚举、截图或启动 SCStream"
 fi
 
 # -------------------------------------------------------------------- 可选：打包

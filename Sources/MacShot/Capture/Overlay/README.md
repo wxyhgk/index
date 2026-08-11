@@ -7,7 +7,7 @@
 | 文件 | 职责 | 持有状态 |
 |---|---|---|
 | `OverlayView.swift` | 事件翻译与装配：鼠标/触控 → `SelectionModel` / `AnnotationState`，`CALayer` 冻结画面 + `ChromeView` 矢量；组合子状态，不直接存光标/选字细节 | `model`/`annotation`/`mode`/`imageLayer`/`chrome` + 3 个子宿主 |
-| `OverlayView+Keyboard.swift` + `OverlayInteractionState` | 键盘优先级与悬停状态：`Esc`/`↩`/`⌘C`/`⌘Z`/`C` 逐级处理，`hoveredControlID`（工具条高亮）与 `optionHeld`（紫框/蓝框）集中一处 | `hoveredControlID`、`optionHeld` |
+| `OverlayView+Keyboard.swift` + `OverlayInteractionState` | 键盘优先级与悬停状态：编辑后第一次 `Esc` 一次性退出整套编辑态、第二次取消截图；中性态一次退出。`↩`/`⌘C`/`⌘Z`/`C` 分层处理，`hoveredControlID`（工具条高亮）与 `optionHeld`（紫框/蓝框）集中一处 | `hoveredControlID`、`optionHeld` |
 | `OverlayView+LiveText.swift` + `LiveTextOverlayHost` / `LiveTextHitTestView` | 选字层生命周期：`wantsLiveTextOverlay = tool==nil && pointerEngaged` 时挂载 `ImageAnalysisOverlayView`，预跑 `LiveTextAnalyzer`（键=选区+马赛克） | `container`、`overlay`、`analysis` |
 | `OverlayView+Magnifier.swift` + `OverlayMagnifierState` | 放大镜采样：`cursor`/`cursorSample`（`DisplaySnapshot.sample` 纯内存），仅 `idle/dragging/adjusting` 显示 | `cursor`、`cursorSample` |
 | `OverlayRenderer.swift` | 纯渲染：`draw(model:annotation:slots:hoveredControlID:magnifier:…)` 无状态枚举，输入即输出，不持有可变状态 | 无 |

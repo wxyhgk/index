@@ -38,6 +38,7 @@ final class PinToolbarView: NSView {
     private var focusedControlID: String?
     private var widthScroll = ToolbarScrollAccumulator()
     private var toolTipTags: [NSView.ToolTipTag] = []
+    private var toolTipOwners: [NSView.ToolTipTag: ToolbarToolTipOwner] = [:]
     private var toolTipSignature = ""
     /// 这一轮拖动是在挪窗口，还是按在控件上手抖。
     private var dragsWindow = false
@@ -136,11 +137,21 @@ final class PinToolbarView: NSView {
         }
         let signature = entries.map { "\(NSStringFromRect($0.0)):\($0.1)" }.joined(separator: "|")
         guard signature != toolTipSignature else { return }
-        toolTipTags.forEach(removeToolTip)
+        clearToolTips()
         toolTipTags = entries.map { frame, label in
-            addToolTip(frame, owner: label, userData: nil)
+            let owner = ToolbarToolTipOwner(label)
+            let tag = addToolTip(frame, owner: owner, userData: nil)
+            toolTipOwners[tag] = owner
+            return tag
         }
         toolTipSignature = signature
+    }
+
+    func clearToolTips() {
+        toolTipTags.forEach(removeToolTip)
+        toolTipTags.removeAll()
+        toolTipOwners.removeAll()
+        toolTipSignature = ""
     }
 
     // MARK: - AppKit 基础

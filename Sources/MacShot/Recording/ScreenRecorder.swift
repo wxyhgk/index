@@ -368,9 +368,13 @@ private final class RecordingSession: NSObject, SCStreamDelegate, SCRecordingOut
     }
 
     func start() async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: true
+        let broker = MacScreenCaptureBroker.shared
+        let captureSession = try broker.beginSession()
+        defer { broker.finishSession(captureSession) }
+
+        let content = try await broker.shareableContent(
+            in: captureSession,
+            operationName: "recording:shareable-content"
         )
         guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
             throw RecordingError.displayNotFound
@@ -413,7 +417,11 @@ private final class RecordingSession: NSObject, SCStreamDelegate, SCRecordingOut
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         let output = SCRecordingOutput(configuration: recording, delegate: self)
         try stream.addRecordingOutput(output)
-        try await stream.startCapture()
+        try await broker.startCapture(
+            stream,
+            in: captureSession,
+            operationName: "recording:start-stream"
+        )
 
         self.stream = stream
         self.recordingOutput = output

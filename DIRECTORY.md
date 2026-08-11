@@ -20,7 +20,7 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 | 路径 | 说明 |
 |---|---|
 | `Package.swift` | 单 target + GRDB 依赖 + 测试 target，`swiftLanguageMode(.v5)` |
-| `build.sh` | 组装 `.app` bundle 并签名，签名优先级 Developer ID → 自签名 "MacShot Dev" → ad-hoc |
+| `build.sh` | 在旁路目录组装并固定身份签名，退出旧 MacShot 后原子替换 `.app`，按原运行状态自动重启；签名优先级 Developer ID → 自签名 "MacShot Dev"，ad-hoc 只可显式启用 |
 | `scripts/make-dev-cert.sh` | 生成自签名证书。**存在的理由**：ad-hoc 签名的 cdhash 每次编译都变，macOS 会认为是另一个 App 而反复要求重新授权屏幕录制；固定证书给出稳定的 designated requirement，授权一次即可 |
 | `Resources/Info.plist` | bundle 元信息与权限用途说明 |
 | `ARCHITECTURE.md` | 规范文档：依赖方向、五个扩展点、类型约定、违例表、阶段进度 |

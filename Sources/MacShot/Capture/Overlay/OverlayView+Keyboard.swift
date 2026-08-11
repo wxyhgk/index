@@ -16,11 +16,16 @@ final class OverlayInteractionState {
 extension OverlayView {
 
     override func keyDown(with event: NSEvent) {
-        // plain 模式（录屏选区）没有标注和动作，只认：⎋ 取消、⏎ 确认、方向键微调。
+        // 编辑模式只占一级：第一次一次性收起画笔/指针/文字与图层选择，保留截图；
+        // 第二次取消整次捕获。没有进入编辑模式时仍然一次 Esc 退出。
+        if event.keyCode == KeyCode.escape {
+            cancelFromEscape()
+            return
+        }
+
+        // plain 模式（录屏选区）没有标注和动作，只认：⏎ 确认、方向键微调。
         if mode == .plain {
             switch event.keyCode {
-            case KeyCode.escape:
-                cancel()
             case KeyCode.returnKey, KeyCode.keypadEnter:
                 emit(ActionID.finish)
             case let code where KeyCode.arrows.contains(code):
@@ -55,10 +60,6 @@ extension OverlayView {
             case KeyCode.space, KeyCode.returnKey, KeyCode.keypadEnter:
                 activateFocusedToolbarControl()
                 return
-            case KeyCode.escape:
-                focusedControlID = nil
-                redraw()
-                return
             default:
                 break
             }
@@ -82,23 +83,6 @@ extension OverlayView {
         }
 
         switch event.keyCode {
-        case KeyCode.escape:
-            // 逐级退出（和右键链一致）：选字层里选中的文字 → 图层选中 →
-            // 鼠标模式退回中性态 → 画笔退回中性态 → 取消整个截图流程。
-            if clearLiveTextSelection() {
-                // 已处理：只清文字选择，不再往下退。
-            } else if annotation.select(nil) {
-                redraw()
-            } else if annotation.pointerEngaged {
-                annotation.pointerEngaged = false
-                syncLiveTextOverlay()
-                redraw()
-            } else if annotation.tool != nil {
-                annotation.tool = nil
-                redraw()
-            } else {
-                cancel()
-            }
         case KeyCode.delete:
             // 文字输入中的退格在上面的 isEditingText 分支处理过了，这里只删选中图层。
             redrawIfNeeded(annotation.deleteSelected())
@@ -128,7 +112,7 @@ extension OverlayView {
             return
         }
         switch event.keyCode {
-        case KeyCode.escape, KeyCode.returnKey, KeyCode.keypadEnter:
+        case KeyCode.returnKey, KeyCode.keypadEnter:
             annotation.endTextEditing()
         case KeyCode.delete:
             annotation.deleteBackward()
@@ -142,6 +126,35 @@ extension OverlayView {
             annotation.insertText(text)
         }
         redraw()
+    }
+
+    /// 单独留成可测试入口：编辑状态一级，整个截图流程一级。
+    func cancelFromEscape() {
+        if exitEditingFromEscape() { return }
+        cancel()
+    }
+
+    @discardableResult
+    private func exitEditingFromEscape() -> Bool {
+        guard mode == .capture else { return false }
+        let isEditing = annotation.tool != nil
+            || annotation.pointerEngaged
+            || annotation.isEditingText
+            || annotation.selectedID != nil
+        guard isEditing else { return false }
+
+        // 不照右键的精细逐层链退出：Esc 一次收起整套编辑态，避免文字/图层/工具
+        // 叠在一起时需要按三四次。已画好的图层仍然保留。
+        _ = clearLiveTextSelection()
+        annotation.endTextEditing()
+        _ = annotation.select(nil)
+        annotation.tool = nil
+        annotation.pointerEngaged = false
+        focusedControlID = nil
+        pressedControlID = nil
+        syncLiveTextOverlay()
+        redraw()
+        return true
     }
 
     /// 取色器：把光标处的色值放进剪贴板。选区还没确认时也能用。

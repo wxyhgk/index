@@ -8,6 +8,25 @@ CONFIG="${1:-release}"
 APP_NAME="MacShot"
 BUILD_DIR="build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
+APP_EXECUTABLE="$PWD/$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+
+# 同一时间只允许一个组装/替换流程。SwiftPM 自己能并发，但两个脚本同时移动
+# .app 会让签名、TCC 路径和正在运行的进程再次错位。
+mkdir -p "$BUILD_DIR"
+BUILD_LOCK="$BUILD_DIR/.macshot-bundle.lock"
+if ! mkdir "$BUILD_LOCK" 2>/dev/null; then
+    echo "另一个 MacShot 组装流程正在运行: $BUILD_LOCK" >&2
+    exit 1
+fi
+
+STAGE_ROOT="$(mktemp -d "$BUILD_DIR/.MacShot-stage.XXXXXX")"
+STAGED_APP="$STAGE_ROOT/$APP_NAME.app"
+BACKUP_APP="$BUILD_DIR/.MacShot-previous.$$.app"
+cleanup() {
+    rm -rf -- "$STAGE_ROOT"
+    rmdir "$BUILD_LOCK" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 echo "==> swift build -c $CONFIG"
 swift build -c "$CONFIG"
@@ -18,14 +37,13 @@ if [[ ! -x "$BIN_PATH" ]]; then
     exit 1
 fi
 
-echo "==> 组装 $APP_BUNDLE"
-rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
-cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
-cp Resources/Info.plist "$APP_BUNDLE/Contents/Info.plist"
-printf 'APPL????' > "$APP_BUNDLE/Contents/PkgInfo"
+echo "==> 在旁路目录组装 $STAGED_APP"
+mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
+cp "$BIN_PATH" "$STAGED_APP/Contents/MacOS/$APP_NAME"
+cp Resources/Info.plist "$STAGED_APP/Contents/Info.plist"
+printf 'APPL????' > "$STAGED_APP/Contents/PkgInfo"
 
-# 签名身份优先级：Developer ID > 本地自签的「MacShot Dev」> ad-hoc。
+# 签名身份优先级：Developer ID > 本地自签的「MacShot Dev」。
 #
 # 为什么不能用 ad-hoc：ad-hoc 没有身份信息，TCC 只能按二进制 cdhash 记录「屏幕录制」授权，
 # 代码一改就失效，每次构建都要重新授权。用固定证书后 TCC 记的是 bundle ID + 证书指纹，
@@ -37,19 +55,93 @@ LOCAL_ID="$(security find-identity -v -p codesigning 2>/dev/null \
 
 if [[ -n "$DEV_ID" ]]; then
     echo "==> 使用 Developer ID 签名: $DEV_ID"
-    codesign --force --options runtime --sign "$DEV_ID" "$APP_BUNDLE"
+    codesign --force --options runtime --sign "$DEV_ID" "$STAGED_APP"
 elif [[ -n "$LOCAL_ID" ]]; then
     echo "==> 使用本地固定签名身份: $LOCAL_ID"
-    codesign --force --sign "$LOCAL_ID" "$APP_BUNDLE"
+    codesign --force --sign "$LOCAL_ID" "$STAGED_APP"
+elif [[ "${MACSHOT_ALLOW_ADHOC:-0}" == "1" ]]; then
+    echo "==> 显式允许 ad-hoc 签名；本构建的屏幕录制授权不会跨版本稳定"
+    codesign --force --sign - "$STAGED_APP"
 else
-    echo "==> 未找到签名证书，退回 ad-hoc（每次构建后都需要重新授权屏幕录制）"
-    echo "    建议先运行一次: ./scripts/make-dev-cert.sh"
-    codesign --force --sign - "$APP_BUNDLE"
+    echo "未找到稳定的代码签名身份，拒绝生成会破坏 TCC 授权的 ad-hoc App。" >&2
+    echo "请先运行一次: ./scripts/make-dev-cert.sh" >&2
+    echo "仅无 TCC 的临时环境可显式设置 MACSHOT_ALLOW_ADHOC=1。" >&2
+    exit 1
 fi
 
+codesign --verify --deep --strict "$STAGED_APP"
+
 echo "==> 签名身份要求（TCC 就是按这个认 App 的）:"
-codesign -d -r- "$APP_BUNDLE" 2>&1 | grep '^designated' || true
+NEW_REQUIREMENT="$(codesign -d -r- "$STAGED_APP" 2>&1 | grep '^designated' || true)"
+echo "$NEW_REQUIREMENT"
+
+if [[ -d "$APP_BUNDLE" ]]; then
+    OLD_REQUIREMENT="$(codesign -d -r- "$APP_BUNDLE" 2>&1 | grep '^designated' || true)"
+    if [[ -n "$OLD_REQUIREMENT" && "$OLD_REQUIREMENT" != "$NEW_REQUIREMENT" ]]; then
+        echo "警告：本次签名身份与现有 App 不同，TCC 可能只需重新授权一次。" >&2
+        echo "旧: $OLD_REQUIREMENT" >&2
+        echo "新: $NEW_REQUIREMENT" >&2
+    fi
+fi
+
+# 绝不能在旧进程存活时原地覆盖 bundle。旧进程的 audit token / code object
+# 仍属于旧版本，而 replayd/tccd 会从同一路径重新解析新签名，实测会造成授权记录
+# 不一致，表现为“每次构建后必须重启”。先完整退出，再做同卷 rename。
+WAS_RUNNING=0
+running_pids() {
+    ps -axo pid=,command= | awk -v target="$APP_EXECUTABLE" '$2 == target { print $1 }'
+}
+
+PIDS="$(running_pids)"
+if [[ -n "$PIDS" ]]; then
+    WAS_RUNNING=1
+    echo "==> 退出正在运行的旧 MacShot: $PIDS"
+    osascript -e 'tell application id "com.wxyhgk.macshot" to quit' >/dev/null 2>&1 || true
+    for _ in {1..20}; do
+        [[ -z "$(running_pids)" ]] && break
+        sleep 0.1
+    done
+    PIDS="$(running_pids)"
+    if [[ -n "$PIDS" ]]; then
+        echo "==> 旧进程未及时退出，发送 TERM: $PIDS"
+        while IFS= read -r pid; do
+            [[ -n "$pid" ]] && kill -TERM "$pid"
+        done <<< "$PIDS"
+        for _ in {1..20}; do
+            [[ -z "$(running_pids)" ]] && break
+            sleep 0.1
+        done
+    fi
+    PIDS="$(running_pids)"
+    if [[ -n "$PIDS" ]]; then
+        echo "旧 MacShot 仍在运行，拒绝覆盖 App: $PIDS" >&2
+        exit 1
+    fi
+fi
+
+echo "==> 原子替换 $APP_BUNDLE"
+if [[ -e "$APP_BUNDLE" ]]; then
+    mv "$APP_BUNDLE" "$BACKUP_APP"
+fi
+if mv "$STAGED_APP" "$APP_BUNDLE"; then
+    rm -rf -- "$BACKUP_APP"
+else
+    [[ -e "$BACKUP_APP" ]] && mv "$BACKUP_APP" "$APP_BUNDLE"
+    echo "替换失败，已恢复旧 App。" >&2
+    exit 1
+fi
+
+codesign --verify --deep --strict "$APP_BUNDLE"
+
+if [[ "$WAS_RUNNING" == "1" ]]; then
+    echo "==> 启动新 MacShot"
+    open "$PWD/$APP_BUNDLE"
+fi
 
 echo
 echo "完成: $APP_BUNDLE"
-echo "运行: open $APP_BUNDLE"
+if [[ "$WAS_RUNNING" == "1" ]]; then
+    echo "旧进程已退出，App 已原位替换并自动重启。"
+else
+    echo "运行: open $APP_BUNDLE"
+fi

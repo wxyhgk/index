@@ -7,8 +7,12 @@ enum ToolbarStyle {
     static let anchorGap: CGFloat = 8
 
     static let iconButtonWidth: CGFloat = 30
+    /// 极窄屏仍需保留全部主动作时，只压缩 1pt 点击格并缩短组间距。
+    /// 29pt 仍明显大于图标本身，命中区域高度保持 34pt 不变。
+    static let compactIconButtonWidth: CGFloat = 29
     static let swatchWidth: CGFloat = 22
     static let separatorWidth: CGFloat = 9
+    static let compactSeparatorWidth: CGFloat = 5
 
     static let horizontalPadding: CGFloat = 11
     static let iconSize: CGFloat = 15

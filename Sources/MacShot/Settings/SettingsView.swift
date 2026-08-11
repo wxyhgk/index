@@ -464,7 +464,8 @@ private struct ShortcutSettings: View {
                 shortcutRow("⌘C / ⌘S", "复制 / 保存（指针模式下选中了文字则 ⌘C 复制文字）")
                 shortcutRow("⏎", "确定（行为见「通用」）")
                 shortcutRow("方向键", "微调选区，⇧ 十倍步进，⌥ 改尺寸")
-                shortcutRow("右键 / ⎋", "逐级退出：文字输入 → 图层选中 → 指针/工具 → 选区 → 取消")
+                shortcutRow("⎋", "编辑后第一次退出编辑、第二次取消；中性态一次取消")
+                shortcutRow("右键", "逐级退出：文字输入 → 图层选中 → 指针/工具 → 选区 → 取消")
             }
 
             Section("钉图窗口") {

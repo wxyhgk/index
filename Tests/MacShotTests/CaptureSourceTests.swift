@@ -47,9 +47,28 @@ final class CaptureSourceTests: XCTestCase {
 
         XCTAssertTrue(message.contains("MacShot 的显示器捕获失败"))
         XCTAssertTrue(message.contains("LS27D80xU"))
-        XCTAssertTrue(message.contains("macOS 系统截图可能仍可用"))
+        // 两个方向都不声称：macOS 15.3.1 实测系统 CLI 截图同样被代理到 replayd，
+        // 「系统截图仍可用」与「系统截图已损坏」在故障会话里都没有依据。
+        XCTAssertFalse(message.contains("macOS 系统截图可能仍可用"))
         XCTAssertFalse(message.contains("macOS 截图服务当前不可用"))
         XCTAssertFalse(message.contains("无法捕获显示器"))
+    }
+
+    func testTimeoutMessageDoesNotClaimNativeRequestWasCancelled() {
+        let message = CaptureError.screenCaptureTimedOut("shareable-content").localizedDescription
+
+        XCTAssertTrue(message.contains("已停止等待"))
+        XCTAssertTrue(message.contains("系统请求可能仍在结束中"))
+        XCTAssertFalse(message.contains("已停止本次请求"))
+    }
+
+    func testQuarantineMessageExplainsWhyNewRequestsArePaused() {
+        let message = CaptureError
+            .screenCaptureRequestQuarantined("shareable-content")
+            .localizedDescription
+
+        XCTAssertTrue(message.contains("上一条 ScreenCaptureKit 请求超时后仍未结束"))
+        XCTAssertTrue(message.contains("暂停发送新的捕获请求"))
     }
 
     func testSnapshotKeepsTopologyScaleSeparateFromCapturedImageScale() throws {

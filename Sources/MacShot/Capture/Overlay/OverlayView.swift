@@ -27,6 +27,7 @@ final class OverlayView: NSView {
     private let imageLayer = CALayer()
     private let chrome = ChromeView()
     private var toolbarToolTipTags: [NSView.ToolTipTag] = []
+    private var toolbarToolTipOwners: [NSView.ToolTipTag: ToolbarToolTipOwner] = [:]
     private var toolbarToolTipSignature = ""
 
     // MARK: - 组合持有的子状态（原散在主视图的可变状态已下沉）
@@ -200,11 +201,22 @@ final class OverlayView: NSView {
         }
         let signature = entries.map { "\(NSStringFromRect($0.0)):\($0.1)" }.joined(separator: "|")
         guard signature != toolbarToolTipSignature else { return }
-        toolbarToolTipTags.forEach(removeToolTip)
+        clearToolbarToolTips()
         toolbarToolTipTags = entries.map { frame, label in
-            addToolTip(frame, owner: label, userData: nil)
+            let owner = ToolbarToolTipOwner(label)
+            let tag = addToolTip(frame, owner: owner, userData: nil)
+            toolbarToolTipOwners[tag] = owner
+            return tag
         }
         toolbarToolTipSignature = signature
+    }
+
+    /// 覆盖层下线前主动取消 AppKit 的延迟 tooltip timer，避免 owner 已释放后回调。
+    func clearToolbarToolTips() {
+        toolbarToolTipTags.forEach(removeToolTip)
+        toolbarToolTipTags.removeAll()
+        toolbarToolTipOwners.removeAll()
+        toolbarToolTipSignature = ""
     }
 
     private func localPoint(of event: NSEvent) -> CGPoint {
@@ -536,7 +548,8 @@ final class OverlayView: NSView {
     }
 
     /// 右键逐级退出：选中的文字 → 图层选中 → 文字输入 → 鼠标模式退回中性 →
-    /// 画笔退回中性 → 选区 → 整个截图流程（和 Esc 链一致）。
+    /// 画笔退回中性 → 选区 → 整个截图流程。Esc 与它刻意不同：Esc 一次
+    /// 取消整次截图，右键才承担“退回上一层”的精细操作。
     /// 鼠标模式下文字上的右键归系统选字层（服务菜单），能落到这里的都在文字之外。
     override func rightMouseDown(with event: NSEvent) {
         if clearLiveTextSelection() {

@@ -334,9 +334,13 @@ private final class ScrollFrameStream: NSObject, SCStreamOutput, SCStreamDelegat
     }
 
     func start() async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: true
+        let broker = MacScreenCaptureBroker.shared
+        let captureSession = try broker.beginSession()
+        defer { broker.finishSession(captureSession) }
+
+        let content = try await broker.shareableContent(
+            in: captureSession,
+            operationName: "scroll:shareable-content"
         )
         guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
             throw CaptureError.noDisplays
@@ -372,7 +376,11 @@ private final class ScrollFrameStream: NSObject, SCStreamOutput, SCStreamDelegat
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
-        try await stream.startCapture()
+        try await broker.startCapture(
+            stream,
+            in: captureSession,
+            operationName: "scroll:start-stream"
+        )
         self.stream = stream
     }
 

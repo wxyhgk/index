@@ -334,6 +334,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         // `ignoresMouseEvents` 不会传染给子窗口，必须自己下线。
         if on {
             isHovering = false
+            toolbarPanel.toolbarView.clearToolTips()
             panel.removeChildWindow(toolbarPanel)
             toolbarPanel.orderOut(nil)
         } else {
@@ -344,6 +345,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
     override func close() {
         saveRevisionIfNeeded()
         Self.passthroughPins.remove(self)
+        toolbarPanel.toolbarView.clearToolTips()
         window?.removeChildWindow(toolbarPanel)
         toolbarPanel.orderOut(nil)
         super.close()

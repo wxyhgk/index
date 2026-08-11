@@ -103,6 +103,7 @@ final class SelectionOverlayController {
         guard isActive else { return }
         NSCursor.pop()
         NSCursor.arrow.set()
+        views.forEach { $0.clearToolbarToolTips() }
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
         views.removeAll()

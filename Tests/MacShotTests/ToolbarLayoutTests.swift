@@ -123,16 +123,28 @@ final class ToolbarLayoutTests: XCTestCase {
         XCTAssertEqual(accumulator.step(delta: -1, isPrecise: false), -1)
     }
 
-    func testRecordAndScrollCaptureAreCollectedUnderMoreActions() {
+    func testRecordAndScrollCaptureStayVisibleOnToolbar() {
         let ctx = context(tool: .rect)
         let controls = ToolbarLayout.slots(origin: .zero, context: ctx).compactMap(\.control)
-        XCTAssertFalse(controls.contains { $0.id == "action.\(ActionID.record)" })
-        XCTAssertFalse(controls.contains { $0.id == "action.\(ActionID.scrollCapture)" })
+        XCTAssertTrue(controls.contains { $0.id == "action.\(ActionID.record)" })
+        XCTAssertTrue(controls.contains { $0.id == "action.\(ActionID.scrollCapture)" })
 
         let more = controls.compactMap { $0 as? MoreActionsControl }.first
         XCTAssertNotNil(more)
-        XCTAssertTrue(more?.descriptors.contains { $0.id == ActionID.record } == true)
-        XCTAssertTrue(more?.descriptors.contains { $0.id == ActionID.scrollCapture } == true)
+        XCTAssertFalse(more?.descriptors.contains { $0.id == ActionID.record } == true)
+        XCTAssertFalse(more?.descriptors.contains { $0.id == ActionID.scrollCapture } == true)
+    }
+
+    func testNarrowToolbarKeepsRecordAndScrollCaptureIcons() {
+        let ctx = context(tool: .rect)
+        let bounds = CGRect(x: 0, y: 0, width: 400, height: 600)
+        let anchor = CGRect(x: 100, y: 250, width: 200, height: 180)
+        let actions = ToolbarLayout.slots(in: bounds, anchor: anchor, context: ctx)
+            .compactMap(\.control)
+            .compactMap { $0 as? ActionControl }
+
+        XCTAssertTrue(actions.contains { $0.descriptor.id == ActionID.record && !$0.showsTitle })
+        XCTAssertTrue(actions.contains { $0.descriptor.id == ActionID.scrollCapture && !$0.showsTitle })
     }
 
     func testNarrowCaptureToolbarStaysInsideSupportedWidth() {

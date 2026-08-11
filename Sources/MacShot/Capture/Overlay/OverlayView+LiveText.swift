@@ -134,7 +134,7 @@ extension OverlayView {
         return true
     }
 
-    /// 选字层里有选中的文字时清掉它 —— Esc / 右键退出链的第一级。返回是否已处理。
+    /// 选字层里有选中的文字时清掉它 —— 右键退出链的第一级。返回是否已处理。
     func clearLiveTextSelection() -> Bool {
         guard let overlay = liveTextHost.overlay, overlay.hasActiveTextSelection else { return false }
         overlay.resetSelection()
