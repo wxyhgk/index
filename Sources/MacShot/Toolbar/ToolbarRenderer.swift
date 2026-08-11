@@ -4,7 +4,13 @@ import AppKit
 @MainActor
 enum ToolbarRenderer {
 
-    static func draw(_ slots: [ToolbarSlot], hovered: String?, context: ToolbarContext) {
+    static func draw(
+        _ slots: [ToolbarSlot],
+        hovered: String?,
+        pressed: String? = nil,
+        focused: String? = nil,
+        context: ToolbarContext
+    ) {
         guard !slots.isEmpty else { return }
 
         // 两行各自圆角底板（PixPin 双胶囊），行间留 `interRowGap` 缝。
@@ -26,11 +32,16 @@ enum ToolbarRenderer {
 
             let state = ToolbarRenderState(
                 isSelected: control.isSelected(context),
-                isHovered: hovered == control.id
+                isHovered: hovered == control.id,
+                isFocused: focused == control.id,
+                // 按住后拖出按钮应取消按压视觉；拖回同一按钮则恢复。
+                isPressed: pressed == control.id && hovered == control.id,
+                isEnabled: control.isEnabled(context),
+                isBusy: control.isBusy(context)
             )
 
-            if state.isSelected || state.isHovered {
-                (state.isSelected ? DS.toolbarSelected : DS.toolbarHover)
+            if state.isEnabled && (state.isSelected || state.isHovered || state.isFocused || state.isPressed) {
+                (state.isSelected || state.isPressed ? DS.toolbarSelected : DS.toolbarHover)
                     .setFill()
                 NSBezierPath(
                     roundedRect: slot.frame.insetBy(dx: 2.5, dy: 3.5),
@@ -38,7 +49,23 @@ enum ToolbarRenderer {
                 ).fill()
             }
 
+            if state.isEnabled && state.isFocused {
+                NSColor.keyboardFocusIndicatorColor.setStroke()
+                let focus = NSBezierPath(
+                    roundedRect: slot.frame.insetBy(dx: 2, dy: 3),
+                    xRadius: 5,
+                    yRadius: 5
+                )
+                focus.lineWidth = 2
+                focus.stroke()
+            }
+
+            NSGraphicsContext.saveGraphicsState()
+            if !state.isEnabled {
+                NSGraphicsContext.current?.cgContext.setAlpha(state.isBusy ? 0.72 : 0.32)
+            }
             control.draw(in: slot.frame, context: context, state: state)
+            NSGraphicsContext.restoreGraphicsState()
         }
     }
 

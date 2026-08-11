@@ -8,7 +8,7 @@ enum SelectionMode {
     case plain
 }
 
-/// 覆盖所有显示器的选区层。
+/// 覆盖同一次拓扑快照里的全部显示器。
 ///
 /// 只负责：建窗口、分发选区结果、协调多屏之间的互斥。
 @MainActor
@@ -21,25 +21,46 @@ final class SelectionOverlayController {
     var isActive: Bool { !windows.isEmpty }
 
     /// - Parameters:
-    ///   - snapshots: 每块屏的冻结画面，必须在覆盖层出现**之前**拍好。
+    ///   - snapshots: 目标屏幕的冻结画面，必须在覆盖层出现**之前**拍好。
     ///   - finishOnConfirm: 简单模式 —— 松手（或单击窗口）确认选区后立刻返回，
     ///     不显示工具条、不进标注阶段。滚动截图用它只拿 region + display。
+    @discardableResult
     func begin(
         snapshots: [DisplaySnapshot],
         windowList: [WindowInfo],
         mode: SelectionMode = .capture,
         finishOnConfirm: Bool = false,
         completion: @escaping (SelectionResult?) -> Void
-    ) {
-        guard !isActive, !snapshots.isEmpty else { return }
+    ) -> Bool {
+        guard !isActive, !snapshots.isEmpty else { return false }
+
+        // 捕获完成到覆盖层出现之间也可能刚好接入/断开 Sidecar。严格核对整套
+        // displayID + frame + scale，禁止跳过某一屏后继续展示半套覆盖层。
+        let currentScreens = NSScreen.screens
+        let currentDisplays = currentScreens.compactMap(DisplayInfo.init(screen:))
+        let frozenDisplays = snapshots.map(\.display)
+        guard DisplayTopology.matches(frozenDisplays, currentDisplays) else {
+            NSLog(
+                "[MacShot] 覆盖层拒绝陈旧拓扑 frozen=%@ current=%@",
+                frozenDisplays.map { "\($0.name)(\($0.id))" }.joined(separator: ", "),
+                currentDisplays.map { "\($0.name)(\($0.id))" }.joined(separator: ", ")
+            )
+            return false
+        }
+
+        let screensByID = Dictionary(uniqueKeysWithValues: currentScreens.compactMap { screen in
+            Geometry.displayID(of: screen).map { ($0, screen) }
+        })
+        guard snapshots.allSatisfy({ screensByID[$0.display.id] != nil }) else {
+            return false
+        }
+
         self.completion = completion
 
         let primaryID = NSScreen.main.flatMap(Geometry.displayID(of:))
 
         for snapshot in snapshots {
-            guard let screen = NSScreen.screens.first(where: {
-                Geometry.displayID(of: $0) == snapshot.display.id
-            }) else { continue }
+            guard let screen = screensByID[snapshot.display.id] else { continue }
 
             let model = SelectionModel(snapshot: snapshot, windows: windowList)
             let view = OverlayView(
@@ -68,6 +89,7 @@ final class SelectionOverlayController {
 
         NSApp.activate(ignoringOtherApps: true)
         NSCursor.crosshair.push()
+        return true
     }
 
     private func finish(_ result: SelectionResult?) {

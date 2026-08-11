@@ -51,6 +51,8 @@ extension PinImageView {
             }
         }
 
+        if onToolbarKey?(event) == true { return }
+
         let cmd = event.modifierFlags.contains(.command)
 
         if cmd, event.keyCode == KeyCode.z {

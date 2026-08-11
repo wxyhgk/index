@@ -26,6 +26,8 @@ final class OverlayView: NSView {
     private let isPrimaryScreen: Bool
     private let imageLayer = CALayer()
     private let chrome = ChromeView()
+    private var toolbarToolTipTags: [NSView.ToolTipTag] = []
+    private var toolbarToolTipSignature = ""
 
     // MARK: - 组合持有的子状态（原散在主视图的可变状态已下沉）
 
@@ -47,6 +49,8 @@ final class OverlayView: NSView {
     var cursor: CGPoint? { get { magnifierState.cursor } set { magnifierState.cursor = newValue } }
     var cursorSample: PixelSample? { get { magnifierState.cursorSample } set { magnifierState.cursorSample = newValue } }
     var hoveredControlID: String? { get { interactionState.hoveredControlID } set { interactionState.hoveredControlID = newValue } }
+    var pressedControlID: String? { get { interactionState.pressedControlID } set { interactionState.pressedControlID = newValue } }
+    var focusedControlID: String? { get { interactionState.focusedControlID } set { interactionState.focusedControlID = newValue } }
     var optionHeld: Bool { get { interactionState.optionHeld } set { interactionState.optionHeld = newValue } }
 
     /// 整窗捕获只在正式截图模式下开放 —— 录屏选区和滚动截图只要一个矩形。
@@ -58,7 +62,7 @@ final class OverlayView: NSView {
         OverlayGeometry(bounds: bounds, displayOrigin: model.bounds.origin)
     }
 
-    private var toolbarContext: ToolbarContext {
+    var toolbarContext: ToolbarContext {
         // 截图工具条没有独立「选字」控件（选字并进了鼠标模式），
         // 不需要传 isLiveTextActive / toggleLiveText。
         ToolbarContext(
@@ -133,6 +137,8 @@ final class OverlayView: NSView {
                 slots: self.slots,
                 toolbarContext: self.toolbarContext,
                 hoveredControlID: self.hoveredControlID,
+                pressedControlID: self.pressedControlID,
+                focusedControlID: self.focusedControlID,
                 isPrimaryScreen: self.isPrimaryScreen,
                 confirmHint: self.mode == .plain ? "⏎ 开始录制 · 双击选区 · ⎋ 取消" : nil,
                 fullWindowHint: self.optionHeld && self.allowsFullWindowCapture,
@@ -183,7 +189,22 @@ final class OverlayView: NSView {
     }
 
     func redraw() {
+        syncToolbarToolTips()
         chrome.needsDisplay = true
+    }
+
+    private func syncToolbarToolTips() {
+        let entries = slots.compactMap { slot -> (CGRect, String)? in
+            guard let control = slot.control else { return nil }
+            return (slot.frame, control.accessibilityLabel(toolbarContext))
+        }
+        let signature = entries.map { "\(NSStringFromRect($0.0)):\($0.1)" }.joined(separator: "|")
+        guard signature != toolbarToolTipSignature else { return }
+        toolbarToolTipTags.forEach(removeToolTip)
+        toolbarToolTipTags = entries.map { frame, label in
+            addToolTip(frame, owner: label, userData: nil)
+        }
+        toolbarToolTipSignature = signature
     }
 
     private func localPoint(of event: NSEvent) -> CGPoint {
@@ -265,17 +286,17 @@ final class OverlayView: NSView {
         // 工具条命中优先
         if model.phase == .confirmed,
            let control = slots.first(where: { $0.control != nil && $0.frame.contains(local) })?.control {
-            // 效果层要用的真实元数据不在这里注入 —— init 里设的
-            // `annotation.effectContext` 闭包会在开关那一刻现取窗口归因。
-            control.activate(toolbarContext)
-            // 控件可能切换了工具 / 进出了鼠标模式，选字层跟着对齐。
-            syncLiveTextOverlay()
+            // 禁用控件也记录按下，以便 mouseUp 被工具条消费；是否执行在松开时判断。
+            pressedControlID = control.id
+            hoveredControlID = control.id
+            focusedControlID = control.id
             redraw()
             return
         }
 
         let global = geometry.global(fromViewLocal: local)
         hoveredControlID = nil
+        focusedControlID = nil
 
         // ⌥+单击窗口 = 整窗捕获（不含遮挡），不进标注阶段，直接完成。
         if allowsFullWindowCapture, model.phase == .idle,
@@ -354,6 +375,19 @@ final class OverlayView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if let pressedControlID {
+            let local = localPoint(of: event)
+            let stillInside = slots.contains {
+                $0.control?.id == pressedControlID && $0.frame.contains(local)
+            }
+            let nextHover = stillInside ? pressedControlID : nil
+            if nextHover != hoveredControlID {
+                hoveredControlID = nextHover
+                redraw()
+            }
+            return
+        }
+
         let local = localPoint(of: event)
         updateCursor(local)
         if annotation.isDrawing {
@@ -395,6 +429,7 @@ final class OverlayView: NSView {
         guard model.phase == .confirmed,
               annotation.styleAxes.contains(.width)
         else {
+            interactionState.widthScroll.reset()
             super.scrollWheel(with: event)
             return
         }
@@ -413,19 +448,40 @@ final class OverlayView: NSView {
             return false
         }()
         guard shouldHandle else {
+            interactionState.widthScroll.reset()
             super.scrollWheel(with: event)
             return
         }
-        let delta = event.scrollingDeltaY
-        guard delta != 0 else { super.scrollWheel(with: event); return }
-        // 小数防抖：触控板连续小增量，累积到阈值再步进
-        let step = delta > 0 ? 1 : -1
+        if !event.momentumPhase.isEmpty {
+            if event.momentumPhase.contains(.ended) { interactionState.widthScroll.reset() }
+            return
+        }
+        guard let step = interactionState.widthScroll.step(
+            delta: event.scrollingDeltaY,
+            isPrecise: event.hasPreciseScrollingDeltas
+        ) else { return }
         if annotation.stepWidth(by: step) {
             redraw()
         }
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let pressedID = pressedControlID {
+            let local = localPoint(of: event)
+            let control = slots.first {
+                $0.control?.id == pressedID && $0.frame.contains(local)
+            }?.control
+            pressedControlID = nil
+            hoveredControlID = control?.id
+            if let control, control.isEnabled(toolbarContext) {
+                // 效果层的元数据由 effectContext 在激活时现取。
+                control.activate(toolbarContext)
+                syncLiveTextOverlay()
+            }
+            redraw()
+            return
+        }
+
         if annotation.isDrawing {
             annotation.endDraw(pixelSource: frozenPixels)
             redraw()

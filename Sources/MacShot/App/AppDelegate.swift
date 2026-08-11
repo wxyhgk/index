@@ -89,8 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 服务菜单：「用 MacShot 截图」（Info.plist 里的 NSServices 指到 captureService）。
         NSApp.servicesProvider = self
 
+        // 启动时只确认权限，不主动发起 SCShareableContent/截图预热。
+        // 预热一旦遇到 replayd 退避，会和用户的真实截图争用同一个卡死会话。
         if !ScreenRecordingPermission.isGranted {
-            ScreenRecordingPermission.request()
+            _ = ScreenRecordingPermission.request()
         }
 
         // 服务已全部就绪，重放冷启动期间攒下的 URL 命令。

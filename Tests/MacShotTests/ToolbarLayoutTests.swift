@@ -12,11 +12,19 @@ final class ToolbarLayoutTests: XCTestCase {
         CaptureActionRegistry.registerBuiltins(into: .shared)
     }
 
-    private func context(tool: AnnotationTool?) -> ToolbarContext {
+    private func context(
+        tool: AnnotationTool?,
+        executingActions: Set<String> = []
+    ) -> ToolbarContext {
         let state = AnnotationState()
         state.tool = tool
         // 中性态外，确保有工具时 styleAxes 非空才触发双行
-        return ToolbarContext(annotation: state, scope: .capture, perform: { _ in })
+        return ToolbarContext(
+            annotation: state,
+            scope: .capture,
+            perform: { _ in },
+            isActionExecuting: { executingActions.contains($0) }
+        )
     }
 
     func testSingleRowWhenNoStyle() {
@@ -75,5 +83,114 @@ final class ToolbarLayoutTests: XCTestCase {
         let ctx = context(tool: .text)
         let size = ToolbarLayout.blockSize(ctx)
         XCTAssertEqual(size.height, ToolbarLayout.rowHeight * 2 + ToolbarLayout.interRowGap)
+    }
+
+    func testHistoryControlsReserveStableDisabledSlots() {
+        let ctx = context(tool: .rect)
+        let controls = ToolbarLayout.slots(origin: .zero, context: ctx)
+            .compactMap(\.control)
+        let undo = controls.first { $0.id == "undo" }
+        let redo = controls.first { $0.id == "redo" }
+
+        XCTAssertNotNil(undo, "无历史时撤销仍应固定占位")
+        XCTAssertNotNil(redo, "无历史时重做仍应固定占位")
+        XCTAssertEqual(undo?.isEnabled(ctx), false)
+        XCTAssertEqual(redo?.isEnabled(ctx), false)
+    }
+
+    func testPreciseScrollAccumulatesBeforeStepping() {
+        var accumulator = ToolbarScrollAccumulator()
+
+        XCTAssertNil(accumulator.step(delta: 2, isPrecise: true))
+        XCTAssertNil(accumulator.step(delta: 3, isPrecise: true))
+        XCTAssertEqual(accumulator.step(delta: 1, isPrecise: true), 1)
+        XCTAssertEqual(accumulator.value, 0, accuracy: 0.001)
+    }
+
+    func testPreciseScrollDirectionChangeCancelsResidual() {
+        var accumulator = ToolbarScrollAccumulator()
+
+        XCTAssertNil(accumulator.step(delta: 4, isPrecise: true))
+        XCTAssertNil(accumulator.step(delta: -3, isPrecise: true))
+        XCTAssertNil(accumulator.step(delta: -2, isPrecise: true))
+        XCTAssertEqual(accumulator.step(delta: -5, isPrecise: true), -1)
+    }
+
+    func testDiscreteWheelStepsImmediately() {
+        var accumulator = ToolbarScrollAccumulator()
+
+        XCTAssertEqual(accumulator.step(delta: 1, isPrecise: false), 1)
+        XCTAssertEqual(accumulator.step(delta: -1, isPrecise: false), -1)
+    }
+
+    func testRecordAndScrollCaptureAreCollectedUnderMoreActions() {
+        let ctx = context(tool: .rect)
+        let controls = ToolbarLayout.slots(origin: .zero, context: ctx).compactMap(\.control)
+        XCTAssertFalse(controls.contains { $0.id == "action.\(ActionID.record)" })
+        XCTAssertFalse(controls.contains { $0.id == "action.\(ActionID.scrollCapture)" })
+
+        let more = controls.compactMap { $0 as? MoreActionsControl }.first
+        XCTAssertNotNil(more)
+        XCTAssertTrue(more?.descriptors.contains { $0.id == ActionID.record } == true)
+        XCTAssertTrue(more?.descriptors.contains { $0.id == ActionID.scrollCapture } == true)
+    }
+
+    func testNarrowCaptureToolbarStaysInsideSupportedWidth() {
+        let ctx = context(tool: .rect)
+        let bounds = CGRect(x: 0, y: 0, width: 400, height: 600)
+        let anchor = CGRect(x: 100, y: 250, width: 200, height: 180)
+        let slots = ToolbarLayout.slots(in: bounds, anchor: anchor, context: ctx)
+
+        XCTAssertFalse(slots.isEmpty)
+        XCTAssertGreaterThanOrEqual(slots.map(\.frame.minX).min() ?? 0, bounds.minX + 4)
+        XCTAssertLessThanOrEqual(slots.map(\.frame.maxX).max() ?? 0, bounds.maxX - 4)
+        XCTAssertTrue(
+            slots.compactMap(\.control).compactMap { $0 as? ActionControl }.allSatisfy { !$0.showsTitle },
+            "窄屏应保留动作图标并收起文字"
+        )
+    }
+
+    func testToolbarFocusWrapsInBothDirections() {
+        let ids = ["pointer", "rect", "copy"]
+        XCTAssertEqual(ToolbarFocusNavigator.next(in: ids, current: nil, offset: 1), "pointer")
+        XCTAssertEqual(ToolbarFocusNavigator.next(in: ids, current: nil, offset: -1), "copy")
+        XCTAssertEqual(ToolbarFocusNavigator.next(in: ids, current: "copy", offset: 1), "pointer")
+        XCTAssertEqual(ToolbarFocusNavigator.next(in: ids, current: "pointer", offset: -1), "copy")
+    }
+
+    func testExecutingActionIsBusyAndDisabled() {
+        let ctx = context(tool: .rect, executingActions: [ActionID.copy])
+        let copy = ToolbarLayout.slots(origin: .zero, context: ctx)
+            .compactMap(\.control)
+            .first { $0.id == "action.\(ActionID.copy)" }
+
+        XCTAssertNotNil(copy)
+        XCTAssertEqual(copy?.isBusy(ctx), true)
+        XCTAssertEqual(copy?.isEnabled(ctx), false)
+        XCTAssertEqual(copy?.accessibilityLabel(ctx), "正在复制")
+    }
+
+    func testActionExecutionTrackerRejectsDuplicateUntilFinished() {
+        var tracker = ActionExecutionTracker()
+        XCTAssertTrue(tracker.begin(ActionID.upload))
+        XCTAssertTrue(tracker.isExecuting(ActionID.upload))
+        XCTAssertFalse(tracker.begin(ActionID.upload))
+
+        tracker.finish(ActionID.upload)
+        XCTAssertFalse(tracker.isExecuting(ActionID.upload))
+        XCTAssertTrue(tracker.begin(ActionID.upload))
+    }
+
+    func testMoreActionsShowsBusyWithoutBlockingOtherActions() {
+        let ctx = context(tool: .rect, executingActions: [ActionID.upload])
+        let more = ToolbarLayout.slots(origin: .zero, context: ctx)
+            .compactMap(\.control)
+            .compactMap { $0 as? MoreActionsControl }
+            .first
+
+        XCTAssertNotNil(more)
+        XCTAssertEqual(more?.isBusy(ctx), true)
+        XCTAssertEqual(more?.isEnabled(ctx), true)
+        XCTAssertEqual(more?.accessibilityLabel(ctx), "更多操作（有操作正在执行）")
     }
 }

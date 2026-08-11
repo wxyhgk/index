@@ -85,7 +85,7 @@ final class ScrollCaptureController {
                 )
 
                 // finishOnConfirm：松手即返回选区，不出工具条。这里只要 region + display。
-                overlay.begin(
+                let didBegin = overlay.begin(
                     snapshots: snapshots,
                     windowList: windowList,
                     finishOnConfirm: true
@@ -93,6 +93,7 @@ final class ScrollCaptureController {
                     guard let self, let result else { return }
                     self.startSession(with: result, previousApp: previousApp)
                 }
+                guard didBegin else { throw CaptureError.displayTopologyChanged }
             } catch {
                 NSLog("[MacShot] 滚动截图准备失败: \(error)")
             }

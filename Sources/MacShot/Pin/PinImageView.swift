@@ -19,6 +19,10 @@ final class PinImageView: NSView {
     /// 通知控制器重算工具条窗口的尺寸与位置并重绘。
     /// **不是**尺寸随窗口变：宽度只跟「此刻有哪些控件可见」走。
     var onToolbarInvalidated: (() -> Void)?
+    /// 键盘仍由图片窗口接收，但 Tab 焦点与激活交给独立工具条窗口处理。
+    var onToolbarKey: ((NSEvent) -> Bool)?
+    var onToolbarFocusClear: (() -> Void)?
+    var isActionExecuting: ((String) -> Bool)?
     /// 鼠标进出图片区。控制器把它和工具条窗口的进出合并成一个悬停状态。
     var onHoverChanged: (() -> Void)?
     /// ⌘T 切换鼠标穿透。
@@ -107,7 +111,10 @@ final class PinImageView: NSView {
             // 不支持的机型不传 toggle → 「选字」控件整个不出现。
             toggleLiveText: LiveTextAnalyzer.isSupported
                 ? { [weak self] in self?.toggleLiveText() }
-                : nil
+                : nil,
+            isActionExecuting: { [weak self] actionID in
+                self?.isActionExecuting?(actionID) ?? false
+            }
         )
     }
 
@@ -244,6 +251,7 @@ final class PinImageView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        onToolbarFocusClear?()
         // 工具条的内容取决于工具 / 选中 / 撤销栈，这一下点击都可能改到 ——
         // 走哪条分支都要让工具条窗口重算一次。
         defer { onToolbarInvalidated?() }

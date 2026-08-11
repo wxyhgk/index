@@ -25,19 +25,23 @@ struct ToolbarContext {
     /// 开关选字模式。设备不支持（Intel / 低版本）或宿主没接入时为 nil，
     /// 「选字」控件据此整个不出现。
     let toggleLiveText: (() -> Void)?
+    /// 某个出口动作是否正在当前宿主中执行。
+    let isActionExecuting: (String) -> Bool
 
     init(
         annotation: AnnotationState,
         scope: ActionScope,
         perform: @escaping (String) -> Void,
         isLiveTextActive: @escaping () -> Bool = { false },
-        toggleLiveText: (() -> Void)? = nil
+        toggleLiveText: (() -> Void)? = nil,
+        isActionExecuting: @escaping (String) -> Bool = { _ in false }
     ) {
         self.annotation = annotation
         self.scope = scope
         self.perform = perform
         self.isLiveTextActive = isLiveTextActive
         self.toggleLiveText = toggleLiveText
+        self.isActionExecuting = isActionExecuting
     }
 }
 
@@ -45,6 +49,48 @@ struct ToolbarContext {
 struct ToolbarRenderState {
     let isSelected: Bool
     let isHovered: Bool
+    let isFocused: Bool
+    let isPressed: Bool
+    let isEnabled: Bool
+    let isBusy: Bool
+}
+
+/// 自绘工具条的键盘焦点导航。输入只有当前可用控件 ID，因此 Overlay 与钉图
+/// 可以共享完全一致的 Tab / Shift-Tab / 左右键行为。
+struct ToolbarFocusNavigator {
+    static func next(in ids: [String], current: String?, offset: Int) -> String? {
+        guard !ids.isEmpty, offset != 0 else { return current }
+        guard let current, let index = ids.firstIndex(of: current) else {
+            return offset > 0 ? ids.first : ids.last
+        }
+        let next = (index + offset % ids.count + ids.count) % ids.count
+        return ids[next]
+    }
+}
+
+/// 把触控板的连续小数滚动累积成离散的工具参数步进。
+/// 普通鼠标滚轮没有 precise delta，一格立即产生一步。
+struct ToolbarScrollAccumulator {
+    static let preciseThreshold: CGFloat = 6
+
+    private(set) var value: CGFloat = 0
+
+    mutating func reset() { value = 0 }
+
+    mutating func step(delta: CGFloat, isPrecise: Bool) -> Int? {
+        guard delta != 0 else { return nil }
+        guard isPrecise else {
+            value = 0
+            return delta > 0 ? 1 : -1
+        }
+
+        // 反向滚动先抵消上一方向的残量，避免轻微回弹立即跨档。
+        value += delta
+        guard abs(value) >= Self.preciseThreshold else { return nil }
+        let step = value > 0 ? 1 : -1
+        value -= CGFloat(step) * Self.preciseThreshold
+        return step
+    }
 }
 
 /// 工具条上的一个可点元素。
@@ -61,9 +107,14 @@ protocol ToolbarControl {
     /// 组内排序。
     var order: Int { get }
 
-    /// 上下文相关的显隐。颜色只在拿着画笔时出现，撤销只在有东西可撤时出现。
+    /// 上下文相关的显隐与可用态。颜色只在拿着画笔时出现；历史按钮固定
+    /// 占位，无历史时通过 `isEnabled` 变成禁用态，避免后方动作横向跳动。
     func isVisible(_ context: ToolbarContext) -> Bool
+    func isEnabled(_ context: ToolbarContext) -> Bool
+    func isBusy(_ context: ToolbarContext) -> Bool
     func isSelected(_ context: ToolbarContext) -> Bool
+    /// Tooltip、键盘焦点提示和无障碍描述共用的用户可读名称。
+    func accessibilityLabel(_ context: ToolbarContext) -> String
     func width(_ context: ToolbarContext) -> CGFloat
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState)
     func activate(_ context: ToolbarContext)
@@ -71,7 +122,10 @@ protocol ToolbarControl {
 
 extension ToolbarControl {
     func isVisible(_ context: ToolbarContext) -> Bool { true }
+    func isEnabled(_ context: ToolbarContext) -> Bool { true }
+    func isBusy(_ context: ToolbarContext) -> Bool { false }
     func isSelected(_ context: ToolbarContext) -> Bool { false }
+    func accessibilityLabel(_ context: ToolbarContext) -> String { id }
     func width(_ context: ToolbarContext) -> CGFloat { ToolbarStyle.iconButtonWidth }
 }
 

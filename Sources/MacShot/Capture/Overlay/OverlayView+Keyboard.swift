@@ -5,6 +5,9 @@ import AppKit
 /// 键盘与鼠标事件各自读写同一份状态。
 final class OverlayInteractionState {
     var hoveredControlID: String?
+    var pressedControlID: String?
+    var focusedControlID: String?
+    var widthScroll = ToolbarScrollAccumulator()
     var optionHeld = false
 }
 
@@ -32,6 +35,33 @@ extension OverlayView {
         if annotation.isEditingText {
             handleTextInput(event)
             return
+        }
+
+        let toolbarModifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if model.phase == .confirmed,
+           event.keyCode == KeyCode.tab,
+           toolbarModifiers.subtracting(.shift).isEmpty {
+            moveToolbarFocus(by: toolbarModifiers.contains(.shift) ? -1 : 1)
+            return
+        }
+        if focusedControlID != nil {
+            switch event.keyCode {
+            case KeyCode.left:
+                moveToolbarFocus(by: -1)
+                return
+            case KeyCode.right:
+                moveToolbarFocus(by: 1)
+                return
+            case KeyCode.space, KeyCode.returnKey, KeyCode.keypadEnter:
+                activateFocusedToolbarControl()
+                return
+            case KeyCode.escape:
+                focusedControlID = nil
+                redraw()
+                return
+            default:
+                break
+            }
         }
 
         let cmd = event.modifierFlags.contains(.command)
@@ -126,6 +156,30 @@ extension OverlayView {
         annotation.tool = tool
         // V = 主动进入鼠标模式（选字层跟着挂上）；画笔快捷键 = 离开。
         annotation.pointerEngaged = tool == nil
+        syncLiveTextOverlay()
+        redraw()
+    }
+
+    private func moveToolbarFocus(by offset: Int) {
+        let ids = slots.compactMap { slot -> String? in
+            guard let control = slot.control, control.isEnabled(toolbarContext) else { return nil }
+            return control.id
+        }
+        focusedControlID = ToolbarFocusNavigator.next(
+            in: ids,
+            current: focusedControlID,
+            offset: offset
+        )
+        redraw()
+    }
+
+    private func activateFocusedToolbarControl() {
+        guard let focusedControlID,
+              let control = slots.compactMap(\.control).first(where: {
+                  $0.id == focusedControlID && $0.isEnabled(toolbarContext)
+              })
+        else { return }
+        control.activate(toolbarContext)
         syncLiveTextOverlay()
         redraw()
     }

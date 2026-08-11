@@ -36,6 +36,14 @@ struct ToolControl: ToolbarControl {
         }
     }
 
+    func accessibilityLabel(_ context: ToolbarContext) -> String {
+        if let tool {
+            let shortcut = ToolRegistry.descriptor(for: tool).shortcut?.label
+            return shortcut.map { "\(tool.title)（\($0)）" } ?? tool.title
+        }
+        return "指针（V）"
+    }
+
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         ToolbarStyle.drawCenteredSymbol(tool?.symbolName ?? "cursorarrow", in: frame)
     }
@@ -71,6 +79,7 @@ struct LiveTextControl: ToolbarControl {
     /// 保留类型仅作兼容，永不显示（见 PinImageView.viewDidMoveToWindow 自动进入）。
     func isVisible(_ context: ToolbarContext) -> Bool { false }
     func isSelected(_ context: ToolbarContext) -> Bool { false }
+    func accessibilityLabel(_ context: ToolbarContext) -> String { "选字" }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         ToolbarStyle.drawCenteredSymbol("character.cursor.ibeam", in: frame)
@@ -106,6 +115,8 @@ struct ShapeVariantControl: ToolbarControl {
         context.annotation.tool == tool
     }
 
+    func accessibilityLabel(_ context: ToolbarContext) -> String { tool.title }
+
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         // 与顶行工具共用同套符号，保证视觉一致；PixPin 第二行左侧即此意。
         ToolbarStyle.drawCenteredSymbol(tool.symbolName, in: frame, pointSize: 14)
@@ -136,6 +147,7 @@ struct ColorControl: ToolbarControl {
     func isSelected(_ context: ToolbarContext) -> Bool {
         context.annotation.styleIndex(for: .color) == index
     }
+    func accessibilityLabel(_ context: ToolbarContext) -> String { "颜色 \(index + 1)" }
     func width(_ context: ToolbarContext) -> CGFloat { ToolbarStyle.swatchWidth }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
@@ -177,6 +189,9 @@ struct ToolParamControl: ToolbarControl {
     func isSelected(_ context: ToolbarContext) -> Bool {
         context.annotation.styleIndex(for: axis) == index
     }
+    func accessibilityLabel(_ context: ToolbarContext) -> String {
+        "\(axis.descriptor.title) \(index + 1)"
+    }
     func width(_ context: ToolbarContext) -> CGFloat { 24 }
 
     /// 每根轴用自己的视觉语言表达「三档」，光看图标就知道在调什么：
@@ -206,6 +221,7 @@ struct EffectToggleControl: ToolbarControl {
     let order: Int
     let symbolName: String
     let kind: Layer.Kind
+    let title: String
 
     /// 从注册表描述符构造。新增效果只需在 `EffectRegistry` 声明一处，
     /// 工具条与编辑器面板自动跟随，无需在此追加硬编码注册行。
@@ -214,6 +230,7 @@ struct EffectToggleControl: ToolbarControl {
         self.order = descriptor.toolbarOrder
         self.symbolName = descriptor.symbolName
         self.kind = descriptor.kind
+        self.title = descriptor.panelTitle
     }
 
     init(id: String, order: Int, symbolName: String, kind: Layer.Kind) {
@@ -221,6 +238,7 @@ struct EffectToggleControl: ToolbarControl {
         self.order = order
         self.symbolName = symbolName
         self.kind = kind
+        self.title = id
     }
 
     /// 只在钉图上出现：截图工具条为保持精简撤掉了输出开关 ——
@@ -235,6 +253,7 @@ struct EffectToggleControl: ToolbarControl {
     func isSelected(_ context: ToolbarContext) -> Bool {
         context.annotation.hasEffect(kind)
     }
+    func accessibilityLabel(_ context: ToolbarContext) -> String { title }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         ToolbarStyle.drawCenteredSymbol(symbolName, in: frame)
@@ -253,9 +272,10 @@ struct UndoControl: ToolbarControl {
     var group: ToolbarGroup { .history }
     var order: Int { 0 }
 
-    /// 没操作可撤的时候不占位置。看的是操作栈而不是图层数 ——
-    /// 移动、删除、改样式都可撤，哪怕图层数没变。
-    func isVisible(_ context: ToolbarContext) -> Bool { context.annotation.canUndo }
+    /// 固定占位，避免历史栈变化时把右侧复制/保存按钮横向推走。
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+    func isEnabled(_ context: ToolbarContext) -> Bool { context.annotation.canUndo }
+    func accessibilityLabel(_ context: ToolbarContext) -> String { "撤销（Command-Z）" }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         ToolbarStyle.drawCenteredSymbol("arrow.uturn.backward", in: frame, pointSize: 13)
@@ -272,7 +292,9 @@ struct RedoControl: ToolbarControl {
     var group: ToolbarGroup { .history }
     var order: Int { 1 }
 
-    func isVisible(_ context: ToolbarContext) -> Bool { context.annotation.canRedo }
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+    func isEnabled(_ context: ToolbarContext) -> Bool { context.annotation.canRedo }
+    func accessibilityLabel(_ context: ToolbarContext) -> String { "重做（Shift-Command-Z）" }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         ToolbarStyle.drawCenteredSymbol("arrow.uturn.forward", in: frame, pointSize: 13)
@@ -289,20 +311,51 @@ struct ActionControl: ToolbarControl {
     let descriptor: ToolbarActionDescriptor
     let order: Int
     let scope: ActionScope
+    let showsTitle: Bool
+
+    init(
+        descriptor: ToolbarActionDescriptor,
+        order: Int,
+        scope: ActionScope,
+        showsTitle: Bool = true
+    ) {
+        self.descriptor = descriptor
+        self.order = order
+        self.scope = scope
+        self.showsTitle = showsTitle
+    }
 
     var id: String { "action.\(descriptor.id)" }
     var scopes: Set<ActionScope> { [scope] }
     var group: ToolbarGroup { .actions }
+    func isEnabled(_ context: ToolbarContext) -> Bool {
+        !context.isActionExecuting(descriptor.id)
+    }
+    func isBusy(_ context: ToolbarContext) -> Bool {
+        context.isActionExecuting(descriptor.id)
+    }
+    func accessibilityLabel(_ context: ToolbarContext) -> String {
+        isBusy(context) ? "正在\(descriptor.title)" : descriptor.title
+    }
 
     func width(_ context: ToolbarContext) -> CGFloat {
-        ToolbarStyle.horizontalPadding * 2
+        guard showsTitle else { return ToolbarStyle.iconButtonWidth }
+        return ToolbarStyle.horizontalPadding * 2
             + ToolbarStyle.iconSize
             + ToolbarStyle.iconGap
             + ToolbarStyle.labelWidth(descriptor.title)
     }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
-        ToolbarStyle.drawIconAndLabel(descriptor.symbolName, descriptor.title, in: frame)
+        if state.isBusy {
+            ToolbarStyle.drawCenteredSymbol("hourglass", in: frame)
+            return
+        }
+        if showsTitle {
+            ToolbarStyle.drawIconAndLabel(descriptor.symbolName, descriptor.title, in: frame)
+        } else {
+            ToolbarStyle.drawCenteredSymbol(descriptor.symbolName, in: frame)
+        }
     }
 
     func activate(_ context: ToolbarContext) {
@@ -321,9 +374,18 @@ struct MoreActionsControl: ToolbarControl {
     var id: String { "action.more" }
     var scopes: Set<ActionScope> { [scope] }
     var group: ToolbarGroup { .actions }
+    func isBusy(_ context: ToolbarContext) -> Bool {
+        descriptors.contains { context.isActionExecuting($0.id) }
+    }
+    func accessibilityLabel(_ context: ToolbarContext) -> String {
+        isBusy(context) ? "更多操作（有操作正在执行）" : "更多操作"
+    }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
-        ToolbarStyle.drawCenteredSymbol("ellipsis.circle", in: frame)
+        ToolbarStyle.drawCenteredSymbol(
+            state.isBusy ? "hourglass" : "ellipsis.circle",
+            in: frame
+        )
     }
 
     func activate(_ context: ToolbarContext) {
@@ -345,6 +407,7 @@ struct MoreActionsControl: ToolbarControl {
             )
             item.target = target
             item.representedObject = descriptor.id
+            item.isEnabled = !context.isActionExecuting(descriptor.id)
             // 用原生符号图（不走 ToolbarStyle 的白色填充）—— 菜单要适配浅色外观。
             item.image = NSImage(
                 systemSymbolName: descriptor.symbolName,

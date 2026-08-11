@@ -16,6 +16,8 @@ enum OverlayRenderer {
         slots: [ToolbarSlot],
         toolbarContext: ToolbarContext,
         hoveredControlID: String?,
+        pressedControlID: String?,
+        focusedControlID: String?,
         isPrimaryScreen: Bool,
         confirmHint: String? = nil,
         fullWindowHint: Bool = false,
@@ -81,6 +83,8 @@ enum OverlayRenderer {
             ToolbarRenderer.draw(
                 slots,
                 hovered: hoveredControlID,
+                pressed: pressedControlID,
+                focused: focusedControlID,
                 context: toolbarContext
             )
             // plain 模式没有工具条，用一行提示告诉用户怎么确认。

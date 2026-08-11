@@ -46,7 +46,7 @@
 
 `Capture/Snapshot` 不再直接 `import ScreenCaptureKit` 或调用 `CGWindowListCopyWindowInfo / CGWindowListCreateImage / SCShareableContent / SCScreenshotManager`：
 
-* **ScreenCapturing**（`Platform.swift` 协议，`Platform/macOS/MacScreenCapturer.swift` 实现）收敛 `ScreenCaptureKit` 全量显示器冻结与真·整窗重拍（含 `backgroundColor=.clear` 真透明、`ignoreShadows*`、`colorSpaceName=sRGB`、`captureResolution=.best` 等一致性细节）及 `CGPreflightScreenCaptureAccess / CGRequestScreenCaptureAccess` 权限；`ImmediateScreenSource` 与 `WindowCapturer` 仅作协议转发与注入点。
+* **ScreenCapturing**（`Platform.swift` 协议，`Platform/macOS/MacScreenCapturer.swift` 实现）把普通显示器冻结与整窗重拍分成两条路径。普通截图、延时截图、录屏框选和滚动截图用 `NSScreen → displayID → CGDisplayCreateImage` 直接读取每块显示器的原生 Retina 位图，不建立 ScreenCaptureKit/replayd 会话；三块 2× 屏现场返回 `3840×2160`、`1440×2560`、`3360×1890`，总耗时约 `0.09–0.15s`。任意一屏失败都不返回半套位图，捕获前后通过 generation 与 `DisplayTopology` 拒绝陈旧拓扑。`SCScreenshotManager.captureImage(in:)` 未用于主路径，因为现场只返回不可配置的统一 1× 位图；逐屏 SCK 也未作为回退，因为它会在故障主机上再次触发 replayd 崩溃。只有 `⌥` 整窗重拍才使用 fresh `SCShareableContent + desktopIndependentWindow`（含 `backgroundColor=.clear`、`ignoreShadows*`、`colorSpaceName=sRGB`、`captureResolution=.best`），并由 5 秒单次完成门阻止无界等待。权限统一由 `CGPreflightScreenCaptureAccess / CGRequestScreenCaptureAccess` 管理。
 * **WindowListing**（`Platform.swift` 协议，`Platform/macOS/MacWindowLister.swift` 实现）收敛 `CGWindowListCopyWindowInfo`（`layer==0 / 排除自身PID / >20pt 过滤 / front-to-back`）；`Capture/Snapshot/WindowInfo.swift` 的 `WindowLister` 仅保留兼容转发门面。
 * 调用方（`CaptureCoordinator / ScrollCaptureController / RecordingCoordinator / AppDelegate.registerCaptureSources`）只依赖 `ScreenCapturing / WindowListing` 协议，通过 `MacScreenCapturer.shared / MacWindowLister.shared` 注入；`Capture/Overlay/OverlayView.swift` 等视图层不持有任何 `ScreenCaptureKit / CGWindowList` 符号。
 

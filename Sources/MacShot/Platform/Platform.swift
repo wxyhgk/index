@@ -37,13 +37,14 @@ protocol ScreenshotCapturing {
     func makeSnapshots() async throws -> [DisplaySnapshot]
 }
 
-/// 屏幕捕获抽象：把 ScreenCaptureKit / CGWindowListCreateImage 等 macOS 专有调用
+/// 屏幕捕获抽象：把 ScreenCaptureKit 等 macOS 专有调用
 /// 隔离在 Platform/macOS/，调用方只依赖此协议。
 @MainActor
 protocol ScreenCapturing {
     var isPermissionGranted: Bool { get }
     @discardableResult
     func requestPermission() -> Bool
+    /// 在同一份显示器拓扑上冻结全部活动显示器；不得返回部分成功结果。
     func captureDisplays() async throws -> [DisplaySnapshot]
     func captureWindow(windowID: CGWindowID, scale: CGFloat, includeShadow: Bool) async throws -> CGImage
 }

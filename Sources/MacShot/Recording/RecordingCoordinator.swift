@@ -112,11 +112,12 @@ final class RecordingCoordinator {
                 let windowList = MacWindowLister.shared.onScreenWindows(
                     excludingPID: ProcessInfo.processInfo.processIdentifier
                 )
-                overlay.begin(snapshots: snapshots, windowList: windowList, mode: .plain) {
+                let didBegin = overlay.begin(snapshots: snapshots, windowList: windowList, mode: .plain) {
                     [weak self] result in
                     guard let self, let result else { return }
                     Task { await self.startRecording(region: result.region, display: result.display) }
                 }
+                guard didBegin else { throw CaptureError.displayTopologyChanged }
             } catch {
                 NSLog("[MacShot] 录屏框选失败: \(error)")
                 presentError("无法开始录屏", error)

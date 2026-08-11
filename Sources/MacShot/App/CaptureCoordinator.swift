@@ -114,10 +114,11 @@ final class CaptureCoordinator {
                     excludingPID: ProcessInfo.processInfo.processIdentifier
                 )
 
-                overlay.begin(snapshots: snapshots, windowList: windowList) { [weak self] result in
+                let didBegin = overlay.begin(snapshots: snapshots, windowList: windowList) { [weak self] result in
                     guard let self, let result else { return }
                     self.handle(result, previousApp: previousApp)
                 }
+                guard didBegin else { throw CaptureError.displayTopologyChanged }
             } catch is CancellationError {
                 // 用户主动取消延时，静默返回。
             } catch {

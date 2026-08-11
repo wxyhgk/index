@@ -5,8 +5,8 @@ import AppKit
 ///
 /// 它不认识任何具体控件：控件从注册表来，宽度和显隐由控件自己回答。
 ///
-/// **尺寸恒定**：至多两行、自然宽度，只由「此刻哪些控件可见」决定，
-/// 画布大小 / 窗口缩放一概不参与。此前钉图窗口曾按可用宽度折行，
+/// **高度恒定**：至多两行，不因画布大小 / 窗口缩放而折行。自然宽度超过
+/// 屏幕可用宽度时，只把出口动作的文字收成图标。此前钉图窗口曾按宽度折行，
 /// 形成反馈回路 —— 窗口拖窄 → 工具条折行 → 底部条带变高 → 显示倍率变了。
 /// 现在工具条是独立的一块（钉图上更是独立的窗口），只有位置随宿主走。
 ///
@@ -24,10 +24,28 @@ enum ToolbarLayout {
     // MARK: - 内容
 
     /// 当前可见的控件，已按分组和组内次序排好。
-    private static func controls(_ context: ToolbarContext) -> [any ToolbarControl] {
-        ToolbarRegistry.shared
+    private static func controls(
+        _ context: ToolbarContext,
+        maximumWidth: CGFloat? = nil
+    ) -> [any ToolbarControl] {
+        let natural = ToolbarRegistry.shared
             .controls(for: context.scope)
             .filter { $0.isVisible(context) }
+        guard let maximumWidth else { return natural }
+        let main = natural.filter { !isStyleRow($0.group) }
+        guard rowWidth(main, context: context) > maximumWidth else { return natural }
+
+        // 窄屏先只收紧出口动作的文字，工具、历史和动作本身一个都不丢；
+        // 完整名称仍由 tooltip 和键盘焦点提示提供。
+        return natural.map { control in
+            guard let action = control as? ActionControl else { return control }
+            return ActionControl(
+                descriptor: action.descriptor,
+                order: action.order,
+                scope: action.scope,
+                showsTitle: false
+            )
+        }
     }
 
     /// 组与组之间插一条分隔线。
@@ -58,10 +76,10 @@ enum ToolbarLayout {
         return width
     }
 
-    /// 工具条的自然尺寸。**只看内容，不看画布** —— 钉图的工具条窗口据此定尺寸。
+    /// 工具条尺寸。默认取自然宽；给出屏幕上限时可收起动作文字。
     /// 有样式行时为两行高度 + 行距，否则单行。
-    static func blockSize(_ context: ToolbarContext) -> CGSize {
-        let all = controls(context)
+    static func blockSize(_ context: ToolbarContext, maximumWidth: CGFloat? = nil) -> CGSize {
+        let all = controls(context, maximumWidth: maximumWidth)
         guard !all.isEmpty else { return .zero }
         let main = all.filter { !isStyleRow($0.group) }
         let style = all.filter { isStyleRow($0.group) }
@@ -98,8 +116,12 @@ enum ToolbarLayout {
 
     /// 从给定原点（整块左下角）铺开至多两行。无样式时退化为单行。
     /// 有样式时：上行（main）在 `origin.y + rowHeight + interRowGap`，下行（style）在 `origin.y`。
-    static func slots(origin: CGPoint, context: ToolbarContext) -> [ToolbarSlot] {
-        let all = controls(context)
+    static func slots(
+        origin: CGPoint,
+        context: ToolbarContext,
+        maximumWidth: CGFloat? = nil
+    ) -> [ToolbarSlot] {
+        let all = controls(context, maximumWidth: maximumWidth)
         let main = all.filter { !isStyleRow($0.group) }
         let style = all.filter { isStyleRow($0.group) }
         if style.isEmpty {
@@ -122,9 +144,10 @@ enum ToolbarLayout {
     /// 贴在锚点下方、相对锚点居中 —— 「内容 / 工具条」上下两块。
     ///
     /// 下方放不下就翻到上方，再放不下就压在锚点内侧：这是屏幕边缘的物理约束，
-    /// **只换位置，尺寸和内容一个字节都不变**。
+    /// 高度与控件集合不变；屏幕过窄时动作保留图标、收起文字。
     static func slots(in bounds: CGRect, anchor: CGRect, context: ToolbarContext) -> [ToolbarSlot] {
-        let size = blockSize(context)
+        let maximumWidth = max(0, bounds.width - 8)
+        let size = blockSize(context, maximumWidth: maximumWidth)
         guard size.width > 0 else { return [] }
 
         var y = anchor.minY - gap - size.height
@@ -136,10 +159,14 @@ enum ToolbarLayout {
         let x = min(max(leftLimit, anchor.midX - size.width / 2), rightLimit)
 
         // 两行时主行始终最靠近锚点（PixPin：选区旁永远是工具行）。
-        let all = controls(context)
+        let all = controls(context, maximumWidth: maximumWidth)
         let hasStyle = all.contains { isStyleRow($0.group) && $0.isVisible(context) }
         if !hasStyle {
-            return slots(origin: CGPoint(x: x, y: y), context: context)
+            return slots(
+                origin: CGPoint(x: x, y: y),
+                context: context,
+                maximumWidth: maximumWidth
+            )
         }
         let main = all.filter { !isStyleRow($0.group) }
         let style = all.filter { isStyleRow($0.group) }

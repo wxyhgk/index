@@ -8,6 +8,24 @@ enum ActionScope: Hashable {
     case pinned
 }
 
+/// 同一宿主内的异步动作去重器。宿主各持有一份，避免一个钉图窗口连续点出
+/// 多个上传 / 保存任务；不同钉图窗口之间互不阻塞。
+struct ActionExecutionTracker {
+    private(set) var executingIDs: Set<String> = []
+
+    mutating func begin(_ id: String) -> Bool {
+        executingIDs.insert(id).inserted
+    }
+
+    mutating func finish(_ id: String) {
+        executingIDs.remove(id)
+    }
+
+    func isExecuting(_ id: String) -> Bool {
+        executingIDs.contains(id)
+    }
+}
+
 /// 动作执行时可以反过来要求宿主做的事。
 /// 目前只有「关闭我自己」—— 钉图窗口的关闭按钮需要它。
 @MainActor

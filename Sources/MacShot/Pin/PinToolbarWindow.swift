@@ -6,7 +6,7 @@ import AppKit
 /// 又取决于窗口宽度（宽度不够就折行）。于是有了一个反馈回路：缩放钉图 → 条带高度变
 /// → 图片显示区变 → 显示倍率变；窗口太小时工具条还会整个消失。
 ///
-/// 拆开之后：钉图窗口只装图片，工具条按内容开自然尺寸，两者之间只剩「贴在一起」
+/// 拆开之后：钉图窗口只装图片，工具条按内容与屏幕上限定尺寸，两者之间只剩「贴在一起」
 /// 这一条关系。钉图缩到 100×80 还是放到全屏，工具条都是同一条。
 ///
 /// 挂法是 `addChildWindow(_:ordered: .above)`：跟着父窗口移动是 AppKit 自带的，
@@ -31,8 +31,14 @@ final class PinToolbarView: NSView {
     var attachment: Attachment = .below {
         didSet { if attachment != oldValue { needsDisplay = true } }
     }
+    var maximumWidth: CGFloat?
 
     private var hoveredControlID: String?
+    private var pressedControlID: String?
+    private var focusedControlID: String?
+    private var widthScroll = ToolbarScrollAccumulator()
+    private var toolTipTags: [NSView.ToolTipTag] = []
+    private var toolTipSignature = ""
     /// 这一轮拖动是在挪窗口，还是按在控件上手抖。
     private var dragsWindow = false
 
@@ -45,13 +51,13 @@ final class PinToolbarView: NSView {
 
     // MARK: - 布局
 
-    /// 窗口该开多大：工具条的自然宽 ×（行高 + 一条透明的让位空隙）。
+    /// 窗口该开多大：工具条内容宽（受屏幕上限约束）×（行高 + 透明让位空隙）。
     ///
     /// 空隙也归这个窗口管，而不是留成两窗之间的真空 —— 否则鼠标从图片挪到工具条
     /// 的途中会掉出所有窗口，悬停状态跟着闪。
     var preferredSize: CGSize {
         guard let context = context?() else { return .zero }
-        let block = ToolbarLayout.blockSize(context)
+        let block = ToolbarLayout.blockSize(context, maximumWidth: maximumWidth)
         guard block.width > 0 else { return .zero }
         return CGSize(width: block.width, height: block.height + ToolbarLayout.gap)
     }
@@ -64,7 +70,77 @@ final class PinToolbarView: NSView {
     /// 绘制和命中测试用同一份结果。
     private var slots: [ToolbarSlot] {
         guard let context = context?() else { return [] }
-        return ToolbarLayout.slots(origin: rowOrigin, context: context)
+        return ToolbarLayout.slots(
+            origin: rowOrigin,
+            context: context,
+            maximumWidth: maximumWidth
+        )
+    }
+
+    private var enabledControlIDs: [String] {
+        guard let context = context?() else { return [] }
+        return slots.compactMap { slot in
+            guard let control = slot.control, control.isEnabled(context) else { return nil }
+            return control.id
+        }
+    }
+
+    func handleKey(_ event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if event.keyCode == KeyCode.tab, modifiers.subtracting(.shift).isEmpty {
+            focusedControlID = ToolbarFocusNavigator.next(
+                in: enabledControlIDs,
+                current: focusedControlID,
+                offset: modifiers.contains(.shift) ? -1 : 1
+            )
+            needsDisplay = true
+            return true
+        }
+        guard focusedControlID != nil else { return false }
+        switch event.keyCode {
+        case KeyCode.left:
+            focusedControlID = ToolbarFocusNavigator.next(
+                in: enabledControlIDs, current: focusedControlID, offset: -1
+            )
+        case KeyCode.right:
+            focusedControlID = ToolbarFocusNavigator.next(
+                in: enabledControlIDs, current: focusedControlID, offset: 1
+            )
+        case KeyCode.space, KeyCode.returnKey, KeyCode.keypadEnter:
+            guard let context = context?(),
+                  let control = slots.compactMap(\.control).first(where: {
+                      $0.id == focusedControlID && $0.isEnabled(context)
+                  })
+            else { return true }
+            onActivate?(control)
+        case KeyCode.escape:
+            focusedControlID = nil
+        default:
+            return false
+        }
+        needsDisplay = true
+        return true
+    }
+
+    func clearKeyboardFocus() {
+        guard focusedControlID != nil else { return }
+        focusedControlID = nil
+        needsDisplay = true
+    }
+
+    func refreshToolTips() {
+        guard let context = context?() else { return }
+        let entries = slots.compactMap { slot -> (CGRect, String)? in
+            guard let control = slot.control else { return nil }
+            return (slot.frame, control.accessibilityLabel(context))
+        }
+        let signature = entries.map { "\(NSStringFromRect($0.0)):\($0.1)" }.joined(separator: "|")
+        guard signature != toolTipSignature else { return }
+        toolTipTags.forEach(removeToolTip)
+        toolTipTags = entries.map { frame, label in
+            addToolTip(frame, owner: label, userData: nil)
+        }
+        toolTipSignature = signature
     }
 
     // MARK: - AppKit 基础
@@ -120,15 +196,47 @@ final class PinToolbarView: NSView {
         let control = slots.first { $0.control != nil && $0.frame.contains(point) }?.control
         // 按在控件上就是点控件，之后的拖动不算拖窗口（手滑不该把钉图挪走）。
         dragsWindow = control == nil
-        if let control { onActivate?(control) }
+        if let control {
+            // 禁用控件也消费完整点击，但只在 mouseUp 时判断是否执行。
+            pressedControlID = control.id
+            hoveredControlID = control.id
+            focusedControlID = control.id
+            needsDisplay = true
+        } else {
+            clearKeyboardFocus()
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if let pressedControlID {
+            let point = convert(event.locationInWindow, from: nil)
+            let stillInside = slots.contains {
+                $0.control?.id == pressedControlID && $0.frame.contains(point)
+            }
+            let nextHover = stillInside ? pressedControlID : nil
+            if nextHover != hoveredControlID {
+                hoveredControlID = nextHover
+                needsDisplay = true
+            }
+            return
+        }
         guard dragsWindow else { return }
         onDragBy?(CGSize(width: event.deltaX, height: event.deltaY))
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let pressedID = pressedControlID {
+            let point = convert(event.locationInWindow, from: nil)
+            let control = slots.first {
+                $0.control?.id == pressedID && $0.frame.contains(point)
+            }?.control
+            pressedControlID = nil
+            hoveredControlID = control?.id
+            if let context = context?(), let control, control.isEnabled(context) {
+                onActivate?(control)
+            }
+            needsDisplay = true
+        }
         dragsWindow = false
     }
 
@@ -136,13 +244,20 @@ final class PinToolbarView: NSView {
         // 工具条上滚轮改粗细（与截图覆盖层一致，右侧调节区直连滚轮）
         if let context = context?(),
            context.annotation.styleAxes.contains(.width) {
-            let delta = event.scrollingDeltaY
-            if delta != 0, context.annotation.stepWidth(by: delta > 0 ? 1 : -1) {
+            if !event.momentumPhase.isEmpty {
+                if event.momentumPhase.contains(.ended) { widthScroll.reset() }
+                return
+            }
+            if let step = widthScroll.step(
+                delta: event.scrollingDeltaY,
+                isPrecise: event.hasPreciseScrollingDeltas
+            ), context.annotation.stepWidth(by: step) {
                 needsDisplay = true
                 onWidthStepped?()
                 return
             }
         }
+        widthScroll.reset()
         super.scrollWheel(with: event)
     }
 
@@ -150,7 +265,13 @@ final class PinToolbarView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let context = context?() else { return }
-        ToolbarRenderer.draw(slots, hovered: hoveredControlID, context: context)
+        ToolbarRenderer.draw(
+            slots,
+            hovered: hoveredControlID,
+            pressed: pressedControlID,
+            focused: focusedControlID,
+            context: context
+        )
     }
 }
 
@@ -186,19 +307,20 @@ final class PinToolbarPanel: NSPanel {
 
     /// 按内容定尺寸，贴到钉图窗口下方居中。
     ///
-    /// 屏幕下边缘放不下就翻到上方 —— 这是物理约束，**只换边，尺寸一个像素不变**。
-    /// 上下都放不下（窗口比屏幕还高）时宁可留在下方出屏，也不改尺寸。
+    /// 屏幕下边缘放不下就翻到上方；横向过窄时布局会收起动作文字。
+    /// 上下都放不下（窗口比屏幕还高）时仍保留固定行高。
     func reposition(around parent: NSWindow) {
-        let size = toolbarView.preferredSize
-        guard size.width > 0 else { return }
-
         let anchor = parent.frame
         let limit = (parent.screen ?? NSScreen.main)?.visibleFrame ?? anchor
+        toolbarView.maximumWidth = max(0, limit.width - 8)
+        let size = toolbarView.preferredSize
+        guard size.width > 0 else { return }
 
         let fitsBelow = anchor.minY - size.height >= limit.minY
         let fitsAbove = anchor.maxY + size.height <= limit.maxY
         let attachment: PinToolbarView.Attachment = (fitsBelow || !fitsAbove) ? .below : .above
         toolbarView.attachment = attachment
+        toolbarView.refreshToolTips()
 
         let y = attachment == .below ? anchor.minY - size.height : anchor.maxY
         let leftLimit = limit.minX + 4

@@ -16,7 +16,8 @@ protocol CaptureSource {
     /// 准备阶段（`makeSnapshots` 进行中）是否允许用户取消。
     /// 协调器据此临时监听 ⎋ 和快捷键再按，通过 Task 取消打断等待。
     var isCancellableWhilePreparing: Bool { get }
-    /// 产出冻结画布。整屏返回每屏一张。取消时抛 `CancellationError`。
+    /// 产出同一次显示器拓扑下的冻结画布。普通截图返回全部活动屏幕，
+    /// 这样用户可在任意屏开始选区；取消时抛 `CancellationError`。
     func makeSnapshots() async throws -> [DisplaySnapshot]
 }
 

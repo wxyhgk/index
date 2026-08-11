@@ -37,6 +37,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
     private var isHovering = false
     /// 上次落库的图层内容。比数量更可靠 —— 撤销一层再画一层，数量不变但内容变了。
     private var savedLayers: Layers<ImageSpace>
+    private var actionExecution = ActionExecutionTracker()
 
     /// 工具条：独立的子窗口，不占图片窗口的任何空间。
     private let toolbarPanel = PinToolbarPanel()
@@ -88,6 +89,9 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         view.onScrollZoom = { [weak self] delta in self?.applyZoom(delta) }
         view.onOpacityStep = { [weak self] step in self?.applyOpacity(step) }
         view.onAction = { [weak self] actionID in self?.perform(actionID) }
+        view.isActionExecuting = { [weak self] actionID in
+            self?.actionExecution.isExecuting(actionID) ?? false
+        }
         view.onAnnotationsChanged = { [weak self] in self?.saveRevisionIfNeeded() }
         view.onToolbarInvalidated = { [weak self] in self?.layoutToolbar() }
         view.onHoverChanged = { [weak self] in self?.refreshHover() }
@@ -127,6 +131,12 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         toolbarPanel.toolbarView.context = { [weak view] in view?.toolbarContext }
         toolbarPanel.toolbarView.onActivate = { [weak view] control in
             view?.activateToolbarControl(control)
+        }
+        view.onToolbarKey = { [weak toolbarView = toolbarPanel.toolbarView] event in
+            toolbarView?.handleKey(event) ?? false
+        }
+        view.onToolbarFocusClear = { [weak toolbarView = toolbarPanel.toolbarView] in
+            toolbarView?.clearKeyboardFocus()
         }
         toolbarPanel.toolbarView.onHoverChanged = { [weak self] in self?.refreshHover() }
         toolbarPanel.toolbarView.onDragBy = { [weak self] delta in self?.moveWindow(by: delta) }
@@ -224,6 +234,11 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
     /// 钉图窗口不认识任何具体动作，只负责把上下文交给注册表里的实现。
     private func perform(_ actionID: String) {
         guard let action = CaptureActionRegistry.shared.action(id: actionID) else { return }
+        guard actionExecution.begin(actionID) else {
+            NSLog("[MacShot] 动作 \(actionID) 已在执行，忽略重复触发")
+            return
+        }
+        layoutToolbar()
         let context = CaptureContext(
             base: base,
             layers: imageView?.allLayers ?? Layers(),
@@ -232,10 +247,15 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
             host: self
         )
         Task {
+            defer {
+                actionExecution.finish(actionID)
+                layoutToolbar()
+            }
             do {
                 try await action.perform(context)
             } catch {
                 NSLog("[MacShot] 动作 \(actionID) 失败: \(error)")
+                AppAlert.error("\(action.title)失败", error: error, host: window)
             }
         }
     }
