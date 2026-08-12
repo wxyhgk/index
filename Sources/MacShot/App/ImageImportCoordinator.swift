@@ -15,6 +15,13 @@ final class ImageImportCoordinator: ObservableObject {
         let failedFileNames: [String]
     }
 
+    struct BrowserSource: Equatable, Sendable {
+        let fileName: String
+        let pageURL: String?
+        let pageTitle: String?
+        let imageURL: String?
+    }
+
     static let shared = ImageImportCoordinator(store: .shared)
 
     @Published private(set) var isImporting = false
@@ -48,6 +55,16 @@ final class ImageImportCoordinator: ObservableObject {
 
     /// 可测试的导入核心。输入里的非支持格式与无法解码文件都计入失败。
     func importImages(at urls: [URL]) async -> Report {
+        await importRequests(urls.map { ImportRequest(url: $0, source: .local) })
+    }
+
+    /// 浏览器连接器已经把字节安全落进专用收件箱；这里仍走和本地图片相同的解码、
+    /// 内容寻址和缩略图链，只额外补齐网页来源信息。
+    func importBrowserImage(at url: URL, source: BrowserSource) async -> Report {
+        await importRequests([ImportRequest(url: url, source: .browser(source))])
+    }
+
+    private func importRequests(_ requests: [ImportRequest]) async -> Report {
         guard !isImporting else {
             return Report(importedCount: 0, failedFileNames: [])
         }
@@ -55,7 +72,7 @@ final class ImageImportCoordinator: ObservableObject {
         defer { isImporting = false }
 
         let decoded = await Task.detached(priority: .utility) {
-            urls.map(Self.decode)
+            requests.map(Self.decode)
         }.value
 
         var importedCount = 0
@@ -64,7 +81,7 @@ final class ImageImportCoordinator: ObservableObject {
             switch item {
             case .failure(let fileName):
                 failedFileNames.append(fileName)
-            case .success(let image, let url):
+            case .success(let image, let request):
                 var metadata = CaptureMetadata()
                 metadata.scale = 1
                 metadata.globalRegion = CGRect(
@@ -74,12 +91,20 @@ final class ImageImportCoordinator: ObservableObject {
                     height: image.height
                 )
                 // 暂不扩 schema；利用现有可搜索标题保存原文件名。
-                metadata.windowTitle = url.lastPathComponent
+                switch request.source {
+                case .local:
+                    metadata.windowTitle = request.url.lastPathComponent
+                case .browser(let source):
+                    metadata.appName = "Microsoft Edge"
+                    metadata.appBundleID = "com.microsoft.edgemac"
+                    metadata.windowTitle = source.fileName
+                    metadata.sourceURL = Self.safeWebURL(source.pageURL)
+                }
                 do {
                     _ = try store.save(image: image, metadata: metadata)
                     importedCount += 1
                 } catch {
-                    failedFileNames.append(url.lastPathComponent)
+                    failedFileNames.append(request.url.lastPathComponent)
                 }
             }
         }
@@ -87,10 +112,11 @@ final class ImageImportCoordinator: ObservableObject {
     }
 
     private nonisolated static let supportedExtensions: Set<String> = [
-        "png", "jpg", "jpeg", "heic", "tif", "tiff",
+        "png", "jpg", "jpeg", "heic", "heif", "tif", "tiff",
     ]
 
-    private nonisolated static func decode(_ url: URL) -> DecodedImage {
+    private nonisolated static func decode(_ request: ImportRequest) -> DecodedImage {
+        let url = request.url
         guard supports(url) else { return .failure(url.lastPathComponent) }
         let accessed = url.startAccessingSecurityScopedResource()
         defer {
@@ -101,12 +127,31 @@ final class ImageImportCoordinator: ObservableObject {
         else {
             return .failure(url.lastPathComponent)
         }
-        return .success(image, url)
+        return .success(image, request)
+    }
+
+    private nonisolated static func safeWebURL(_ rawValue: String?) -> String? {
+        guard let rawValue,
+              let components = URLComponents(string: rawValue),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "https" || scheme == "http"
+        else { return nil }
+        return components.url?.absoluteString
+    }
+
+    private struct ImportRequest: Sendable {
+        enum Source: Sendable {
+            case local
+            case browser(BrowserSource)
+        }
+
+        let url: URL
+        let source: Source
     }
 
     /// CGImage 是不可变 Core Foundation 值；解码完成后只跨 actor 转移所有权。
     private enum DecodedImage: @unchecked Sendable {
-        case success(CGImage, URL)
+        case success(CGImage, ImportRequest)
         case failure(String)
     }
 }

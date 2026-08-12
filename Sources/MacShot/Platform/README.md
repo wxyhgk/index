@@ -20,6 +20,7 @@
 | `SystemNavigator.swift` | `SystemNavigator` | 目录选择、在访达中显示、打开 URL |
 | `WindowRegistry.swift` | `WindowRegistry` | 窗口注册与前台管理 |
 | `BrowserURLResolver.swift` | `BrowserURLResolver` | 浏览器前台 URL 解析（Safari/Chrome/Edge/Arc/Brave/Vivaldi） |
+| `BrowserImportInbox.swift` | `BrowserImportInbox` | 校验并消费 Edge Native Messaging 写入的 UUID 专用图片收件箱；拒绝任意路径 |
 | `LaunchAtLogin.swift` | `LaunchAtLogin` | `SMAppService` 开机启动 |
 | `LiveTextAnalyzer.swift` | `LiveTextAnalyzer` | Vision LiveText 预跑分析 |
 | `PanelPlacement.swift` | `PanelPlacement` | 面板摆放（多屏感知） |

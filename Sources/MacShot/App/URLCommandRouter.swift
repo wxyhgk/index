@@ -10,6 +10,7 @@ import AppKit
 ///   macshot://gallery?query=xxx    打开图库并执行搜索
 ///   macshot://last/copy            复制最近一张截图（含标注，与图库右键「拷贝」同一渲染）
 ///   macshot://last/reveal          在访达中显示最近一张截图
+///   macshot://import/browser?id=…  消费 Edge Native Messaging 专用收件箱中的图片
 ///
 /// 未知命令记日志忽略，不弹窗 —— 自动化调用方拿不到弹窗，弹了也没人看。
 @MainActor
@@ -18,6 +19,10 @@ final class URLCommandRouter {
     private let shotStore: any ShotReading
     private let galleryViewModel: GalleryViewModel?
     private let captureCoordinator: CaptureCoordinator
+    private let imageImporter: ImageImportCoordinator
+    private let browserInboxRoot: URL?
+    private let showGallery: @MainActor () -> Void
+    private var browserImportTask: Task<Void, Never>?
 
     /// `capture?delay=N` 的一次性延时覆盖.
     /// `DelayedScreenSource` 的秒数闭包由 AppDelegate 注入，注入处优先消费这里的值，
@@ -27,7 +32,10 @@ final class URLCommandRouter {
     init(
         shotStore: (any ShotReading)? = nil,
         galleryViewModel: GalleryViewModel? = nil,
-        captureCoordinator: CaptureCoordinator? = nil
+        captureCoordinator: CaptureCoordinator? = nil,
+        imageImporter: ImageImportCoordinator? = nil,
+        browserInboxRoot: URL? = nil,
+        showGallery: @escaping @MainActor () -> Void = { GalleryWindowController.shared.show() }
     ) {
         let resolvedStore = shotStore ?? ShotStore.shared
         self.shotStore = resolvedStore
@@ -39,6 +47,15 @@ final class URLCommandRouter {
             self.galleryViewModel = nil
         }
         self.captureCoordinator = captureCoordinator ?? CaptureCoordinator.shared
+        if let imageImporter {
+            self.imageImporter = imageImporter
+        } else if let concrete = resolvedStore as? ShotStore {
+            self.imageImporter = concrete === ShotStore.shared ? .shared : ImageImportCoordinator(store: concrete)
+        } else {
+            self.imageImporter = .shared
+        }
+        self.browserInboxRoot = browserInboxRoot
+        self.showGallery = showGallery
     }
 
     /// 预览可用 Fake
@@ -77,7 +94,7 @@ final class URLCommandRouter {
                 galleryViewModel?.searchText = text
             }
             // show() 内部按 GalleryViewModel 当前查询刷新。
-            GalleryWindowController.shared.show()
+            showGallery()
 
         case ("last", "copy"):
             withLastShot { shot, store in
@@ -90,6 +107,13 @@ final class URLCommandRouter {
             withLastShot { shot, store in
                 SystemNavigator.revealInFinder(store.originalURL(for: shot))
             }
+
+        case ("import", "browser"):
+            guard let id = query["id"], !id.isEmpty else {
+                NSLog("[MacShot] 浏览器导入忽略：缺少 id")
+                return
+            }
+            importBrowserItem(id: id)
 
         default:
             NSLog("[MacShot] 未知的 URL 命令: \(url.absoluteString)")
@@ -106,6 +130,57 @@ final class URLCommandRouter {
             return
         }
         body(shot, shotStore)
+    }
+
+    func waitForPendingBrowserImport() async {
+        await browserImportTask?.value
+    }
+
+    private func importBrowserItem(id: String) {
+        let item: BrowserImportInbox.Item
+        do {
+            item = try BrowserImportInbox.item(id: id, rootDirectory: browserInboxRoot)
+        } catch {
+            NSLog("[MacShot] 浏览器导入收件箱无效: \(error.localizedDescription)")
+            if let itemID = UUID(uuidString: id) {
+                BrowserImportInbox.writeCompletion(
+                    .init(ok: false, fileName: nil, error: error.localizedDescription),
+                    id: itemID,
+                    rootDirectory: browserInboxRoot
+                )
+                BrowserImportInbox.remove(id: itemID, rootDirectory: browserInboxRoot)
+            }
+            return
+        }
+
+        let previousImport = browserImportTask
+        browserImportTask = Task { [imageImporter, browserInboxRoot] in
+            // 用户连续右键多张图片时按到达顺序串行消费；ImageImportCoordinator 是单飞的，
+            // 取消上一张会让下一张撞上 busy 并把两张都误判失败。
+            await previousImport?.value
+            defer { BrowserImportInbox.remove(id: item.id, rootDirectory: browserInboxRoot) }
+            let source = ImageImportCoordinator.BrowserSource(
+                fileName: item.metadata.fileName,
+                pageURL: item.metadata.pageURL,
+                pageTitle: item.metadata.pageTitle,
+                imageURL: item.metadata.imageURL
+            )
+            let report = await imageImporter.importBrowserImage(at: item.imageURL, source: source)
+            let succeeded = !Task.isCancelled && report.importedCount == 1
+            BrowserImportInbox.writeCompletion(
+                .init(
+                    ok: succeeded,
+                    fileName: succeeded ? item.metadata.fileName : nil,
+                    error: succeeded ? nil : "MacShot 无法导入这张图片。"
+                ),
+                id: item.id,
+                rootDirectory: browserInboxRoot
+            )
+            guard succeeded else {
+                NSLog("[MacShot] Edge 图片导入失败: \(item.metadata.fileName)")
+                return
+            }
+        }
     }
 
     private func queryItems(of url: URL) -> [String: String] {

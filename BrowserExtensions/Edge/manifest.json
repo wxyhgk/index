@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "保存到 MacShot（Demo）",
+  "version": "0.1.0",
+  "description": "在 Microsoft Edge 中右键图片，保存到本机 MacShot 图库。",
+  "permissions": [
+    "contextMenus",
+    "nativeMessaging",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "保存到 MacShot（Demo）"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxq958pqb+GPtOKDajurYv7Tocu2K8jR5P4MTmLy3UIkgFhsEfmPjEhxRk6a2iT3cX/hmeOoybao4wei+CKKBKJjjdsl3kbz9CorBboLgWTz6oh/1mJaAZRbjNscTdBPxeYhGShTDLo/dXQndxaOdJK9ddkzywX0XQaPnF+hUcg7L2xMJps5Whhx0462zBiO3Ctcn3lRkLihmnBBklVN2zAyFdnShWlIvlh2YsuHIVSQfd/NZR1fBykfMB4k6nLcVyhhauU/HKyLn3BSCXt7GeuEcqV5ie/CZx6lIet4AtTK7txDWDTTrosxCNvaY59Qk/eaN2N8XWogldfT1gSp9RwIDAQAB"
+}

@@ -70,6 +70,7 @@ final class ImageImportCoordinatorTests: XCTestCase {
         XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.png")))
         XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.JPEG")))
         XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.heic")))
+        XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.heif")))
         XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.tiff")))
         XCTAssertFalse(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.gif")))
         XCTAssertFalse(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.pdf")))
