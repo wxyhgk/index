@@ -19,6 +19,7 @@ final class MigrationTests: XCTestCase {
             XCTAssertTrue(try db.tableExists("shotCollection"))
             XCTAssertTrue(try db.tableExists("shotCollectionItem"))
             XCTAssertTrue(try db.tableExists("shotAsset"))
+            XCTAssertTrue(try db.columns(in: "shot").map(\.name).contains("customTitle"))
             XCTAssertEqual(
                 try db.columns(in: "shotAsset").map(\.name),
                 [
@@ -141,6 +142,41 @@ final class MigrationTests: XCTestCase {
             XCTAssertTrue(collectionIndexes.contains(
                 "index_shotCollectionItem_on_collectionID_sortOrder_addedAt"
             ))
+        }
+    }
+
+    /// v7 只给 Shot 增加用户显示名，并重建全文索引。旧截图必须原样保留，
+    /// 迁移后写入的自定义名称也必须立即能被 FTS 搜到。
+    func testV7AddsSearchableCustomTitleWithoutChangingExistingShot() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v6_shot_assets")
+
+        try dbQueue.write { db in
+            try db.execute(sql: """
+                INSERT INTO shot (
+                    sha256, capturedAt, pixelWidth, pixelHeight, windowTitle
+                ) VALUES ('stable-original-hash', ?, 320, 200, '旧窗口标题')
+                """, arguments: [Date(timeIntervalSince1970: 123)])
+        }
+
+        try AppDatabase.migrator.migrate(dbQueue)
+
+        try dbQueue.write { db in
+            let migrated = try XCTUnwrap(Shot.fetchOne(db, key: 1))
+            XCTAssertEqual(migrated.sha256, "stable-original-hash")
+            XCTAssertEqual(migrated.windowTitle, "旧窗口标题")
+            XCTAssertNil(migrated.customTitle)
+
+            try db.execute(
+                sql: "UPDATE shot SET customTitle = ? WHERE id = 1",
+                arguments: ["MR-TADF molecule notes"]
+            )
+            let hits = try Int64.fetchAll(db, sql: """
+                SELECT shot.id FROM shot
+                JOIN shotFts ON shotFts.rowid = shot.id
+                WHERE shotFts MATCH '"molecule"'
+                """)
+            XCTAssertEqual(hits, [1])
         }
     }
 }

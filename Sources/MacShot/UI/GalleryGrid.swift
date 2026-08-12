@@ -113,6 +113,9 @@ struct GalleryGrid: View {
     /// 右键菜单打开的时间线 / 相似 sheet。
     @State private var timelineShot: Shot?
     @State private var similarShot: Shot?
+    /// 单张重命名只有这一套输入框：右键和 F2 都汇入这里。
+    @State private var renameTarget: Shot?
+    @State private var renameName = ""
     /// 仅图库入口接受图片拖放；其它固定范围不能把新图导入后藏在范围外。
     @State private var isImportDropTargeted = false
 
@@ -316,8 +319,29 @@ struct GalleryGrid: View {
         .onReceive(store.libraryDidChangePublisher) {
             refreshCollectionMetadata(for: visibleShots.compactMap(\.id))
         }
+        .onChange(of: selection.pendingRenameID) { _, requestedID in
+            guard let requestedID else { return }
+            defer { selection.pendingRenameID = nil }
+            guard let shot = visibleShots.first(where: { $0.id == requestedID })
+                    ?? store.shots.first(where: { $0.id == requestedID })
+            else { return }
+            beginRename(shot)
+        }
         .sheet(item: $timelineShot) { TimelineSheet(shot: $0) }
         .sheet(item: $similarShot) { SimilarShotsSheet(shot: $0) }
+        .alert("修改图库名称", isPresented: Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )) {
+            TextField("显示名称", text: $renameName)
+            Button("取消", role: .cancel) { renameTarget = nil }
+            if renameTarget?.customTitle != nil {
+                Button("恢复自动名称") { commitRename(nil) }
+            }
+            Button("保存") { commitRename(renameName) }
+        } message: {
+            Text("最多 80 个字符；只修改图库元数据，不会重命名真实原图。")
+        }
         // 删除确认只有这一套：键盘 ⌘⌫、右键（单张 / 批量）、多选面板
         // 都通过 selection.pendingDeleteIDs 驱动到这里。删除不可撤销，必须过确认。
         .confirmationDialog(
@@ -841,6 +865,7 @@ struct GalleryGrid: View {
         Button(shot.id.map(store.isFavorite) ?? false ? "取消收藏" : "收藏") {
             store.toggleFavorite(shot)
         }
+        Button("重命名…") { beginRename(shot) }
         if let id = shot.id {
             collectionMenu(for: [id])
         }
@@ -872,6 +897,17 @@ struct GalleryGrid: View {
         Button("删除…", role: .destructive) {
             selection.pendingDeleteIDs = shot.id.map { [$0] }
         }
+    }
+
+    private func beginRename(_ shot: Shot) {
+        renameName = shot.customTitle ?? ""
+        renameTarget = shot
+    }
+
+    private func commitRename(_ rawName: String?) {
+        guard let target = renameTarget else { return }
+        store.setCustomTitle(rawName, for: target)
+        renameTarget = nil
     }
 
     /// 含最新标注的成品图。导出 / 上传 / 拖出共用一个口径 —— 和暂存栏、详情页一致。

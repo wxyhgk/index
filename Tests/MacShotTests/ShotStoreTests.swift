@@ -73,6 +73,30 @@ final class ShotStoreTests: XCTestCase {
         }
     }
 
+    func testCustomTitleIsSearchableAndNeverRenamesOriginalFile() throws {
+        let (store, _) = try makeStore()
+        var metadata = CaptureMetadata()
+        metadata.appName = "Microsoft Edge"
+        metadata.windowTitle = "论文截图"
+        let shot = try store.save(image: makeImage(gray: 0.18), metadata: metadata)
+        let originalURL = store.originalURL(for: shot)
+
+        store.setCustomTitle("  MR-TADF molecule  ", for: shot)
+        store.reload(query: "molecule", filter: .all)
+
+        XCTAssertEqual(store.shots.map(\.id), [shot.id])
+        XCTAssertEqual(store.shots.first?.primaryDisplayName, "MR-TADF molecule")
+        XCTAssertEqual(store.originalURL(for: try XCTUnwrap(store.shots.first)), originalURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: originalURL.path))
+
+        store.setCustomTitle(" \n ", for: shot)
+        store.reload(query: "", filter: .all)
+
+        XCTAssertNil(store.shots.first?.customTitle)
+        XCTAssertEqual(store.shots.first?.primaryDisplayName, "论文截图")
+        XCTAssertEqual(store.originalURL(for: try XCTUnwrap(store.shots.first)), originalURL)
+    }
+
     // MARK: - 清理候选
 
     /// 有标签 / 收藏 / 专题归类 / 修订（标注过）的截图不进清理候选；过期且无保护的进。

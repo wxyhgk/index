@@ -1,7 +1,7 @@
 import AppKit
 
 /// 图库键盘导航：方向键走格、⇧方向键扩选、⌘A 全选、Esc 收拢多选、
-/// 回车编辑（录屏则播放）、空格 Quick Look、⌘⌫ 删除选中（走网格上统一的确认框）。
+/// 回车编辑（录屏则播放）、F2 重命名、空格 Quick Look、⌘⌫ 删除选中。
 ///
 /// 用 NSEvent local monitor 而不是 SwiftUI 的 .focusable/.onKeyPress ——
 /// NavigationSplitView 里焦点会被侧边栏 List 和搜索框来回抢，网格自身拿不稳焦点。
@@ -74,6 +74,11 @@ final class GalleryKeyboard {
              KeyCode.keypadEnter where flags.isEmpty:
             guard let shot = selectedShot(), let id = shot.id else { return false }
             RecordingAssetActions.performPrimary(recordingAsset(for: shot), shotID: id)
+            return true
+
+        case KeyCode.f2 where flags.isEmpty:
+            guard let id = selectedShot()?.id else { return false }
+            GallerySelection.shared.pendingRenameID = id
             return true
 
         case KeyCode.a where isCommandOnly(flags):

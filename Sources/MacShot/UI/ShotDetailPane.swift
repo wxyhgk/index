@@ -61,6 +61,7 @@ struct ShotDetailPane: View {
     @State private var showingAllInfo = false
     @State private var collectionSummaries: [ShotCollectionSummary] = []
     @State private var collectionIDs: Set<Int64> = []
+    @State private var customTitleDraft = ""
 
     var body: some View {
         content
@@ -81,6 +82,9 @@ struct ShotDetailPane: View {
                 refreshFeaturePrint()
                 refreshSensitiveRegions()
                 refreshCollections()
+            }
+            .onChange(of: shot.customTitle, initial: true) { _, title in
+                customTitleDraft = title ?? ""
             }
             .sheet(isPresented: $showingSimilar) {
                 SimilarShotsSheet(shot: shot)
@@ -109,6 +113,7 @@ struct ShotDetailPane: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.s3) {
                 preview
+                nameEditor
                 actionRow
                 if !sensitiveRegions.isEmpty {
                     sensitiveBanner
@@ -125,6 +130,51 @@ struct ShotDetailPane: View {
             .padding(.top, InspectorMetrics.closeButtonLane)
             .padding(.bottom, DS.s4)
         }
+    }
+
+    /// 图库名称是独立元数据；这里编辑不会触碰内容寻址原图或来源标题。
+    private var nameEditor: some View {
+        VStack(alignment: .leading, spacing: DS.s1) {
+            Text("图库名称")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            HStack(spacing: DS.s1) {
+                TextField(
+                    "自动：\(shot.windowTitle ?? shot.appName ?? "未知来源")",
+                    text: $customTitleDraft
+                )
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitCustomTitle() }
+
+                Button {
+                    commitCustomTitle()
+                } label: {
+                    Image(systemName: "checkmark")
+                }
+                .buttonStyle(.borderless)
+                .help("保存图库名称")
+
+                if shot.customTitle != nil {
+                    Button {
+                        customTitleDraft = ""
+                        store.setCustomTitle(nil, for: shot)
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("恢复自动名称")
+                }
+            }
+            Text("只修改图库显示，真实原图名称保持不变")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func commitCustomTitle() {
+        let normalized = Shot.normalizedCustomTitle(customTitleDraft)
+        customTitleDraft = normalized ?? ""
+        store.setCustomTitle(normalized, for: shot)
     }
 
     // MARK: - 预览

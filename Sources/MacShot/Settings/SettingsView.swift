@@ -72,7 +72,7 @@ private struct GeneralSettings: View {
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
 
-                Text("可用变量：{date} 日期、{time} 时间、{app} 来源 App（带前导连字符，无则为空）、{title} 窗口标题（截取 40 字符，自动去掉文件名非法字符）。")
+                Text("可用变量：{dateCompact} 紧凑日期、{timeCompact} 紧凑时间、{date} 日期、{time} 时间、{app} 来源 App、{title} 窗口标题、{name} 图库显示名称。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

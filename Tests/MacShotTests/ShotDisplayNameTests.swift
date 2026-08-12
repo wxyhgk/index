@@ -3,12 +3,21 @@ import XCTest
 
 final class ShotDisplayNameTests: XCTestCase {
 
-    func testPrimaryDisplayNamePrefersSourceApp() {
+    func testPrimaryDisplayNamePrefersWindowTitleOverSourceApp() {
         var shot = makeShot()
         shot.appName = "预览"
         shot.windowTitle = "diagram.png"
 
-        XCTAssertEqual(shot.primaryDisplayName, "预览")
+        XCTAssertEqual(shot.primaryDisplayName, "diagram.png")
+    }
+
+    func testPrimaryDisplayNamePrefersCustomTitle() {
+        var shot = makeShot()
+        shot.appName = "预览"
+        shot.windowTitle = "diagram.png"
+        shot.customTitle = "MR-TADF 分子轨道"
+
+        XCTAssertEqual(shot.primaryDisplayName, "MR-TADF 分子轨道")
     }
 
     func testPrimaryDisplayNameFallsBackToImportedFileName() {
@@ -20,6 +29,15 @@ final class ShotDisplayNameTests: XCTestCase {
 
     func testPrimaryDisplayNameDoesNotCallMissingMetadataAnApp() {
         XCTAssertEqual(makeShot().primaryDisplayName, "未知来源")
+    }
+
+    func testCustomTitleNormalizationTrimsClearsAndLimitsLength() {
+        XCTAssertEqual(Shot.normalizedCustomTitle("  分子结构  "), "分子结构")
+        XCTAssertNil(Shot.normalizedCustomTitle("  \n  "))
+        XCTAssertEqual(
+            Shot.normalizedCustomTitle(String(repeating: "A", count: 100))?.count,
+            Shot.customTitleMaxLength
+        )
     }
 
     private func makeShot() -> Shot {

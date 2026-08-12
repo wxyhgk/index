@@ -254,6 +254,29 @@ enum AppDatabase {
             )
         }
 
+        // 用户给截图起的名称只是一等元数据，不触碰内容寻址的原图文件。新增可搜索
+        // shot 列后必须重建同步 FTS；旧触发器只认识建表当时的列集合。
+        migrator.registerMigration("v7_custom_title") { db in
+            // FTS 同步触发器挂在内容表 shot 上，不属于 shotFts 虚表；只 drop 虚表
+            // 不会带走它们，随后重建会因同名触发器而失败。
+            for suffix in ["ai", "ad", "au"] {
+                try db.execute(sql: "DROP TRIGGER IF EXISTS __shotFts_\(suffix)")
+            }
+            try db.drop(table: "shotFts")
+            try db.alter(table: "shot") { t in
+                t.add(column: "customTitle", .text)
+            }
+            try db.create(virtualTable: "shotFts", using: FTS5()) { t in
+                t.tokenizer = FTS5TokenizerDescriptor(components: ["trigram"])
+                t.synchronize(withTable: "shot")
+                t.column("customTitle")
+                t.column("appName")
+                t.column("windowTitle")
+                t.column("sourceURL")
+                t.column("ocrText")
+            }
+        }
+
         return migrator
     }
 }

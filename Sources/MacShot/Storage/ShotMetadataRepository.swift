@@ -39,6 +39,15 @@ struct ShotMetadataRepository {
         }
     }
 
+    func updateCustomTitle(_ title: String?, shotID: Int64) throws {
+        try database.write { db in
+            try db.execute(
+                sql: "UPDATE shot SET customTitle = ? WHERE id = ?",
+                arguments: [title, shotID]
+            )
+        }
+    }
+
     /// 删除数据库记录，并在同一事务内计算不再被任何 Shot 引用的内容哈希。
     func delete(_ shots: [Shot]) throws -> Set<String> {
         let ids = shots.compactMap(\.id)

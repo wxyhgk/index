@@ -180,6 +180,8 @@ struct Shot: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, E
     var appVersion: String?
     var appBuild: String?
     var windowTitle: String?
+    /// 用户在图库里设置的显示名称。只改元数据，不重命名内容寻址原图。
+    var customTitle: String? = nil
     var sourceURL: String?
     var displayID: Int?
     var displayName: String?
@@ -199,18 +201,25 @@ struct Shot: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, E
 }
 
 extension Shot {
+    static let customTitleMaxLength = 80
+
     var originalFileName: String { "\(sha256).png" }
     var thumbnailFileName: String { "\(sha256).jpg" }
 
-    /// 图库卡片等紧凑位置只够显示一行来源名称。截图优先显示真实来源 App；
-    /// 本地导入没有 App 元数据，但 `windowTitle` 保存了原文件名，因此应显示文件名，
-    /// 不能把一张来源明确的本地图片误报成“未知 App”。
+    /// 图库名称与来源身份分离：用户名称最高，原文件名/窗口标题其次，App 只兜底。
     var primaryDisplayName: String {
-        for candidate in [appName, windowTitle] {
+        for candidate in [customTitle, windowTitle, appName] {
             let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let value, !value.isEmpty { return value }
         }
         return "未知来源"
+    }
+
+    static func normalizedCustomTitle(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(customTitleMaxLength))
     }
 
     /// 一行式来源描述，给列表用。

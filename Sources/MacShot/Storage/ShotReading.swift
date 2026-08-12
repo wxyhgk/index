@@ -40,6 +40,7 @@ protocol ShotWriting: AnyObject {
     func removeTag(shotID: Int64, _ tag: String)
     func renameTag(_ old: String, to new: String)
     func deleteTag(_ tag: String)
+    func setCustomTitle(_ title: String?, for shot: Shot)
     func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws
     func attachRecording(at url: URL, to shot: Shot) throws
     func writeAttribute(shotID: Int64, key: String, value: AttributeValue)

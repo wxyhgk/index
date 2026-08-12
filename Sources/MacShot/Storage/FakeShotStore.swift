@@ -429,6 +429,14 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         objectWillChange.send()
     }
 
+    func setCustomTitle(_ title: String?, for shot: Shot) {
+        guard let id = shot.id,
+              let index = shots.firstIndex(where: { $0.id == id })
+        else { return }
+        objectWillChange.send()
+        shots[index].customTitle = Shot.normalizedCustomTitle(title)
+    }
+
     /// 通用属性写入（供 Pipeline 注入使用）。`ocrText`/`sourceURL` 写回 Shot，通用 key 进 payload。
     func writeAttribute(shotID: Int64, key: String, value: AttributeValue) {
         switch (key, value) {
@@ -515,6 +523,7 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             return s.lowercased().contains(q)
         }
         if contains(shot.appName) { return true }
+        if contains(shot.customTitle) { return true }
         if contains(shot.windowTitle) { return true }
         if contains(shot.sourceURL) { return true }
         if contains(shot.ocrText) { return true }

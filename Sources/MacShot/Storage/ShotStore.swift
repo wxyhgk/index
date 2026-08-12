@@ -185,6 +185,19 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    /// 修改图库显示名称。原图仍是 `originals/<sha256>.png`，不发生文件系统重命名。
+    func setCustomTitle(_ title: String?, for shot: Shot) {
+        guard let shotID = shot.id else { return }
+        do {
+            try metadataRepository.updateCustomTitle(
+                Shot.normalizedCustomTitle(title),
+                shotID: shotID
+            )
+        } catch {
+            NSLog("[MacShot] 修改截图名称失败: \(error.localizedDescription)")
+        }
+    }
+
     /// 把分子来源作为 Shot 的独立附件写入。这里使用可抛错入口，保证“定格”流程
     /// 能在附件失败时撤销刚创建的图片记录，而不是留下没有 XYZ 的半成品。
     func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws {

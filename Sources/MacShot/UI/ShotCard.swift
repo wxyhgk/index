@@ -344,7 +344,10 @@ struct ShotCard: View {
     /// 半个像素 —— 这是光学对齐想要的结果，再加 padding 就成了明显的缩进。
     private var caption: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(isRecording ? (shot.windowTitle ?? "录屏") : shot.primaryDisplayName)
+            Text(
+                shot.customTitle
+                    ?? (isRecording ? (shot.windowTitle ?? "录屏") : shot.primaryDisplayName)
+            )
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
             Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())

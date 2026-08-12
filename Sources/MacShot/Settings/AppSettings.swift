@@ -152,14 +152,14 @@ final class AppSettings: ObservableObject {
 
     // MARK: - 导出
 
-    /// 导出文件名模板。变量：{date} 日期、{time} 时间、
-    /// {app} 带前导连字符的来源 App 名、{title} 窗口标题（截 40 字符）。
+    /// 导出文件名模板。变量：{dateCompact}/{timeCompact} 紧凑日期时间、
+    /// {date}/{time} 可读日期时间、{app} 来源 App、{title} 窗口标题、{name} 显示名称。
     /// 渲染规则在 `ImageExporter.renderName`，这里只存模板本身。
     @Published var exportNameTemplate: String {
         didSet { defaults.set(exportNameTemplate, forKey: Keys.exportNameTemplate) }
     }
 
-    static let defaultExportNameTemplate = "截图 {date} {time}{app}"
+    static let defaultExportNameTemplate = "{dateCompact}-{timeCompact}"
 
     /// 自动保存副本：每张截图入库后往指定目录写一份成品 PNG。
     /// 面向 Obsidian 等监听文件夹的场景。

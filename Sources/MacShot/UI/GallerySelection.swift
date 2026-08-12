@@ -20,6 +20,8 @@ final class GallerySelection: ObservableObject {
     /// 待确认删除的截图 ID（展示顺序）。键盘 ⌘⌫、右键菜单、多选面板都写这里，
     /// 由 GalleryGrid 上唯一的 confirmationDialog 消费 —— 确认框只有一套。
     @Published var pendingDeleteIDs: [Int64]?
+    /// F2 只发“重命名哪一张”的意图；具体输入框由网格统一呈现。
+    @Published var pendingRenameID: Int64?
 
     // 「窗口处于图库还是编辑器模式」不在这里 —— 那不是选中状态，
     // 见 `GalleryWindowMode`（存 ID 不存快照的单窗口双模式模型）。

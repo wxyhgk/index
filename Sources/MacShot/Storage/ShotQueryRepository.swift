@@ -268,7 +268,8 @@ struct ShotQueryRepository {
             return try Shot.fetchAll(db, sql: """
                 SELECT shot.* FROM shot
                 WHERE (
-                    shot.appName LIKE :like ESCAPE '\\'
+                    shot.customTitle LIKE :like ESCAPE '\\'
+                    OR shot.appName LIKE :like ESCAPE '\\'
                     OR shot.windowTitle LIKE :like ESCAPE '\\'
                     OR shot.sourceURL LIKE :like ESCAPE '\\'
                     OR shot.ocrText LIKE :like ESCAPE '\\'

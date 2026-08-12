@@ -95,34 +95,60 @@ enum ImageExporter {
             template: template,
             date: shot?.capturedAt ?? Date(),
             appName: shot?.appName,
-            windowTitle: shot?.windowTitle
+            windowTitle: shot?.windowTitle,
+            customName: shot?.customTitle
         ) + ".png"
     }
 
     /// 模板渲染（不含扩展名）。变量：
-    ///   {date}  yyyy-MM-dd
-    ///   {time}  HH.mm.ss
-    ///   {app}   带前导连字符的来源 App 名，没有则为空
-    ///   {title} 窗口标题，截到 40 字符
+    ///   {dateCompact}  yyyyMMdd
+    ///   {timeCompact}  HHmmss
+    ///   {date}         yyyy-MM-dd
+    ///   {time}         HH.mm.ss
+    ///   {app}          带前导连字符的来源 App 名，没有则为空
+    ///   {title}        窗口标题，截到 40 字符
+    ///   {name}         用户设置的图库显示名称
     /// 替换完成后整体清洗一遍文件名非法字符 —— App 名和标题都可能带 `/`。
     /// 设置页的实时预览也调这里，渲染规则只有一份。
     nonisolated static func renderName(
         template: String,
         date: Date,
         appName: String?,
-        windowTitle: String?
+        windowTitle: String?,
+        customName: String? = nil
     ) -> String {
         let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.calendar = Calendar(identifier: .gregorian)
         dateFormatter.dateFormat = "yyyy-MM-dd"
         let timeFormatter = DateFormatter()
+        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        timeFormatter.calendar = Calendar(identifier: .gregorian)
         timeFormatter.dateFormat = "HH.mm.ss"
+        let compactDateFormatter = DateFormatter()
+        compactDateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        compactDateFormatter.calendar = Calendar(identifier: .gregorian)
+        compactDateFormatter.dateFormat = "yyyyMMdd"
+        let compactTimeFormatter = DateFormatter()
+        compactTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        compactTimeFormatter.calendar = Calendar(identifier: .gregorian)
+        compactTimeFormatter.dateFormat = "HHmmss"
 
         let title = String((windowTitle ?? "").prefix(40))
         let rendered = template
+            .replacingOccurrences(
+                of: "{dateCompact}",
+                with: compactDateFormatter.string(from: date)
+            )
+            .replacingOccurrences(
+                of: "{timeCompact}",
+                with: compactTimeFormatter.string(from: date)
+            )
             .replacingOccurrences(of: "{date}", with: dateFormatter.string(from: date))
             .replacingOccurrences(of: "{time}", with: timeFormatter.string(from: date))
             .replacingOccurrences(of: "{app}", with: appName.map { "-\($0)" } ?? "")
             .replacingOccurrences(of: "{title}", with: title)
+            .replacingOccurrences(of: "{name}", with: customName ?? "")
 
         let cleaned = sanitizedFileName(rendered)
         // 模板被清成空串（比如只写了个 "/"）也得有名字可用。

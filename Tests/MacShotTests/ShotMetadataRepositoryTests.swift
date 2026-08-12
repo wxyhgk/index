@@ -186,4 +186,25 @@ final class ShotMetadataRepositoryTests: XCTestCase {
             Set([titled.id, untitled.id].compactMap { $0 })
         )
     }
+
+    func testUpdateCustomTitleOnlyChangesMetadata() throws {
+        let database = try makeDatabase()
+        let repository = ShotMetadataRepository(database: database)
+        let shot = try insertShot(
+            "rename",
+            capturedAt: Date(timeIntervalSince1970: 4_000),
+            windowTitle: "原始标题",
+            into: database
+        )
+        let id = try XCTUnwrap(shot.id)
+
+        try repository.updateCustomTitle("自定义图库名", shotID: id)
+
+        try database.read { db in
+            let updated = try XCTUnwrap(Shot.fetchOne(db, key: id))
+            XCTAssertEqual(updated.customTitle, "自定义图库名")
+            XCTAssertEqual(updated.sha256, shot.sha256)
+            XCTAssertEqual(updated.windowTitle, "原始标题")
+        }
+    }
 }
