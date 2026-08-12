@@ -6,9 +6,9 @@ import AVFoundation
 ///   冻结屏幕(ImmediateScreenSource) → 框选(SelectionOverlayController, plain 模式)
 ///   → 录制(ScreenRecorder，可暂停/继续) → 结果弹窗（访达 / 转 GIF）
 ///
-/// 录制产物是 mp4 文件，**不入 shot 图库** —— 图库目前是截图库，视频资产类型
-/// 是将来的事。开了「录屏完成后保存到图库」时，把**首帧截图**入库当锚点，
-/// 视频路径挂在 `recording.path` 属性上（见 `saveAnchorShot`）。
+/// mp4 是外置的不可变资产；图库通过一个首帧封面 Shot 和 `recording.path`
+/// 索引它。这样录屏能进入统一时间线、筛选和选择体系，同时拖出/播放的仍是
+/// 原始 mp4（见 `saveAnchorShot`）。
 @MainActor
 final class RecordingCoordinator {
 
@@ -17,6 +17,8 @@ final class RecordingCoordinator {
     private let overlay = SelectionOverlayController()
     private let shotStore: any ShotWriting
     private let styleStore: any StyleStore
+    /// 测试缝：生产环境为空时走真实首帧提取；测试只验证入库策略，不启动 AVFoundation。
+    private let recordingAnchorSaver: (@MainActor (URL) async -> Void)?
     private var borderPanel: NSPanel?
     private var controlPanel: RecordingControlPanel?
     private var recordingStartDate: Date?
@@ -38,10 +40,12 @@ final class RecordingCoordinator {
 
     init(
         shotStore: (any ShotWriting)? = nil,
-        styleStore: (any StyleStore)? = nil
+        styleStore: (any StyleStore)? = nil,
+        recordingAnchorSaver: (@MainActor (URL) async -> Void)? = nil
     ) {
         self.shotStore = shotStore ?? ShotStore.shared
         self.styleStore = styleStore ?? AppSettings.shared
+        self.recordingAnchorSaver = recordingAnchorSaver
     }
 
     /// 预览可用 Fake
@@ -157,13 +161,9 @@ final class RecordingCoordinator {
         do {
             let url = try await ScreenRecorder.shared.stop()
             onStateChanged?()
-            // 直接入库到图库：录屏完成后在图库可见（首帧当封面，路径挂 recording.path）
-            // 保留设置开关作二次过滤，但默认已改为 true，满足“直接存在图库”的预期
-            await saveAnchorShot(for: url)
-            if !styleStore.recordingSaveToLibrary {
-                // 开关被用户手动关掉时，入库后立即标记为不需要显示？目前仍入库，
-                // 仅作提示：文件已在 ~/Library/Application Support/MacShot/recordings
-            }
+            // 默认直接入库：首帧当封面，mp4 路径挂 recording.path。用户明确
+            // 关闭设置时才只保留文件，不能让一个看似有效的开关实际完全不生效。
+            await indexRecordingIfEnabled(at: url)
             presentResult(url)
         } catch {
             onStateChanged?()
@@ -173,6 +173,17 @@ final class RecordingCoordinator {
     }
 
     // MARK: - 首帧入库（锚点）
+
+    /// 录屏完成后的图库策略边界。单独收口后，默认开启与用户明确关闭两条路径
+    /// 都能在不启动真实录屏的条件下验证。
+    func indexRecordingIfEnabled(at url: URL) async {
+        guard styleStore.recordingSaveToLibrary else { return }
+        if let recordingAnchorSaver {
+            await recordingAnchorSaver(url)
+        } else {
+            await saveAnchorShot(for: url)
+        }
+    }
 
     /// mp4 不是图库资产（shot 是图片），入库的是**首帧截图**当锚点：
     /// windowTitle 写「录屏 mm:ss」，视频绝对路径挂在 `recording.path` 属性的

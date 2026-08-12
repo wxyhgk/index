@@ -68,8 +68,11 @@ struct GalleryTopBar: View {
     // 语义模式切换只在「开关已开 + 模型已就绪」时出现，所以要订阅这两个。
     @ObservedObject private var settings: AppSettings
     @ObservedObject private var modelStore = CLIPModelStore.shared
+    @ObservedObject private var appsNavigation = AppsNavigationState.shared
+    @ObservedObject private var collectionsNavigation = CollectionsNavigationState.shared
 
     @AppStorage("galleryLayout") private var layout = GalleryLayoutKind.grid
+    @AppStorage("galleryZoom") private var zoom = 200.0
 
     /// ⌘K 的落点。
     @FocusState private var searchFocused: Bool
@@ -285,11 +288,51 @@ struct GalleryTopBar: View {
 
     private var rightControls: some View {
         HStack(spacing: DS.s2) {
-            layoutPicker
-            inspectorToggle
+            if showsPrimaryCaptureButton {
+                captureButton
+            }
+            if showsGridControls {
+                layoutPicker
+            }
+            if showsInspectorToggle {
+                inspectorToggle
+            }
             moreMenu
         }
         .fixedSize()
+    }
+
+    private var showsPrimaryCaptureButton: Bool {
+        destinationID == LibraryDestination.destinationID
+            || destinationID == AppsDestination.destinationID
+            || destinationID == CollectionsDestination.destinationID
+    }
+
+    private var showsGridControls: Bool {
+        if destinationID == AppsDestination.destinationID { return appsNavigation.isDrilled }
+        if destinationID == CollectionsDestination.destinationID { return collectionsNavigation.isDrilled }
+        return true
+    }
+
+    private var showsInspectorToggle: Bool {
+        if destinationID == AppsDestination.destinationID { return appsNavigation.isDrilled }
+        if destinationID == CollectionsDestination.destinationID { return collectionsNavigation.isDrilled }
+        return true
+    }
+
+    /// 截图是图库页的主任务，不能再藏在齿轮菜单里。只在图库 destination 提升为
+    /// 蓝色主按钮，录屏与应用页的结构先保持不变。
+    private var captureButton: some View {
+        Button {
+            CaptureCoordinator.shared.begin()
+        } label: {
+            Label("截图", systemImage: "viewfinder")
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.regular)
+        .help("开始截图（⌃⌘A）")
+        .accessibilityLabel("开始截图")
     }
 
     // 顶栏曾经还有一个漏斗菜单（全部/收藏/未加标签/已标注 + 清除筛选）。
@@ -330,15 +373,27 @@ struct GalleryTopBar: View {
         .accessibilityLabel("详情栏")
     }
 
-    /// 设计稿这个位置画的是头像 + 小三角。本项目没有账号体系，画一个假头像是
-    /// 欺骗性 UI（承诺一个不存在的功能），换成「更多」齿轮菜单。
+    /// 第一版设计把低频项收进省略号菜单。图库页的截图动作已经提升成主按钮，
+    /// 这里改为承接缩略图大小与设置；其他 destination 暂时仍保留截图入口。
     private var moreMenu: some View {
         Menu {
-            Button("开始截图") { CaptureCoordinator.shared.begin() }
+            if destinationID == LibraryDestination.destinationID
+                || (destinationID == AppsDestination.destinationID && appsNavigation.isDrilled)
+                || (destinationID == CollectionsDestination.destinationID
+                    && collectionsNavigation.isDrilled) {
+                Picker("缩略图大小", selection: $zoom) {
+                    Text("小").tag(160.0)
+                    Text("中").tag(220.0)
+                    Text("大").tag(300.0)
+                }
+                .pickerStyle(.inline)
+            } else if !showsPrimaryCaptureButton {
+                Button("开始截图") { CaptureCoordinator.shared.begin() }
+            }
             Divider()
             Button("设置…") { openSettings() }
         } label: {
-            Image(systemName: "gearshape")
+            Image(systemName: "ellipsis")
         }
         .menuStyle(.button)
         .buttonStyle(.shellIcon)

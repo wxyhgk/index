@@ -4,14 +4,21 @@ import AppKit
 // MARK: - 网格
 //
 // 图库中栏：时间分组（ShotSection）、网格 / 瀑布两种显示模式（GalleryLayoutKind）、
-// 稳定列宽数学、卡片装配与右键菜单、空态与底部悬浮工具条，
+// 稳定列宽数学、卡片装配与右键菜单、空态与可选的底部悬浮工具条，
 // 以及全图库唯一的那套删除确认框。
 //
 // 2026-07 改版的两件结构性变化：
 //   1. **画布交还窗口底色**（原来这里铺一层不透明的 `underPageBackgroundColor`）。
 //      逐条核对见 `body` 上的注释 —— 三条旧理由现在一条都不成立了。
-//   2. **底栏从贴底通栏变成居中悬浮胶囊**（设计稿 §5），因此它不再自动为内容
-//      占位，网格内容底部要显式让出 `contentBottomInset`。
+//   2. **图库首页不再显示重复的底部控制条。** 显示模式已在顶栏，缩略图尺寸收进
+//      更多菜单；其他 destination 暂时保留旧胶囊，避免这一轮越界改动。
+
+enum GalleryGridChrome {
+    case standard
+    case libraryPanel
+
+    var showsFloatingToolbar: Bool { self == .standard }
+}
 
 /// 一个时间段的截图。分组在 shots 变化时算一次，不在 body 里逐帧分组。
 private struct ShotSection: Identifiable {
@@ -50,10 +57,19 @@ struct GalleryGrid: View {
 
     @ObservedObject private var store: ShotStore
     @ObservedObject private var selection = GallerySelection.shared
+    private let scope: GalleryContentScope
+    private let chrome: GalleryGridChrome
 
-    init(store: ShotStore = .shared, settings: AppSettings = .shared) {
+    init(
+        store: ShotStore = .shared,
+        settings: AppSettings = .shared,
+        scope: GalleryContentScope = .library,
+        chrome: GalleryGridChrome = .standard
+    ) {
         _store = ObservedObject(wrappedValue: store)
         _settings = ObservedObject(wrappedValue: settings)
+        self.scope = scope
+        self.chrome = chrome
     }
     /// 只为一个开关订阅：逐卡滚动深度（`galleryScrollDepth`）。
     /// 设置项的变更频率是「用户偶尔点一下」，用它换「关掉开关立刻生效」是划算的。
@@ -79,6 +95,12 @@ struct GalleryGrid: View {
     @State private var categoriesByShot: [Int64: String] = [:]
     /// 修订数 > 1（真的标注过）的截图 ID，卡片右下角角标用。同样批量查好下发。
     @State private var annotatedIDs: Set<Int64> = []
+    /// 录屏 Shot → mp4 路径。与分类/标注一样按当前页批量读取，不让卡片逐条查库。
+    @State private var recordingPathsByShot: [Int64: String] = [:]
+    /// 专题收藏集与当前可见截图的成员关系。和其它卡片派生状态一样批量读取，
+    /// 右键菜单的 ViewBuilder 只纯读状态，绝不在渲染阶段查库。
+    @State private var collectionSummaries: [ShotCollectionSummary] = []
+    @State private var collectionIDsByShot: [Int64: Set<Int64>] = [:]
     /// 右键菜单打开的时间线 / 相似 sheet。
     @State private var timelineShot: Shot?
     @State private var similarShot: Shot?
@@ -115,7 +137,9 @@ struct GalleryGrid: View {
 
     /// 网格内容底部要让出的高度 = 工具条高 + 它离网格底边的距离 + 一档呼吸位。
     /// 悬浮工具条**不占布局位置**（它压在内容之上），少了这一档最后一行会被盖住。
-    private static let contentBottomInset: CGFloat = toolbarHeight + 2 * DS.s3
+    private var contentBottomInset: CGFloat {
+        chrome.showsFloatingToolbar ? Self.toolbarHeight + 2 * DS.s3 : DS.s5
+    }
 
     /// 列数由**外层稳定宽度**显式算出，绝不用 `.adaptive` ——
     /// 接实体鼠标时 macOS 显示常驻滚动条：内容超高 → 滚动条挤窄内容区 →
@@ -182,18 +206,26 @@ struct GalleryGrid: View {
         let shots: [Shot]
     }
 
+    /// destination 的最终可见集合。精确搜索和语义搜索共用同一个 store 数据源；
+    /// `runSemanticSearch` 已按当前固定筛选
+    /// 约束候选，所以网格、键盘和批量操作不会各自维护第二份结果。
+    private var visibleShots: [Shot] {
+        store.displayShots
+    }
+
     var body: some View {
-        // 工具条**压在内容之上**（设计稿 §5：居中悬浮胶囊，不是贴底通栏），
-        // 所以是 ZStack 而不是 VStack。它不占布局位置，内容底部的让位见
-        // `contentBottomInset`。
+        // 标准样式的工具条压在内容之上，所以仍用 ZStack；图库面板样式不画它，
+        // 但共用同一棵网格与选择逻辑。
         ZStack(alignment: .bottom) {
-            if store.displayShots.isEmpty {
+            if visibleShots.isEmpty {
                 emptyState
             } else {
                 grid
             }
 
-            floatingToolbar
+            if chrome.showsFloatingToolbar {
+                floatingToolbar
+            }
         }
         // ⚠️ 这里**故意不再铺** L0 画布（原来是一层不透明的 `underPageBackgroundColor`）。
         // 设计稿里中间区域直接坐在窗口底色上（卡片浮在深底上，没有卡面也没有画布纸）。
@@ -227,19 +259,26 @@ struct GalleryGrid: View {
         .onChange(of: keyboardColumnCount, initial: true) { _, count in
             GalleryKeyboard.shared.gridColumnCount = count
         }
-        .task(id: GridKey(semanticMode: store.semanticMode, shots: store.displayShots)) {
+        .task(id: GridKey(semanticMode: store.semanticMode, shots: visibleShots)) {
             // 语义结果本身就是排序（相似度降序），按时间分组会打乱它 —— 单段平铺。
-            if store.semanticMode, let results = store.semanticResults {
-                sections = results.isEmpty
+            if store.semanticMode, store.semanticResults != nil {
+                sections = visibleShots.isEmpty
                     ? []
-                    : [ShotSection(id: "语义", title: "按相似度排序", shots: results)]
+                    : [ShotSection(id: "语义", title: "按相似度排序", shots: visibleShots)]
             } else {
-                sections = ShotSection.group(store.displayShots)
+                sections = ShotSection.group(visibleShots)
             }
             // 分组的同时把卡片要的派生信息批量查好：分类胶囊 + 标注角标。
-            let ids = store.displayShots.compactMap(\.id)
+            let ids = visibleShots.compactMap(\.id)
             categoriesByShot = store.attributeTexts(key: AttributeKey.category, shotIDs: ids)
             annotatedIDs = store.annotatedShotIDs(among: ids)
+            recordingPathsByShot = store
+                .attributePayloads(key: AttributeKey.recordingPath, shotIDs: ids)
+                .compactMapValues { String(data: $0, encoding: .utf8) }
+            refreshCollectionMetadata(for: ids)
+        }
+        .onReceive(store.libraryDidChangePublisher) {
+            refreshCollectionMetadata(for: visibleShots.compactMap(\.id))
         }
         .sheet(item: $timelineShot) { TimelineSheet(shot: $0) }
         .sheet(item: $similarShot) { SimilarShotsSheet(shot: $0) }
@@ -272,7 +311,7 @@ struct GalleryGrid: View {
     /// 真正执行删除。之后把选中顺移到相邻一张，键盘导航不断档。
     private func deleteShots(_ ids: [Int64]) {
         let idSet = Set(ids)
-        let display = store.displayShots
+        let display = visibleShots
         let anchorIndex = display.firstIndex { $0.id.map(idSet.contains) ?? false }
         // 语义结果可能不在常规列表里，两边找齐（去重）再删。
         var seen = Set<Int64>()
@@ -283,7 +322,7 @@ struct GalleryGrid: View {
         }
         // 单事务批量删除：逐张 delete 会打出「张数 × (写 + 读 + 全量 reload)」的主线程风暴。
         store.delete(targets)
-        let remaining = store.displayShots
+        let remaining = visibleShots
         if let anchorIndex, !remaining.isEmpty {
             selection.select(only: remaining[min(anchorIndex, remaining.count - 1)].id)
         } else {
@@ -348,7 +387,7 @@ struct GalleryGrid: View {
                         }
                     }
                     .padding(.horizontal, Self.contentInset)
-                    .padding(.bottom, Self.contentBottomInset)
+                    .padding(.bottom, contentBottomInset)
                 }
             }
             // ScrollView 在 macOS 上自带一层不透明底（windowBackgroundColor）。
@@ -415,7 +454,7 @@ struct GalleryGrid: View {
             }
         }
         .padding(.horizontal, Self.contentInset)
-        .padding(.bottom, Self.contentBottomInset)
+        .padding(.bottom, contentBottomInset)
     }
 
     /// 瀑布卡片的缩略图高度 = **可用图宽** / 图片长宽比。
@@ -447,11 +486,15 @@ struct GalleryGrid: View {
             Spacer()
         }
         .padding(.vertical, DS.s2)
-        // 用**窗口底色**盖住滚上来的卡片，而不是 `.bar` 材质。
+        // 用当前容器的实色盖住滚上来的卡片，而不是 `.bar` 材质。
         // 材质在浅色下会渲染成一条横贯内容区的白带，比周围还亮 ——
         // 分组头是个标签，不该是屏幕上最亮的一条。同色不透明底同样能盖住内容，
         // 而且和中间区域本来就坐在窗底上这件事一致（网格没有自己的画布）。
-        .background(Color(nsColor: DS.windowBase))
+        .background(sectionHeaderFill)
+    }
+
+    private var sectionHeaderFill: Color {
+        chrome == .libraryPanel ? DS.panelFill(.resting) : Color(nsColor: DS.windowBase)
     }
 
     /// 逐卡滚动深度。规格里它是**次选**（首选是成本恒定的容器级 `scrollEdgeMask`），
@@ -495,6 +538,7 @@ struct GalleryGrid: View {
             isFavorite: shot.id.map(store.isFavorite) ?? false,
             category: shot.id.flatMap { categoriesByShot[$0] },
             isAnnotated: shot.id.map(annotatedIDs.contains) ?? false,
+            isRecording: recordingAsset(for: shot).isRecording,
             onToggleFavorite: { store.toggleFavorite(shot) }
         )
         .id(shot.id)
@@ -503,7 +547,7 @@ struct GalleryGrid: View {
             TapGesture(count: 2).onEnded {
                 // 带修饰键的双击只是两次修饰点击（toggle / 范围），不进编辑器。
                 guard currentModifiers().isEmpty else { return }
-                GalleryWindowMode.shared.openEditor(shotID: shot.id)
+                RecordingAssetActions.performPrimary(recordingAsset(for: shot), shotID: shot.id)
             }
         )
         // 用 `onDrag` 而不是 `.draggable(_:)`，理由是**接收方兼容性**：
@@ -544,7 +588,7 @@ struct GalleryGrid: View {
         if flags.contains(.command) {
             selection.toggle(id)
         } else if flags.contains(.shift) {
-            selection.selectRange(to: id, in: store.displayShots.compactMap(\.id))
+            selection.selectRange(to: id, in: visibleShots.compactMap(\.id))
         } else {
             selection.select(only: id)
         }
@@ -568,6 +612,7 @@ struct GalleryGrid: View {
         Button(GalleryBatch.allFavorited(shots) ? "取消收藏 \(count) 张" : "收藏 \(count) 张") {
             GalleryBatch.toggleFavorites(shots)
         }
+        collectionMenu(for: shots.compactMap(\.id))
         Button("复制 \(count) 张图片") {
             GalleryBatch.copyImages(shots)
         }
@@ -587,8 +632,8 @@ struct GalleryGrid: View {
             Text(emptyDescription)
         } actions: {
             if hasActiveFilter {
-                Button("清除筛选") { clearFilters() }
-            } else {
+                Button("清除筛选") { scope.clearTransientState(in: store) }
+            } else if scope.showsStartCaptureAction {
                 Button("开始截图") { CaptureCoordinator.shared.begin() }
                     .buttonStyle(.borderedProminent)
             }
@@ -598,31 +643,31 @@ struct GalleryGrid: View {
 
     /// 空态是「筛出来的空」还是「真的一张都没有」——决定给哪个按钮。
     private var hasActiveFilter: Bool {
-        !store.searchText.isEmpty
-            || store.filter != .all
-            || (store.semanticMode && store.semanticResults != nil)
-    }
-
-    private func clearFilters() {
-        store.searchText = ""
-        store.filter = .all
-        store.clearSemanticResults()
-        store.reload()
+        scope.hasClearableState(
+            searchText: store.searchText,
+            filter: store.filter,
+            hasSemanticResults: store.semanticMode && store.semanticResults != nil
+        )
     }
 
     private var emptyTitle: String {
         if store.semanticMode && store.semanticResults != nil { return "没有语义匹配的结果" }
+        if store.searchText.isEmpty, let scopedTitle = scope.emptyTitle { return scopedTitle }
         return store.searchText.isEmpty ? "还没有截图" : "没有匹配的结果"
     }
 
     private var emptyIcon: String {
         if store.semanticMode && store.semanticResults != nil { return "sparkle.magnifyingglass" }
+        if store.searchText.isEmpty, let scopedIcon = scope.emptyIcon { return scopedIcon }
         return store.searchText.isEmpty ? "photo.on.rectangle.angled" : "magnifyingglass"
     }
 
     private var emptyDescription: String {
         if store.semanticMode && store.semanticResults != nil {
             return "截图可能还没完成向量分析，或换种描述再试（英文效果最好）"
+        }
+        if store.searchText.isEmpty, let scopedDescription = scope.emptyDescription {
+            return scopedDescription
         }
         return store.searchText.isEmpty ? "按 ⌃⌘A 开始截图" : "换个关键词，或清除侧边栏筛选"
     }
@@ -728,7 +773,7 @@ struct GalleryGrid: View {
                     .lineLimit(1)
             }
         } else if store.semanticMode, store.semanticResults != nil {
-            Text("语义搜索：最相关的 \(store.displayShots.count) 张")
+            Text("语义搜索：最相关的 \(visibleShots.count) 张")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -737,8 +782,21 @@ struct GalleryGrid: View {
 
     @ViewBuilder
     private func contextMenu(for shot: Shot) -> some View {
+        let recording = recordingAsset(for: shot)
+        if recording.isRecording {
+            Button(recording.availableURL == nil ? "播放录屏（文件缺失）" : "播放录屏") {
+                RecordingAssetActions.play(recording)
+            }
+            Button(recording.availableURL == nil ? "显示录屏位置（文件缺失）" : "在访达中显示录屏") {
+                RecordingAssetActions.reveal(recording)
+            }
+            Divider()
+        }
         Button(shot.id.map(store.isFavorite) ?? false ? "取消收藏" : "收藏") {
             store.toggleFavorite(shot)
+        }
+        if let id = shot.id {
+            collectionMenu(for: [id])
         }
         Button("编辑标注") { GalleryWindowMode.shared.openEditor(shotID: shot.id) }
         Button("钉在桌面") { pin(shot) }
@@ -749,11 +807,11 @@ struct GalleryGrid: View {
         Divider()
         Button("出处") { openSource(of: shot) }
             .disabled(shot.sourceURL == nil && shot.appBundleID == nil)
-        Button("在访达中显示") {
+        Button(recording.isRecording ? "在访达中显示封面" : "在访达中显示") {
             SystemNavigator.revealInFinder(store.originalURL(for: shot))
         }
         Divider()
-        Button("导出…") { export(shot) }
+        Button(recording.isRecording ? "导出封面…" : "导出…") { export(shot) }
         if !settings.uploadEndpoint.isEmpty {
             Button("上传并复制链接") { upload(shot) }
         }
@@ -819,7 +877,12 @@ struct GalleryGrid: View {
     /// 重活集中在这：读原图 → 合成最新修订 → 编码 → 写临时文件；
     /// 目录复用暂存栏的拖拽临时目录，下次启动统一清理；渲染失败退回原图路径
     /// （拖出去的至少还是这张截图，只是没有标注）。
-    private func dragFileURL(for shot: Shot) -> URL {
+    private func dragFileURL(for shot: Shot) -> URL? {
+        let recording = recordingAsset(for: shot)
+        if recording.isRecording {
+            // 录屏卡片的拖拽契约是原始 MP4。文件缺失时不能偷偷退化为封面 PNG。
+            return recording.availableURL
+        }
         let fallback = store.originalURL(for: shot)
         guard let base = store.originalImage(for: shot) else { return fallback }
 
@@ -839,6 +902,14 @@ struct GalleryGrid: View {
         } catch {
             return fallback
         }
+    }
+
+    private func recordingPath(for shot: Shot) -> String? {
+        shot.id.flatMap { recordingPathsByShot[$0] }
+    }
+
+    private func recordingAsset(for shot: Shot) -> RecordingAsset {
+        RecordingAsset(path: recordingPath(for: shot))
     }
 
     // 这里曾经有个 `draggedIDs`：拖拽时携带「全部选中项的 ID」，
@@ -864,6 +935,54 @@ struct GalleryGrid: View {
     /// 复制的是成品（原图 + 最新修订的标注），三个入口不该有三种结果。
     private func copy(_ shot: Shot) {
         GalleryBatch.copyImages([shot])
+    }
+
+    @ViewBuilder
+    private func collectionMenu(for shotIDs: [Int64]) -> some View {
+        Menu {
+            if collectionSummaries.isEmpty {
+                Text("尚无专题集，请先到“收藏”页创建")
+            } else {
+                ForEach(collectionSummaries) { collection in
+                    let isInAll = !shotIDs.isEmpty && shotIDs.allSatisfy {
+                        collectionIDsByShot[$0]?.contains(collection.id) == true
+                    }
+                    Button {
+                        setMembership(
+                            shotIDs: shotIDs,
+                            collectionID: collection.id,
+                            remove: isInAll
+                        )
+                    } label: {
+                        Label(
+                            collection.name,
+                            systemImage: isInAll ? "checkmark" : "rectangle.stack.badge.plus"
+                        )
+                    }
+                }
+            }
+        } label: {
+            Label("加入专题收藏集", systemImage: "rectangle.stack.badge.plus")
+        }
+        .disabled(collectionSummaries.isEmpty || shotIDs.isEmpty)
+    }
+
+    private func setMembership(shotIDs: [Int64], collectionID: Int64, remove: Bool) {
+        if remove {
+            store.removeFromCollection(shotIDs: shotIDs, collectionID: collectionID)
+        } else {
+            do {
+                try store.addToCollection(shotIDs: shotIDs, collectionID: collectionID)
+            } catch {
+                NSLog("[MacShot] 加入收藏集失败: \(error)")
+            }
+        }
+        refreshCollectionMetadata(for: visibleShots.compactMap(\.id))
+    }
+
+    private func refreshCollectionMetadata(for shotIDs: [Int64]) {
+        collectionSummaries = store.collectionSummaries()
+        collectionIDsByShot = store.collectionMemberships(shotIDs: shotIDs)
     }
 
     /// 回到出处：优先开网址（默认浏览器），否则激活来源 App。

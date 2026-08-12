@@ -145,7 +145,7 @@ final class FakeStyleStore: ObservableObject, StyleStore {
         autoCopyDirectory: String = "",
         autoCleanupEnabled: Bool = false,
         autoCleanupDays: Int = 30,
-        recordingSaveToLibrary: Bool = false,
+        recordingSaveToLibrary: Bool = true,
         showMagnifier: Bool = true,
         captureShortcut: KeyboardShortcut = .captureDefault,
         galleryShortcut: KeyboardShortcut = .galleryDefault,

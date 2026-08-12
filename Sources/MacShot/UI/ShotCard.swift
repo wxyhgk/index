@@ -34,6 +34,9 @@ struct ShotCard: View {
     /// 分类 / 标注角标同样由父级批量查好传入。
     let category: String?
     let isAnnotated: Bool
+    /// `recording.path` 存在时为 true。卡片把首帧明确表达成视频封面，
+    /// 避免录屏混在普通截图里看起来像“没有保存”。
+    let isRecording: Bool
     /// 按下态（四态之外的第五态，缩放 0.99）。**唯一由外部驱动的状态**：
     /// 点击 / 双击 / `.draggable` 三个手势全挂在父级 GalleryGrid 上，卡片内部再挂一个
     /// `DragGesture(minimumDistance: 0)` 去嗅探按下，会和 `.draggable` 的拖拽识别器抢事件 ——
@@ -137,6 +140,7 @@ struct ShotCard: View {
         .overlay(alignment: .topTrailing) { selectionBadge }
         .overlay(alignment: .bottomLeading) { categoryBadge }
         .overlay(alignment: .bottomTrailing) { annotationBadge }
+        .overlay { recordingBadge }
         // rim 在深色下走 `.plusLighter`，混合模式**必须**有 compositingGroup 做边界，
         // 否则它会和任意兄弟视图混合 —— 在网格里就是和邻居卡片混。
         // 官方说法是这个修饰器「开销极小，只重排效果的应用时机，不做栅格化」，
@@ -278,6 +282,23 @@ struct ShotCard: View {
         }
     }
 
+    @ViewBuilder
+    private var recordingBadge: some View {
+        if isRecording {
+            Image(systemName: "play.fill")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(.black.opacity(0.58), in: Circle())
+                .overlay {
+                    Circle().strokeBorder(.white.opacity(0.28), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
+                .allowsHitTesting(false)
+                .accessibilityLabel("录屏")
+        }
+    }
+
     /// **左上角**收藏星：悬停浮出，已收藏则常显实心黄星。材质圆底 + ≥32pt 热区。
     ///
     /// 从右上角搬到左上角，因为设计稿把勾选徽章放在了右上角，两者会重叠。
@@ -323,7 +344,7 @@ struct ShotCard: View {
     /// 半个像素 —— 这是光学对齐想要的结果，再加 padding 就成了明显的缩进。
     private var caption: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(shot.appName ?? "未知 App")
+            Text(isRecording ? (shot.windowTitle ?? "录屏") : (shot.appName ?? "未知 App"))
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
             Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())

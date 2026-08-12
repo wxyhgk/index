@@ -153,6 +153,39 @@ enum AppDatabase {
             }
         }
 
+        // 用户专题收藏集。成员表只保存 Shot 引用，不复制原图；同一张图可以属于
+        // 多个专题集。删除专题集只级联删除成员关系，删除截图则自动清理所有关系。
+        migrator.registerMigration("v5_shot_collections") { db in
+            try db.create(table: "shotCollection") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("name", .text).notNull()
+                t.column("note", .text).notNull().defaults(to: "")
+                t.column("coverShotID", .integer)
+                    .references("shot", onDelete: .setNull)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull().indexed()
+                t.column("sortOrder", .integer).notNull().defaults(to: 0)
+            }
+            // 名称是用户辨认专题集的主标识，大小写不同不应制造两个看似同名的集合。
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX shotCollection_name_nocase
+                ON shotCollection(name COLLATE NOCASE)
+                """)
+
+            try db.create(table: "shotCollectionItem") { t in
+                t.column("collectionID", .integer)
+                    .notNull()
+                    .references("shotCollection", onDelete: .cascade)
+                t.column("shotID", .integer)
+                    .notNull()
+                    .references("shot", onDelete: .cascade)
+                t.column("addedAt", .datetime).notNull()
+                t.column("sortOrder", .integer).notNull().defaults(to: 0)
+                t.primaryKey(["collectionID", "shotID"])
+            }
+            try db.create(indexOn: "shotCollectionItem", columns: ["shotID"])
+        }
+
         return migrator
     }
 }

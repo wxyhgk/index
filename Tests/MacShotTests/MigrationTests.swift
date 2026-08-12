@@ -5,7 +5,7 @@ import GRDB
 /// 迁移链的安全网：空库全量迁移、v3 → v4 重建表的数据保真。
 final class MigrationTests: XCTestCase {
 
-    /// 空库跑完整迁移链 v1 → v4：所有表就位，migrator 报告全部完成。
+    /// 空库跑完整迁移链：所有表就位，migrator 报告全部完成。
     func testEmptyDatabaseRunsFullMigrationChain() throws {
         let dbQueue = try DatabaseQueue()
         try AppDatabase.migrator.migrate(dbQueue)
@@ -16,6 +16,8 @@ final class MigrationTests: XCTestCase {
             XCTAssertTrue(try db.tableExists("shotAttribute"))
             XCTAssertTrue(try db.tableExists("shotFts"))
             XCTAssertTrue(try db.tableExists("attributeFts"))
+            XCTAssertTrue(try db.tableExists("shotCollection"))
+            XCTAssertTrue(try db.tableExists("shotCollectionItem"))
             XCTAssertTrue(try AppDatabase.migrator.hasCompletedMigrations(db))
         }
     }

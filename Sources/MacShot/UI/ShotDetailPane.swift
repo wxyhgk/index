@@ -59,6 +59,8 @@ struct ShotDetailPane: View {
     @State private var recordingPath: String?
     /// 是否处于「全部信息」下钻页。换截图时自动回到摘要页（见 task）。
     @State private var showingAllInfo = false
+    @State private var collectionSummaries: [ShotCollectionSummary] = []
+    @State private var collectionIDs: Set<Int64> = []
 
     var body: some View {
         content
@@ -73,6 +75,7 @@ struct ShotDetailPane: View {
                 recordingPath = shot.id
                     .flatMap { store.attributePayload(shotID: $0, key: AttributeKey.recordingPath) }
                     .flatMap { String(data: $0, encoding: .utf8) }
+                refreshCollections()
             }
             // 指纹与敏感区域由后台分析异步补上：store 每次刷新（属性落库会触发
             // reload）都重查一次。属性写入不一定改变 shots 数组本身，所以订阅
@@ -80,6 +83,7 @@ struct ShotDetailPane: View {
             .onReceive(store.objectWillChange) { _ in
                 refreshFeaturePrint()
                 refreshSensitiveRegions()
+                refreshCollections()
             }
             .sheet(isPresented: $showingSimilar) {
                 SimilarShotsSheet(shot: shot)
@@ -232,6 +236,29 @@ struct ShotDetailPane: View {
     /// 更多位：设计稿放不下的动作全在这里，**一件都不许在改版里蒸发**。
     private var moreMenu: some View {
         InspectorCircleMenu(systemImage: "ellipsis", label: "更多动作") {
+            Menu {
+                if collectionSummaries.isEmpty {
+                    Text("尚无专题集，请先到“收藏”页创建")
+                } else {
+                    ForEach(collectionSummaries) { collection in
+                        let isMember = collectionIDs.contains(collection.id)
+                        Button {
+                            toggleCollection(collection.id, remove: isMember)
+                        } label: {
+                            Label(
+                                collection.name,
+                                systemImage: isMember ? "checkmark" : "rectangle.stack.badge.plus"
+                            )
+                        }
+                    }
+                }
+            } label: {
+                Label("加入专题收藏集", systemImage: "rectangle.stack.badge.plus")
+            }
+            .disabled(collectionSummaries.isEmpty || shot.id == nil)
+
+            Divider()
+
             Button {
                 openSource()
             } label: {
@@ -275,13 +302,15 @@ struct ShotDetailPane: View {
             }
 
             if let path = recordingPath {
+                let recording = RecordingAsset(path: path)
                 Button {
-                    SystemNavigator.open(url: URL(fileURLWithPath: path))
+                    RecordingAssetActions.play(recording)
                 } label: {
-                    Label("打开录像", systemImage: "play.rectangle")
+                    Label(
+                        recording.availableURL == nil ? "录像文件缺失" : "打开录像",
+                        systemImage: "play.rectangle"
+                    )
                 }
-                // 视频文件被用户删掉时禁用（锚点截图还在，历史不丢）。
-                .disabled(!FileManager.default.fileExists(atPath: path))
             }
 
             Divider()
@@ -306,6 +335,29 @@ struct ShotDetailPane: View {
                 Label("删除…", systemImage: "trash")
             }
         }
+    }
+
+    private func refreshCollections() {
+        collectionSummaries = store.collectionSummaries()
+        guard let id = shot.id else {
+            collectionIDs = []
+            return
+        }
+        collectionIDs = store.collectionMemberships(shotIDs: [id])[id] ?? []
+    }
+
+    private func toggleCollection(_ collectionID: Int64, remove: Bool) {
+        guard let id = shot.id else { return }
+        if remove {
+            store.removeFromCollection(shotIDs: [id], collectionID: collectionID)
+        } else {
+            do {
+                try store.addToCollection(shotIDs: [id], collectionID: collectionID)
+            } catch {
+                NSLog("[MacShot] 加入收藏集失败: \(error)")
+            }
+        }
+        refreshCollections()
     }
 
     // MARK: - 元信息列表

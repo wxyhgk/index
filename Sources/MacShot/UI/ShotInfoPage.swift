@@ -208,22 +208,24 @@ struct ShotInfoPage: View {
     @ViewBuilder
     private var recordingCard: some View {
         if let path = recordingPath {
+            let recording = RecordingAsset(path: path)
             card("录屏") {
                 Text(path)
                     .font(.caption)
                     .textSelection(.enabled)
                     .lineLimit(3)
                     .truncationMode(.middle)
-                // 视频文件被用户删掉时按钮禁用（锚点截图还在，历史不丢）。
                 Button {
-                    SystemNavigator.open(url: URL(fileURLWithPath: path))
+                    RecordingAssetActions.play(recording)
                 } label: {
-                    Label("打开录像", systemImage: "play.rectangle")
+                    Label(
+                        recording.availableURL == nil ? "录像文件缺失" : "打开录像",
+                        systemImage: "play.rectangle"
+                    )
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DS.accent)
-                .disabled(!FileManager.default.fileExists(atPath: path))
             }
         }
     }

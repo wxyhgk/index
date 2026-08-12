@@ -213,7 +213,7 @@ private struct GeneralSettings: View {
                 }
 
                 Toggle("录屏完成后保存到图库", isOn: $settings.recordingSaveToLibrary)
-                Text("把录像首帧作为截图入库当锚点，详情栏提供「打开录像」按钮。视频文件本身仍保存在录屏目录。")
+                Text("默认开启。图库用首帧显示录像，并提供播放、拖出和在访达中显示；视频文件本身仍保存在录屏目录。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -11,19 +11,41 @@ import SwiftUI
 //
 // 收敛后的分工：**选择归侧边栏，状态归页头**。没有筛选时这一行完全不出现。
 
+enum GalleryPageHeaderStyle {
+    case standard
+    case libraryPanel
+}
+
 struct GalleryPageHeader: View {
 
     @ObservedObject private var store: ShotStore
+    private let scope: GalleryContentScope
+    private let style: GalleryPageHeaderStyle
 
-    init(store: ShotStore = .shared) {
+    init(
+        store: ShotStore = .shared,
+        scope: GalleryContentScope = .library,
+        style: GalleryPageHeaderStyle = .standard
+    ) {
         _store = ObservedObject(wrappedValue: store)
+        self.scope = scope
+        self.style = style
     }
 
     // 这里从前还存着 apps / categories / tags 三份聚合查询，只为填四个下拉胶囊的菜单。
     // 胶囊删掉之后它们一并消失 —— 顺带省掉了每次 store 变更都要跑的三条 GROUP BY
     // （侧边栏本来就在算同样的三份，那是第二次重复）。
 
+    @ViewBuilder
     var body: some View {
+        if style == .libraryPanel {
+            libraryPanelHeader
+        } else {
+            standardHeader
+        }
+    }
+
+    private var standardHeader: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.s3) {
             Text(title)
                 .font(.largeTitle.weight(.bold))
@@ -31,11 +53,60 @@ struct GalleryPageHeader: View {
             clearFilterButton
             Spacer(minLength: DS.s2)
             // displayShots 是内存里的数组，count 是 O(1)，可以留在 body 里。
-            Text("\(store.displayShots.count) 个项目")
+            Text("\(visibleShots.count) 个项目")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .fixedSize()
+        }
+    }
+
+    /// 第一版图库工作区页头：标题和数量形成一个纵向信息组，右侧只保留
+    /// 当前真实存在的排序口径与语义搜索状态。它不新增另一套筛选入口。
+    private var libraryPanelHeader: some View {
+        HStack(alignment: .top, spacing: DS.s4) {
+            VStack(alignment: .leading, spacing: DS.s1) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.s2) {
+                    Text(title)
+                        .font(.largeTitle.weight(.bold))
+                        .lineLimit(1)
+                    clearFilterButton
+                }
+
+                Text("\(visibleShots.count) 个项目")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            Spacer(minLength: DS.s3)
+
+            HStack(spacing: DS.s3) {
+                semanticStatus
+                Label("按创建时间", systemImage: "arrow.down")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .accessibilityLabel("按创建时间排序，最新在前")
+            }
+            .padding(.top, DS.s2)
+        }
+    }
+
+    @ViewBuilder
+    private var semanticStatus: some View {
+        if store.isSemanticSearching {
+            HStack(spacing: DS.s2) {
+                ProgressView().controlSize(.mini)
+                Text("语义搜索中…")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if store.semanticMode, store.semanticResults != nil {
+            Text("语义结果 \(visibleShots.count) 项")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 
@@ -44,14 +115,17 @@ struct GalleryPageHeader: View {
     /// 标题 = 当前筛选的名字。搜索不参与标题（搜索是在筛选结果里再缩小一次，
     /// 把标题换成关键词会让人以为筛选被清掉了）；结果条数由右侧那行小字反映。
     private var title: String {
+        if let fixedTitle = scope.fixedTitle { return fixedTitle }
         switch store.filter {
-        case .all:                  return "全部截图"
+        case .all:                  return "全部项目"
         case .favorites:            return "收藏"
         case .untagged:             return "未加标签"
         case .annotated:            return "已标注"
+        case .recordings:           return "录屏"
         case .category(let name):   return name
         case .tag(let name):        return name
-        case .app(let name):        return name
+        case .app(let identity):    return identity.name
+        case .collection:           return "专题收藏"
         }
     }
 
@@ -61,19 +135,22 @@ struct GalleryPageHeader: View {
     /// 所以这里不再重复那个名字，只提供退出口。
     @ViewBuilder
     private var clearFilterButton: some View {
-        if store.filter != .all {
+        if scope.fixedFilter == nil, store.filter != .all {
             Button {
-                store.filter = .all
-                store.reload()
+                scope.clearTransientState(in: store)
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("清除筛选，回到全部截图")
+            .help("清除筛选，回到全部项目")
             .accessibilityLabel("清除筛选")
         }
+    }
+
+    private var visibleShots: [Shot] {
+        store.displayShots
     }
 
 }

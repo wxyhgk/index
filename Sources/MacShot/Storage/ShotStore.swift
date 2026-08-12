@@ -23,7 +23,7 @@ final class ShotStore: ObservableObject {
     @Published var searchText: String = ""
     /// 分类筛选。nil 表示「全部」。
     /// 图库侧边栏选中的筛选维度。
-    enum GalleryFilter: Hashable {
+    enum GalleryFilter: Hashable, Sendable {
         case all
         case favorites
         /// 一个 `tag` 属性行都没有的截图 —— 「想整理时从这里开始」。
@@ -31,10 +31,14 @@ final class ShotStore: ObservableObject {
         /// 真的画过标注的截图。口径与卡片右下角的铅笔角标
         /// （`annotatedShotIDs`）完全一致：修订数 > 1。
         case annotated
+        /// 带 `recording.path` 附件的录屏封面 Shot。
+        case recordings
         case category(String)
         case tag(String)
-        /// 按来源 App。侧边栏的主线索（见 `AppsSidebarSection`）。
-        case app(String)
+        /// 按来源 App。bundleID 优先，名称只为无 bundleID 的来源兜底。
+        case app(CapturedAppIdentity)
+        /// 用户专题收藏集。ID 稳定，重命名不会让当前页面失效。
+        case collection(Int64)
 
         // 曾经还有 `today` / `thisWeek` 两个 case，随侧边栏简化一起删了：
         // 网格本来就按日期分组、最新在最上，「今天」等于滚到顶。
@@ -52,6 +56,9 @@ final class ShotStore: ObservableObject {
     @Published private(set) var semanticResults: [Shot]?
     /// 语义搜索进行中（文本编码 + 全库比对），UI 显示进度用。
     @Published private(set) var isSemanticSearching = false
+    /// 每次开始或清除语义搜索都递增。旧请求即使迟到，也不能把已经切换
+    /// destination 后的结果重新写回当前图库。
+    private var semanticSearchGeneration = 0
 
     /// 图库网格实际展示的内容。语义模式下已出结果就用结果，否则退回常规列表。
     var displayShots: [Shot] {
@@ -283,6 +290,20 @@ final class ShotStore: ObservableObject {
         favoriteIDs.count
     }
 
+    func favoritePreviews(limit: Int = 3) -> [Shot] {
+        (try? dbQueue.read { db in
+            try Shot.fetchAll(db, sql: """
+                SELECT shot.* FROM shot
+                WHERE EXISTS (
+                    SELECT 1 FROM shotAttribute
+                    WHERE shotID = shot.id AND key = ?
+                )
+                ORDER BY shot.capturedAt DESC, shot.id DESC
+                LIMIT ?
+                """, arguments: [AttributeKey.favorite, limit])
+        }) ?? []
+    }
+
     func toggleFavorite(_ shot: Shot) {
         guard let id = shot.id else { return }
         if isFavorite(shotID: id) {
@@ -296,6 +317,157 @@ final class ShotStore: ObservableObject {
                 value: .data(Data([1]), searchableText: nil)
             )
         }
+    }
+
+    // MARK: - 专题收藏集
+
+    func collectionSummaries() -> [ShotCollectionSummary] {
+        (try? dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT c.id, c.name, c.note, c.updatedAt, COUNT(i.shotID) AS itemCount
+                FROM shotCollection c
+                LEFT JOIN shotCollectionItem i ON i.collectionID = c.id
+                GROUP BY c.id
+                ORDER BY c.sortOrder ASC, c.updatedAt DESC, c.id DESC
+                """)
+            return try rows.map { row in
+                let id: Int64 = row["id"]
+                let previews = try Shot.fetchAll(db, sql: """
+                    SELECT shot.* FROM shotCollectionItem item
+                    JOIN shot ON shot.id = item.shotID
+                    WHERE item.collectionID = ?
+                    ORDER BY item.sortOrder ASC, item.addedAt DESC, shot.id DESC
+                    LIMIT 3
+                    """, arguments: [id])
+                return ShotCollectionSummary(
+                    id: id,
+                    name: row["name"],
+                    note: row["note"],
+                    itemCount: row["itemCount"],
+                    updatedAt: row["updatedAt"],
+                    previews: previews
+                )
+            }
+        }) ?? []
+    }
+
+    func collectionCount() -> Int {
+        (try? dbQueue.read { db in try ShotCollection.fetchCount(db) }) ?? 0
+    }
+
+    @discardableResult
+    func createCollection(name rawName: String, note: String = "") throws -> ShotCollection {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw ShotCollectionError.emptyName }
+        let now = Date()
+        var collection = ShotCollection(
+            id: nil,
+            name: name,
+            note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+            coverShotID: nil,
+            createdAt: now,
+            updatedAt: now,
+            sortOrder: 0
+        )
+        do {
+            try dbQueue.write { db in try collection.insert(db) }
+        } catch let error as DatabaseError where error.extendedResultCode == .SQLITE_CONSTRAINT_UNIQUE {
+            throw ShotCollectionError.duplicateName
+        }
+        setNeedsReload()
+        return collection
+    }
+
+    func renameCollection(id: Int64, to rawName: String) throws {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw ShotCollectionError.emptyName }
+        do {
+            let changed = try dbQueue.write { db in
+                try db.execute(
+                    sql: "UPDATE shotCollection SET name = ?, updatedAt = ? WHERE id = ?",
+                    arguments: [name, Date(), id]
+                )
+                return db.changesCount
+            }
+            guard changed > 0 else { throw ShotCollectionError.collectionNotFound }
+        } catch let error as DatabaseError where error.extendedResultCode == .SQLITE_CONSTRAINT_UNIQUE {
+            throw ShotCollectionError.duplicateName
+        }
+        setNeedsReload()
+    }
+
+    func deleteCollection(id: Int64) {
+        do {
+            try dbQueue.write { db in
+                _ = try ShotCollection.deleteOne(db, key: id)
+            }
+        } catch {
+            NSLog("[MacShot] 删除收藏集失败: \(error)")
+            return
+        }
+        if filter == .collection(id) { filter = .all }
+        setNeedsReload()
+    }
+
+    /// 幂等加入：重复选择同一截图不会制造重复成员。
+    func addToCollection(shotIDs: [Int64], collectionID: Int64) throws {
+        let ids = Array(Set(shotIDs))
+        guard !ids.isEmpty else { return }
+        try dbQueue.write { db in
+            guard try ShotCollection.fetchOne(db, key: collectionID) != nil else {
+                throw ShotCollectionError.collectionNotFound
+            }
+            let now = Date()
+            for shotID in ids {
+                try db.execute(sql: """
+                    INSERT OR IGNORE INTO shotCollectionItem
+                        (collectionID, shotID, addedAt, sortOrder)
+                    VALUES (?, ?, ?, 0)
+                    """, arguments: [collectionID, shotID, now])
+            }
+            try db.execute(
+                sql: "UPDATE shotCollection SET updatedAt = ? WHERE id = ?",
+                arguments: [now, collectionID]
+            )
+        }
+        setNeedsReload()
+    }
+
+    func removeFromCollection(shotIDs: [Int64], collectionID: Int64) {
+        let ids = Array(Set(shotIDs))
+        guard !ids.isEmpty else { return }
+        do {
+            try dbQueue.write { db in
+                try db.execute(sql: """
+                    DELETE FROM shotCollectionItem
+                    WHERE collectionID = ? AND shotID IN (\(ids.map { _ in "?" }.joined(separator: ",")))
+                    """, arguments: StatementArguments([collectionID] + ids))
+                try db.execute(
+                    sql: "UPDATE shotCollection SET updatedAt = ? WHERE id = ?",
+                    arguments: [Date(), collectionID]
+                )
+            }
+        } catch {
+            NSLog("[MacShot] 移出收藏集失败: \(error)")
+            return
+        }
+        setNeedsReload()
+    }
+
+    func collectionMemberships(shotIDs: [Int64]) -> [Int64: Set<Int64>] {
+        let ids = Array(Set(shotIDs))
+        guard !ids.isEmpty else { return [:] }
+        return (try? dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT shotID, collectionID FROM shotCollectionItem
+                WHERE shotID IN (\(ids.map { _ in "?" }.joined(separator: ",")))
+                """, arguments: StatementArguments(ids))
+            return rows.reduce(into: [Int64: Set<Int64>]()) { result, row in
+                let shotID: Int64 = row["shotID"]
+                let collectionID: Int64 = row["collectionID"]
+                result[shotID, default: []].insert(collectionID)
+            }
+        }) ?? [:]
     }
 
     // MARK: - 标签
@@ -713,6 +885,14 @@ final class ShotStore: ObservableObject {
                         SELECT shotID FROM revision GROUP BY shotID HAVING COUNT(*) > 1
                     )
                     """
+            case .recordings:
+                filterClause = """
+                    AND EXISTS (
+                        SELECT 1 FROM shotAttribute
+                        WHERE shotID = shot.id AND key = :recordingKey
+                    )
+                    """
+                arguments["recordingKey"] = AttributeKey.recordingPath
             case .category(let name):
                 filterClause = """
                     AND shot.id IN (
@@ -729,9 +909,25 @@ final class ShotStore: ObservableObject {
                     )
                     """
                 arguments["filterValue"] = name
-            case .app(let name):
-                filterClause = "AND shot.appName = :filterValue"
-                arguments["filterValue"] = name
+            case .app(let identity):
+                if let bundleID = identity.bundleID {
+                    filterClause = "AND shot.appBundleID = :filterBundleID"
+                    arguments["filterBundleID"] = bundleID
+                } else {
+                    filterClause = """
+                        AND (shot.appBundleID IS NULL OR TRIM(shot.appBundleID) = '')
+                        AND shot.appName = :filterValue
+                        """
+                    arguments["filterValue"] = identity.name
+                }
+            case .collection(let collectionID):
+                filterClause = """
+                    AND EXISTS (
+                        SELECT 1 FROM shotCollectionItem
+                        WHERE shotID = shot.id AND collectionID = :collectionID
+                    )
+                    """
+                arguments["collectionID"] = collectionID
             }
 
             if query.isEmpty {
@@ -903,6 +1099,15 @@ final class ShotStore: ObservableObject {
         return all.compactMap(\.id)
     }
 
+    /// 语义搜索的候选范围只看固定筛选，不把自然语言查询误当成精确文本查询。
+    /// 复用 `fetchShots` 的筛选 SQL，避免录屏 / 标签 / App 在第二处各写一套条件。
+    nonisolated func matchingShotIDsInBackground(filter: GalleryFilter) async -> Set<Int64> {
+        let rows = (try? await dbQueue.read { db in
+            try Self.fetchShots(db, query: "", filter: filter, limit: Int.max)
+        }) ?? []
+        return Set(rows.compactMap(\.id))
+    }
+
     /// 「库存内容变了」——新增 / 删除 / 筛选重查，即每次 `reload()`。
     ///
     /// 与 `objectWillChange` 的区别很关键：后者**任何**写入都会发，包括
@@ -972,22 +1177,71 @@ final class ShotStore: ObservableObject {
         }) ?? false
     }
 
-    /// 截图来源 App 及数量，按数量降序。侧边栏「应用」分区用；
-    /// bundleID 用来取真实 App 图标（`MAX()` 只是为了在 GROUP BY 下取到一个值，
-    /// 同名 App 的 bundleID 实际上是一致的）。
-    func apps() -> [(name: String, bundleID: String?, count: Int)] {
+    /// 应用首页的完整聚合：稳定身份、数量、最近捕获时间和最新三张预览。
+    /// 单条窗口查询只返回每个 App 最新三行，不把整库截图拉回主线程。
+    func capturedApps() -> [CapturedAppSummary] {
         (try? dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT appName AS name, MAX(appBundleID) AS bundleID, COUNT(*) AS count
-                FROM shot
-                WHERE appName IS NOT NULL
-                GROUP BY appName
-                ORDER BY count DESC, name ASC
-                """).map {
-                    (name: $0["name"] as String,
-                     bundleID: $0["bundleID"] as String?,
-                     count: $0["count"] as Int)
+            let identitySQL = """
+                CASE
+                    WHEN appBundleID IS NOT NULL AND TRIM(appBundleID) != ''
+                    THEN 'bundle:' || TRIM(appBundleID)
+                    ELSE 'name:' || appName
+                END
+                """
+
+            let rows = try Row.fetchAll(db, sql: """
+                WITH ranked AS (
+                    SELECT shot.*,
+                           \(identitySQL) AS appIdentity,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY \(identitySQL)
+                               ORDER BY capturedAt DESC, id DESC
+                           ) AS appRank,
+                           COUNT(*) OVER (PARTITION BY \(identitySQL)) AS captureCount,
+                           MAX(capturedAt) OVER (PARTITION BY \(identitySQL)) AS lastCapturedAt
+                    FROM shot
+                    WHERE appName IS NOT NULL AND TRIM(appName) != ''
+                )
+                SELECT * FROM ranked
+                WHERE appRank <= 3
+                ORDER BY captureCount DESC, appIdentity ASC, appRank ASC
+                """)
+
+            struct Builder {
+                let identity: CapturedAppIdentity
+                let captureCount: Int
+                let lastCapturedAt: Date
+                var previews: [Shot]
+            }
+
+            var orderedIDs: [String] = []
+            var builders: [String: Builder] = [:]
+            for row in rows {
+                let stableID = row["appIdentity"] as String
+                if builders[stableID] == nil {
+                    orderedIDs.append(stableID)
+                    builders[stableID] = Builder(
+                        identity: CapturedAppIdentity(
+                            name: row["appName"] as String,
+                            bundleID: row["appBundleID"] as String?
+                        ),
+                        captureCount: row["captureCount"] as Int,
+                        lastCapturedAt: row["lastCapturedAt"] as Date,
+                        previews: []
+                    )
                 }
+                builders[stableID]?.previews.append(try Shot(row: row))
+            }
+
+            return orderedIDs.compactMap { stableID in
+                guard let builder = builders[stableID] else { return nil }
+                return CapturedAppSummary(
+                    identity: builder.identity,
+                    captureCount: builder.captureCount,
+                    lastCapturedAt: builder.lastCapturedAt,
+                    previews: builder.previews
+                )
+            }
         }) ?? []
     }
 
@@ -1026,6 +1280,28 @@ final class ShotStore: ObservableObject {
             if let text = row.text { result[row.shotID] = text }
         }
         return result
+    }
+
+    /// 批量读二进制属性。录屏网格一次取出当前页的 mp4 路径，避免每张卡片
+    /// 在 SwiftUI 重绘时各查一次数据库。
+    func attributePayloads(key: String, shotIDs: [Int64]) -> [Int64: Data] {
+        guard !shotIDs.isEmpty else { return [:] }
+        let rows = (try? dbQueue.read { db in
+            try ShotAttribute
+                .filter(Column("key") == key && shotIDs.contains(Column("shotID")))
+                .fetchAll(db)
+        }) ?? []
+        var result: [Int64: Data] = [:]
+        for row in rows {
+            if let payload = row.payload { result[row.shotID] = payload }
+        }
+        return result
+    }
+
+    func attributeCount(key: String) -> Int {
+        (try? dbQueue.read { db in
+            try ShotAttribute.filter(Column("key") == key).fetchCount(db)
+        }) ?? 0
     }
 
     /// 一批截图里「真的标注过」（修订数 > 1，超出入库时自动建的那条「原始」）
@@ -1193,17 +1469,28 @@ final class ShotStore: ObservableObject {
     func runSemanticSearch() async {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
-            semanticResults = nil
+            clearSemanticResults()
             return
         }
+        let activeFilter = filter
+        semanticSearchGeneration += 1
+        let generation = semanticSearchGeneration
         isSemanticSearching = true
-        semanticResults = await semanticSearch(query: query)
+        let results = await semanticSearch(query: query, filter: activeFilter)
+        guard generation == semanticSearchGeneration else { return }
         isSemanticSearching = false
+        guard semanticMode,
+              searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query,
+              filter == activeFilter
+        else { return }
+        semanticResults = results
     }
 
     /// 退出语义模式或清空搜索时调用。
     func clearSemanticResults() {
+        semanticSearchGeneration += 1
         semanticResults = nil
+        isSemanticSearching = false
     }
 
     /// 按自然语言描述搜截图：查询文本过 CLIP 文本编码器，
@@ -1212,11 +1499,26 @@ final class ShotStore: ObservableObject {
     /// 线程边界与 `similarShots` 相同：候选载荷在主 actor 上一次性拉出，
     /// 反序列化和点积挪到后台，算完回主 actor 按 ID 取 Shot。
     /// 全量线性扫描，512 维 × 几千张在毫秒量级。
-    func semanticSearch(query: String, limit: Int = 30) async -> [Shot] {
+    func semanticSearch(
+        query: String,
+        limit: Int = 30,
+        filter: GalleryFilter = .all
+    ) async -> [Shot] {
         guard let queryVector = await CLIPEncoder.shared.embedText(query) else { return [] }
 
-        // 同上：语义搜索要拉全库的 CLIP 向量，走后台连接。
-        let candidates = await attributePayloadsInBackground(key: AttributeKey.clipEmbedding)
+        // 固定 destination / 普通筛选都必须约束候选集。先用共用筛选 SQL 得到
+        // 允许 ID，再从后台取回的向量中求交；不能先取全库 top 30 再过滤，
+        // 否则录屏较少时会错误地得到空结果。
+        let allowedIDs: Set<Int64>?
+        if filter == .all {
+            allowedIDs = nil
+        } else {
+            allowedIDs = await matchingShotIDsInBackground(filter: filter)
+        }
+        let allCandidates = await attributePayloadsInBackground(key: AttributeKey.clipEmbedding)
+        let candidates = allowedIDs.map { allowed in
+            allCandidates.filter { allowed.contains($0.shotID) }
+        } ?? allCandidates
         guard !candidates.isEmpty else { return [] }
 
         let rankedIDs = await Task.detached(priority: .userInitiated) { () -> [Int64] in
@@ -1249,7 +1551,8 @@ final class ShotStore: ObservableObject {
         }) ?? []
     }
 
-    /// 自动清理的候选：拍摄早于 `cutoff`、未收藏、没打过标签、且从未标注过。
+    /// 自动清理的候选：拍摄早于 `cutoff`、未收藏、没加入专题集、没打过标签，
+    /// 且从未标注过。
     ///
     /// 「从未标注过」= 修订数 ≤ 1，即只有入库时自动建的那条「原始」空修订 ——
     /// 截图时标注、钉图上画、编辑器里改，任何一笔都会追加修订、让计数超过 1，
@@ -1267,6 +1570,10 @@ final class ShotStore: ObservableObject {
                   AND NOT EXISTS (
                       SELECT 1 FROM shotAttribute
                       WHERE shotID = shot.id AND key = 'tag'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM shotCollectionItem
+                      WHERE shotID = shot.id
                   )
                 GROUP BY shot.id
                 HAVING COUNT(revision.id) <= 1

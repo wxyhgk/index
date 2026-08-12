@@ -73,7 +73,7 @@ final class ShotStoreTests: XCTestCase {
 
     // MARK: - 清理候选
 
-    /// 有标签 / 收藏 / 修订（标注过）的截图不进清理候选；过期且无保护的进。
+    /// 有标签 / 收藏 / 专题归类 / 修订（标注过）的截图不进清理候选；过期且无保护的进。
     func testCleanupCandidatesExemptProtectedShots() throws {
         let (store, dbQueue) = try makeStore()
 
@@ -81,12 +81,13 @@ final class ShotStoreTests: XCTestCase {
         let tagged = try store.save(image: makeImage(gray: 0.2), metadata: CaptureMetadata())
         let favorited = try store.save(image: makeImage(gray: 0.3), metadata: CaptureMetadata())
         let annotated = try store.save(image: makeImage(gray: 0.4), metadata: CaptureMetadata())
-        let recent = try store.save(image: makeImage(gray: 0.5), metadata: CaptureMetadata())
+        let organized = try store.save(image: makeImage(gray: 0.5), metadata: CaptureMetadata())
+        let recent = try store.save(image: makeImage(gray: 0.6), metadata: CaptureMetadata())
 
-        // 前四张回填成 10 天前的老图；recent 保持当前时间。
+        // 前五张回填成 10 天前的老图；recent 保持当前时间。
         let oldDate = Date().addingTimeInterval(-10 * 86_400)
         try backdate(
-            [plain.id!, tagged.id!, favorited.id!, annotated.id!],
+            [plain.id!, tagged.id!, favorited.id!, annotated.id!, organized.id!],
             to: oldDate, in: dbQueue
         )
 
@@ -96,12 +97,85 @@ final class ShotStoreTests: XCTestCase {
         XCTAssertNotNil(store.appendRevision(
             shot: annotated, layers: Layers<ImageSpace>([layer]), note: nil
         ))
+        let collection = try store.createCollection(name: "MR-TADF 分子")
+        try store.addToCollection(
+            shotIDs: [try XCTUnwrap(organized.id)],
+            collectionID: try XCTUnwrap(collection.id)
+        )
 
         let cutoff = Date().addingTimeInterval(-86_400)
         let candidates = store.cleanupCandidates(olderThan: cutoff, limit: 10)
 
         XCTAssertEqual(candidates.map(\.id), [plain.id], "只有过期且无任何保护的截图进候选")
         _ = recent // recent 未过期，不应出现 —— 上面的相等断言已覆盖。
+    }
+
+    // MARK: - 专题收藏集
+
+    func testCollectionsAreManyToManyAndMembershipIsIdempotent() throws {
+        let (store, _) = try makeStore()
+        let first = try store.save(image: makeImage(gray: 0.12), metadata: CaptureMetadata())
+        let second = try store.save(image: makeImage(gray: 0.34), metadata: CaptureMetadata())
+        let firstID = try XCTUnwrap(first.id)
+        let secondID = try XCTUnwrap(second.id)
+
+        let molecules = try store.createCollection(name: "MR-TADF 分子")
+        let papers = try store.createCollection(name: "论文配图")
+        let moleculeID = try XCTUnwrap(molecules.id)
+        let papersID = try XCTUnwrap(papers.id)
+
+        try store.addToCollection(shotIDs: [firstID, secondID, firstID], collectionID: moleculeID)
+        try store.addToCollection(shotIDs: [firstID], collectionID: papersID)
+
+        let summaries = Dictionary(uniqueKeysWithValues: store.collectionSummaries().map { ($0.id, $0) })
+        XCTAssertEqual(summaries[moleculeID]?.itemCount, 2, "重复加入必须幂等")
+        XCTAssertEqual(summaries[papersID]?.itemCount, 1)
+        XCTAssertEqual(Set(summaries[moleculeID]?.previews.compactMap(\.id) ?? []), [firstID, secondID])
+
+        let memberships = store.collectionMemberships(shotIDs: [firstID, secondID])
+        XCTAssertEqual(memberships[firstID], [moleculeID, papersID], "同一张图可以属于多个专题集")
+        XCTAssertEqual(memberships[secondID], [moleculeID])
+
+        XCTAssertEqual(Set(filteredIDs(store, .collection(moleculeID))), [firstID, secondID])
+        XCTAssertEqual(Set(filteredIDs(store, .collection(papersID))), [firstID])
+    }
+
+    func testDeletingCollectionKeepsShotsAndDeletingShotCleansMembership() throws {
+        let (store, _) = try makeStore()
+        let first = try store.save(image: makeImage(gray: 0.21), metadata: CaptureMetadata())
+        let second = try store.save(image: makeImage(gray: 0.43), metadata: CaptureMetadata())
+        let firstID = try XCTUnwrap(first.id)
+        let secondID = try XCTUnwrap(second.id)
+        let collection = try store.createCollection(name: "计算化学")
+        let collectionID = try XCTUnwrap(collection.id)
+        try store.addToCollection(shotIDs: [firstID, secondID], collectionID: collectionID)
+
+        store.delete([first])
+        XCTAssertEqual(store.totalCount, 1)
+        XCTAssertEqual(store.collectionSummaries().first?.itemCount, 1, "删图应级联清理成员关系")
+
+        store.deleteCollection(id: collectionID)
+        store.reload()
+        XCTAssertEqual(store.collectionCount(), 0)
+        XCTAssertEqual(store.totalCount, 1, "删除专题集绝不能删除原截图")
+        XCTAssertEqual(store.shots.first?.id, second.id)
+    }
+
+    func testCollectionNamesTrimRejectDuplicatesAndCanRename() throws {
+        let (store, _) = try makeStore()
+        let collection = try store.createCollection(name: "  MR-TADF 分子  ")
+        XCTAssertEqual(collection.name, "MR-TADF 分子")
+
+        XCTAssertThrowsError(try store.createCollection(name: "mr-tadf 分子")) { error in
+            XCTAssertEqual(error as? ShotCollectionError, .duplicateName)
+        }
+        XCTAssertThrowsError(try store.createCollection(name: "   ")) { error in
+            XCTAssertEqual(error as? ShotCollectionError, .emptyName)
+        }
+
+        let id = try XCTUnwrap(collection.id)
+        try store.renameCollection(id: id, to: "发光分子")
+        XCTAssertEqual(store.collectionSummaries().first?.name, "发光分子")
     }
 
     // MARK: - 批量删除的引用计数
@@ -212,6 +286,38 @@ final class ShotStoreTests: XCTestCase {
         store.filter = filter
         store.reload()
         return store.shots.compactMap(\.id)
+    }
+
+    func testRecordingFilterAndBatchPathsExposeVideoAssets() async throws {
+        let (store, _) = try makeStore()
+        let recording = try store.save(
+            image: makeImage(gray: 0.1),
+            metadata: CaptureMetadata()
+        )
+        let screenshot = try store.save(
+            image: makeImage(gray: 0.2),
+            metadata: CaptureMetadata()
+        )
+        let path = "/tmp/example-recording.mp4"
+        store.writeAttribute(
+            shotID: try XCTUnwrap(recording.id),
+            key: AttributeKey.recordingPath,
+            value: .data(Data(path.utf8), searchableText: nil)
+        )
+
+        XCTAssertEqual(filteredIDs(store, .recordings), [recording.id])
+        XCTAssertFalse(filteredIDs(store, .recordings).contains(try XCTUnwrap(screenshot.id)))
+        XCTAssertEqual(store.attributeCount(key: AttributeKey.recordingPath), 1)
+        XCTAssertEqual(
+            store.attributePayloads(
+                key: AttributeKey.recordingPath,
+                shotIDs: [try XCTUnwrap(recording.id), try XCTUnwrap(screenshot.id)]
+            )[try XCTUnwrap(recording.id)],
+            Data(path.utf8)
+        )
+        XCTAssertEqual(RecordingsDestination().badge(store: store), 1)
+        let semanticCandidateIDs = await store.matchingShotIDsInBackground(filter: .recordings)
+        XCTAssertEqual(semanticCandidateIDs, [try XCTUnwrap(recording.id)])
     }
 
     // 这里曾经有三条测试盯着 `.today` / `.thisWeek` 的时间边界（今天 00:00 的
@@ -435,7 +541,7 @@ final class ShotStoreTests: XCTestCase {
         XCTAssertEqual(store.shots.map(\.id), syncAll, "无条件时两条路径结果应一致")
 
         // 叠加筛选 + 搜索：分支最多的那条路
-        store.filter = .app("Safari")
+        store.filter = .app(CapturedAppIdentity(name: "Safari", bundleID: nil))
         store.searchText = "Safari"
         store.reload()
         let syncFiltered = store.shots.map(\.id)
@@ -456,6 +562,68 @@ final class ShotStoreTests: XCTestCase {
 
         await store.reloadInBackground()
         XCTAssertEqual(received, 1)
+    }
+
+    // MARK: - 应用首页聚合
+
+    func testCapturedAppsUseStableIdentityAndLatestThreePreviews() throws {
+        let (store, dbQueue) = try makeStore()
+        let base = Date(timeIntervalSince1970: 10_000)
+
+        func saveApp(
+            _ name: String,
+            bundleID: String?,
+            gray: CGFloat,
+            offset: TimeInterval
+        ) throws -> Shot {
+            var metadata = CaptureMetadata()
+            metadata.appName = name
+            metadata.appBundleID = bundleID
+            let shot = try store.save(image: makeImage(gray: gray), metadata: metadata)
+            try backdate([try XCTUnwrap(shot.id)], to: base.addingTimeInterval(offset), in: dbQueue)
+            return shot
+        }
+
+        let first = try saveApp("Edge 旧名称", bundleID: "com.microsoft.edgemac", gray: 0.1, offset: 1)
+        let second = try saveApp("Microsoft Edge", bundleID: "com.microsoft.edgemac", gray: 0.2, offset: 2)
+        let third = try saveApp("Microsoft Edge", bundleID: "com.microsoft.edgemac", gray: 0.3, offset: 3)
+        let fourth = try saveApp("Microsoft Edge", bundleID: "com.microsoft.edgemac", gray: 0.4, offset: 4)
+        _ = first
+
+        _ = try saveApp("Microsoft Edge", bundleID: "com.example.other-edge", gray: 0.5, offset: 5)
+        _ = try saveApp("Microsoft Edge", bundleID: nil, gray: 0.6, offset: 6)
+
+        let apps = store.capturedApps()
+        XCTAssertEqual(apps.count, 3, "同 bundleID 要合并；同名但不同 bundleID 或无 bundleID 必须分开")
+
+        let edge = try XCTUnwrap(apps.first { $0.bundleID == "com.microsoft.edgemac" })
+        XCTAssertEqual(edge.name, "Microsoft Edge", "显示名取这个身份最近一张截图的名称")
+        XCTAssertEqual(edge.captureCount, 4)
+        XCTAssertEqual(edge.previews.compactMap(\.id), [fourth.id, third.id, second.id])
+        XCTAssertEqual(edge.lastCapturedAt, base.addingTimeInterval(4))
+    }
+
+    func testAppFilterUsesBundleIDBeforeDisplayName() throws {
+        let (store, _) = try makeStore()
+
+        func saveApp(bundleID: String?, gray: CGFloat) throws -> Shot {
+            var metadata = CaptureMetadata()
+            metadata.appName = "同名应用"
+            metadata.appBundleID = bundleID
+            return try store.save(image: makeImage(gray: gray), metadata: metadata)
+        }
+
+        let target = try saveApp(bundleID: "com.example.target", gray: 0.11)
+        _ = try saveApp(bundleID: "com.example.other", gray: 0.22)
+        let fallback = try saveApp(bundleID: nil, gray: 0.33)
+
+        store.filter = .app(CapturedAppIdentity(name: "同名应用", bundleID: "com.example.target"))
+        store.reload()
+        XCTAssertEqual(store.shots.compactMap(\.id), [target.id])
+
+        store.filter = .app(CapturedAppIdentity(name: "同名应用", bundleID: nil))
+        store.reload()
+        XCTAssertEqual(store.shots.compactMap(\.id), [fallback.id])
     }
 
     // MARK: - 分页

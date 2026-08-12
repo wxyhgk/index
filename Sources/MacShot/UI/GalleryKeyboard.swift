@@ -1,7 +1,7 @@
 import AppKit
 
 /// 图库键盘导航：方向键走格、⇧方向键扩选、⌘A 全选、Esc 收拢多选、
-/// 回车编辑、空格 Quick Look、⌘⌫ 删除选中（走网格上统一的确认框）。
+/// 回车编辑（录屏则播放）、空格 Quick Look、⌘⌫ 删除选中（走网格上统一的确认框）。
 ///
 /// 用 NSEvent local monitor 而不是 SwiftUI 的 .focusable/.onKeyPress ——
 /// NavigationSplitView 里焦点会被侧边栏 List 和搜索框来回抢，网格自身拿不稳焦点。
@@ -63,8 +63,8 @@ final class GalleryKeyboard {
 
         case KeyCode.returnKey where flags.isEmpty,
              KeyCode.keypadEnter where flags.isEmpty:
-            guard let id = selectedShot()?.id else { return false }
-            GalleryWindowMode.shared.openEditor(shotID: id)
+            guard let shot = selectedShot(), let id = shot.id else { return false }
+            RecordingAssetActions.performPrimary(recordingAsset(for: shot), shotID: id)
             return true
 
         case KeyCode.a where isCommandOnly(flags):
@@ -171,6 +171,13 @@ final class GalleryKeyboard {
     private func selectedShot() -> Shot? {
         return store.displayShots.first { $0.id == GallerySelection.shared.primaryID }
             ?? store.shots.first { $0.id == GallerySelection.shared.primaryID }
+    }
+
+    private func recordingAsset(for shot: Shot) -> RecordingAsset {
+        let path = shot.id
+            .flatMap { store.attributePayload(shotID: $0, key: AttributeKey.recordingPath) }
+            .flatMap { String(data: $0, encoding: .utf8) }
+        return RecordingAsset(path: path)
     }
 
     /// 选中集合按展示顺序排好（删除确认框逐条列数、顺移选中都依赖顺序）。

@@ -478,6 +478,9 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         case .annotated:
             guard let id = shot.id else { return false }
             return (revisionsStore[id]?.count ?? 0) > 1
+        case .recordings:
+            guard let id = shot.id else { return false }
+            return payloadStore[id]?[AttributeKey.recordingPath] != nil
         case .category(let name):
             // Fake 未单独维护 category，退化为 tags 包含即命中，便于演示
             guard let id = shot.id else { return false }
@@ -485,8 +488,15 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         case .tag(let name):
             guard let id = shot.id else { return false }
             return tagsStore[id]?.contains(name) ?? false
-        case .app(let name):
-            return shot.appName == name
+        case .app(let identity):
+            if let bundleID = identity.bundleID {
+                return shot.appBundleID == bundleID
+            }
+            let bundleID = shot.appBundleID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (bundleID == nil || bundleID?.isEmpty == true) && shot.appName == identity.name
+        case .collection:
+            // Fake 暂不模拟专题集关系；真实关系契约由 ShotStore 数据库测试覆盖。
+            return false
         }
     }
 

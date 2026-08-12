@@ -30,6 +30,8 @@ struct MultiSelectionPane: View {
 
     /// 最近一次批量导出的结果提示，几秒后自动消失。
     @State private var exportSummary: String?
+    @State private var collectionSummaries: [ShotCollectionSummary] = []
+    @State private var collectionIDsByShot: [Int64: Set<Int64>] = [:]
 
     var body: some View {
         ScrollView {
@@ -54,6 +56,8 @@ struct MultiSelectionPane: View {
             .padding(.top, InspectorMetrics.closeButtonLane)
             .padding(.bottom, DS.s4)
         }
+        .task(id: shots.compactMap(\.id)) { refreshCollections() }
+        .onReceive(store.libraryDidChangePublisher) { refreshCollections() }
     }
 
     /// 2×2 拼贴：展示顺序前 4 张，超出的在最后一格盖 +N。
@@ -106,6 +110,33 @@ struct MultiSelectionPane: View {
             }
             .buttonStyle(.inspectorPillWide)
 
+            Menu {
+                if collectionSummaries.isEmpty {
+                    Text("尚无专题集，请先到“收藏”页创建")
+                } else {
+                    ForEach(collectionSummaries) { collection in
+                        let ids = shots.compactMap(\.id)
+                        let isInAll = !ids.isEmpty && ids.allSatisfy {
+                            collectionIDsByShot[$0]?.contains(collection.id) == true
+                        }
+                        Button {
+                            setMembership(ids, collectionID: collection.id, remove: isInAll)
+                        } label: {
+                            Label(
+                                collection.name,
+                                systemImage: isInAll ? "checkmark" : "rectangle.stack.badge.plus"
+                            )
+                        }
+                    }
+                }
+            } label: {
+                Label("加入专题收藏集…", systemImage: "rectangle.stack.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.inspectorSoft)
+            .disabled(collectionSummaries.isEmpty)
+
             Button {
                 runExport()
             } label: {
@@ -141,5 +172,23 @@ struct MultiSelectionPane: View {
             try? await Task.sleep(for: .seconds(4))
             withAnimation(DS.Motion.micro(reduced: reduceMotion)) { exportSummary = nil }
         }
+    }
+
+    private func refreshCollections() {
+        collectionSummaries = store.collectionSummaries()
+        collectionIDsByShot = store.collectionMemberships(shotIDs: shots.compactMap(\.id))
+    }
+
+    private func setMembership(_ ids: [Int64], collectionID: Int64, remove: Bool) {
+        if remove {
+            store.removeFromCollection(shotIDs: ids, collectionID: collectionID)
+        } else {
+            do {
+                try store.addToCollection(shotIDs: ids, collectionID: collectionID)
+            } catch {
+                NSLog("[MacShot] 批量加入收藏集失败: \(error)")
+            }
+        }
+        refreshCollections()
     }
 }
