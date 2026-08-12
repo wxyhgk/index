@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// 跳转到系统的其它地方。收敛成一处，免得同一件事出现几种写法。
 @MainActor
@@ -50,6 +51,26 @@ enum SystemNavigator {
         PanelPlacement.apply(to: panel, anchor: nil)
         guard panel.runModal() == .OK else { return nil }
         return panel.url
+    }
+
+    /// 选择一张或多张要导入图库的静态图片。第一版只开放常见格式，避免把视频、
+    /// PDF 或动画图片悄悄压成首帧；用户取消返回 nil。
+    static func chooseImageFiles(
+        message: String = "选择要导入图库的图片",
+        prompt: String = "导入"
+    ) -> [URL]? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff]
+        panel.message = message
+        panel.prompt = prompt
+
+        NSApp.activate(ignoringOtherApps: true)
+        PanelPlacement.apply(to: panel, anchor: nil)
+        guard panel.runModal() == .OK else { return nil }
+        return panel.urls
     }
 
     static func openScreenRecordingSettings() {

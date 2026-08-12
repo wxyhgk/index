@@ -34,7 +34,7 @@ struct ShotCard: View {
     /// 分类 / 标注角标同样由父级批量查好传入。
     let category: String?
     let isAnnotated: Bool
-    /// `recording.path` 存在时为 true。卡片把首帧明确表达成视频封面，
+    /// recording 附件存在时为 true。卡片把首帧明确表达成视频封面，
     /// 避免录屏混在普通截图里看起来像“没有保存”。
     let isRecording: Bool
     /// 按下态（四态之外的第五态，缩放 0.99）。**唯一由外部驱动的状态**：
@@ -344,7 +344,7 @@ struct ShotCard: View {
     /// 半个像素 —— 这是光学对齐想要的结果，再加 padding 就成了明显的缩进。
     private var caption: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(isRecording ? (shot.windowTitle ?? "录屏") : (shot.appName ?? "未知 App"))
+            Text(isRecording ? (shot.windowTitle ?? "录屏") : shot.primaryDisplayName)
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
             Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())

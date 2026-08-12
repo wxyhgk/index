@@ -6,8 +6,8 @@ import AVFoundation
 ///   冻结屏幕(ImmediateScreenSource) → 框选(SelectionOverlayController, plain 模式)
 ///   → 录制(ScreenRecorder，可暂停/继续) → 结果弹窗（访达 / 转 GIF）
 ///
-/// mp4 是外置的不可变资产；图库通过一个首帧封面 Shot 和 `recording.path`
-/// 索引它。这样录屏能进入统一时间线、筛选和选择体系，同时拖出/播放的仍是
+/// mp4 是外置的不可变资产；图库通过一个首帧封面 Shot 和 `shotAsset`
+/// 关联它。这样录屏能进入统一时间线、筛选和选择体系，同时拖出/播放的仍是
 /// 原始 mp4（见 `saveAnchorShot`）。
 @MainActor
 final class RecordingCoordinator {
@@ -161,7 +161,7 @@ final class RecordingCoordinator {
         do {
             let url = try await ScreenRecorder.shared.stop()
             onStateChanged?()
-            // 默认直接入库：首帧当封面，mp4 路径挂 recording.path。用户明确
+            // 默认直接入库：首帧当封面，mp4 作为 recording 附件。用户明确
             // 关闭设置时才只保留文件，不能让一个看似有效的开关实际完全不生效。
             await indexRecordingIfEnabled(at: url)
             presentResult(url)
@@ -185,11 +185,9 @@ final class RecordingCoordinator {
         }
     }
 
-    /// mp4 不是图库资产（shot 是图片），入库的是**首帧截图**当锚点：
-    /// windowTitle 写「录屏 mm:ss」，视频绝对路径挂在 `recording.path` 属性的
-    /// payload 上（attributeFts 同步索引整个 text 列，路径进 text 就进了
-    /// 搜索索引，所以只能走 payload）。详情栏据此显示「打开录像」。
-    /// 完整的视频资产类型仍留待将来。失败只记日志 —— 录像本身已经保住了。
+    /// 图库仍用**首帧截图**充当可标注封面：windowTitle 写「录屏 mm:ss」，
+    /// 视频绝对路径作为 kind=recording 的 `shotAsset` 关联到封面。
+    /// 失败只记日志 —— 录像文件本身已经保住了。
     private func saveAnchorShot(for url: URL) async {
         do {
             let asset = AVURLAsset(url: url)
@@ -209,27 +207,8 @@ final class RecordingCoordinator {
             }
 
             let shot = try shotStore.save(image: frame, metadata: meta)
-            if let shotID = shot.id {
-                if let s = shotStore as? ShotStore {
-                    s.writeAttribute(
-                        shotID: shotID,
-                        key: AttributeKey.recordingPath,
-                        value: .data(Data(url.path.utf8), searchableText: nil)
-                    )
-                } else if let f = shotStore as? FakeShotStore {
-                    f.writeAttribute(
-                        shotID: shotID,
-                        key: AttributeKey.recordingPath,
-                        value: .data(Data(url.path.utf8), searchableText: nil)
-                    )
-                } else {
-                    ShotStore.shared.writeAttribute(
-                        shotID: shotID,
-                        key: AttributeKey.recordingPath,
-                        value: .data(Data(url.path.utf8), searchableText: nil)
-                    )
-                }
-            }        } catch {
+            try shotStore.attachRecording(at: url, to: shot)
+        } catch {
             NSLog("[MacShot] 录屏首帧入库失败: \(error)")
         }
     }

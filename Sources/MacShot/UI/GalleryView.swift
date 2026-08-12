@@ -30,9 +30,13 @@ struct GalleryView: View {
 
     /// 存储订阅：编辑中的 shot 被删时退回图库。注入式，默认走 ShotStore.shared。
     @ObservedObject private var store: ShotStore
+    private let viewModel: GalleryViewModel
 
-    init(store: ShotStore = .shared) {
+    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
         _store = ObservedObject(wrappedValue: store)
+        let resolvedViewModel = viewModel
+            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+        self.viewModel = resolvedViewModel
     }
 
     // ⚠️ 这里**没有** store / selection 的订阅，也**没有**任何宽度状态，两条都是有意的。
@@ -125,7 +129,11 @@ struct GalleryView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                GalleryTopBar(showInspector: $showInspector, destinationID: $destinationID)
+                GalleryTopBar(
+                    showInspector: $showInspector,
+                    destinationID: $destinationID,
+                    viewModel: viewModel
+                )
 
                 // 中间内容 │ 右侧面板 —— 两块都由**选中的那个选项**提供
                 // （见 GalleryDestination）。容器不认识任何一个具体选项装了什么。

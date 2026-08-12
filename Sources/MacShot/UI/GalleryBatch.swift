@@ -11,10 +11,21 @@ import Foundation
 enum GalleryBatch {
 
     /// 按展示顺序解析当前选中集合。语义结果可能不在常规列表里，两边找齐（去重）。
-    static func selectedShots(reader: ShotReading = ShotStore.shared) -> [Shot] {
+    static func selectedShots() -> [Shot] {
+        selectedShots(
+            displayedShots: GalleryViewModel.shared.displayShots,
+            reader: ShotStore.shared
+        )
+    }
+
+    /// 测试/非图库宿主可显式给展示顺序；默认只用 reader.shots，不假定它持有 UI 状态。
+    static func selectedShots(
+        displayedShots: [Shot]? = nil,
+        reader: ShotReading
+    ) -> [Shot] {
         let selection = GallerySelection.shared
         let store = reader
-        var picked = store.displayShots.filter { selection.isSelected($0.id) }
+        var picked = (displayedShots ?? store.shots).filter { selection.isSelected($0.id) }
         let seen = Set(picked.compactMap(\.id))
         picked += store.shots.filter { shot in
             guard let id = shot.id else { return false }

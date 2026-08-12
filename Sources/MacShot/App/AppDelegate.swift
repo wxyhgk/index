@@ -495,7 +495,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if NSApp.keyWindow?.firstResponder is NSTextView { return }
         guard GalleryWindowMode.shared.mode == .library else { return }
         Task { [shotStore] in
-            let ids = await shotStore.allMatchingIDs()
+            let ids: [Int64]
+            if let concrete = shotStore as? ShotStore, concrete === ShotStore.shared {
+                ids = await GalleryViewModel.shared.allMatchingIDs()
+            } else {
+                ids = await shotStore.allMatchingIDs(query: "", filter: .all)
+            }
             GallerySelection.shared.selectAll(ids)
         }
     }

@@ -18,16 +18,19 @@ enum GalleryPageHeaderStyle {
 
 struct GalleryPageHeader: View {
 
-    @ObservedObject private var store: ShotStore
+    @ObservedObject private var viewModel: GalleryViewModel
     private let scope: GalleryContentScope
     private let style: GalleryPageHeaderStyle
 
     init(
         store: ShotStore = .shared,
+        viewModel: GalleryViewModel? = nil,
         scope: GalleryContentScope = .library,
         style: GalleryPageHeaderStyle = .standard
     ) {
-        _store = ObservedObject(wrappedValue: store)
+        let resolvedViewModel = viewModel
+            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
         self.scope = scope
         self.style = style
     }
@@ -95,14 +98,14 @@ struct GalleryPageHeader: View {
 
     @ViewBuilder
     private var semanticStatus: some View {
-        if store.isSemanticSearching {
+        if viewModel.isSemanticSearching {
             HStack(spacing: DS.s2) {
                 ProgressView().controlSize(.mini)
                 Text("语义搜索中…")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-        } else if store.semanticMode, store.semanticResults != nil {
+        } else if viewModel.semanticMode, viewModel.semanticResults != nil {
             Text("语义结果 \(visibleShots.count) 项")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -116,7 +119,7 @@ struct GalleryPageHeader: View {
     /// 把标题换成关键词会让人以为筛选被清掉了）；结果条数由右侧那行小字反映。
     private var title: String {
         if let fixedTitle = scope.fixedTitle { return fixedTitle }
-        switch store.filter {
+        switch viewModel.filter {
         case .all:                  return "全部项目"
         case .favorites:            return "收藏"
         case .untagged:             return "未加标签"
@@ -135,9 +138,9 @@ struct GalleryPageHeader: View {
     /// 所以这里不再重复那个名字，只提供退出口。
     @ViewBuilder
     private var clearFilterButton: some View {
-        if scope.fixedFilter == nil, store.filter != .all {
+        if scope.fixedFilter == nil, viewModel.filter != .all {
             Button {
-                scope.clearTransientState(in: store)
+                scope.clearTransientState(in: viewModel)
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 15))
@@ -150,7 +153,7 @@ struct GalleryPageHeader: View {
     }
 
     private var visibleShots: [Shot] {
-        store.displayShots
+        viewModel.displayShots
     }
 
 }
@@ -159,7 +162,7 @@ struct GalleryPageHeader: View {
 
 /// 两个「带参数」的筛选各自的值。写成计算属性而不是在视图里 switch：
 /// 标题、命中判定都要问同一个问题，问法只该有一种。
-extension ShotStore.GalleryFilter {
+extension ShotFilter {
 
     var categoryName: String? {
         if case .category(let name) = self { return name }

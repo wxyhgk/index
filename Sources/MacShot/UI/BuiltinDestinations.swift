@@ -50,7 +50,7 @@ private struct LibraryContent: View {
 // MARK: - 录屏
 // ============================================================
 
-/// 录屏是一等图库入口，但仍复用 Shot 网格：首帧负责封面、`recording.path`
+/// 录屏是一等图库入口，但仍复用 Shot 网格：首帧负责封面、recording 附件
 /// 负责指向 mp4。这样既有清晰入口，也不复制图库的选择、详情和时间分组体系。
 struct RecordingsDestination: GalleryDestination {
     let id = "destination.recordings"
@@ -58,12 +58,12 @@ struct RecordingsDestination: GalleryDestination {
     let symbol = "play.rectangle"
     let order = 50
 
-    func badge(store: ShotStore = .shared) -> Int? {
-        let count = store.attributeCount(key: AttributeKey.recordingPath)
+    func badge(reader: any ShotReading = ShotStore.shared) -> Int? {
+        let count = reader.recordingCount()
         return count > 0 ? count : nil
     }
 
-    func badge() -> Int? { badge(store: .shared) }
+    func badge() -> Int? { badge(reader: ShotStore.shared) }
 
     func content() -> AnyView {
         AnyView(RecordingsContent())
@@ -76,22 +76,26 @@ struct RecordingsDestination: GalleryDestination {
 
 private struct RecordingsContent: View {
     @ObservedObject private var store: ShotStore
+    @ObservedObject private var viewModel: GalleryViewModel
 
-    init(store: ShotStore = .shared) {
+    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
         _store = ObservedObject(wrappedValue: store)
+        let resolvedViewModel = viewModel
+            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.s3) {
-            GalleryPageHeader(store: store, scope: .recordings)
+            GalleryPageHeader(store: store, viewModel: viewModel, scope: .recordings)
                 .padding(.horizontal, DS.s2)
-            GalleryGrid(store: store, scope: .recordings)
+            GalleryGrid(store: store, viewModel: viewModel, scope: .recordings)
         }
         .onAppear {
-            GalleryContentScope.recordings.activate(in: store)
+            GalleryContentScope.recordings.activate(in: viewModel)
         }
         .onDisappear {
-            GalleryContentScope.recordings.deactivate(in: store)
+            GalleryContentScope.recordings.deactivate(in: viewModel)
         }
     }
 }

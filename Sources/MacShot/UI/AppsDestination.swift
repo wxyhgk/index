@@ -39,9 +39,13 @@ struct AppsDestination: GalleryDestination {
 
 private struct AppsContent: View {
     @ObservedObject private var store: ShotStore
+    @ObservedObject private var viewModel: GalleryViewModel
 
-    init(store: ShotStore = .shared) {
+    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
         _store = ObservedObject(wrappedValue: store)
+        let resolvedViewModel = viewModel
+            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -172,7 +176,7 @@ private struct AppsContent: View {
             Text(searchQuery.isEmpty ? "截图后，来源应用会自动出现在这里" : "换个应用名称或清空搜索词")
         } actions: {
             if !searchQuery.isEmpty {
-                Button("清除搜索") { store.searchText = "" }
+                Button("清除搜索") { viewModel.searchText = "" }
             } else {
                 Button("开始截图") { CaptureCoordinator.shared.begin() }
                     .buttonStyle(.borderedProminent)
@@ -199,7 +203,7 @@ private struct AppsContent: View {
                         Text(app.name)
                             .font(.title2.weight(.bold))
                             .lineLimit(1)
-                        Text("\(store.displayShots.count) 个项目")
+                        Text("\(viewModel.displayShots.count) 个项目")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
@@ -210,13 +214,13 @@ private struct AppsContent: View {
                 .padding(.top, DS.s4)
                 .padding(.bottom, DS.s2)
 
-                GalleryGrid(store: store, chrome: .libraryPanel)
+                GalleryGrid(store: store, viewModel: viewModel, chrome: .libraryPanel)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .floatingPanel()
 
             if showInspector {
-                GalleryInspectorPanel(isPresented: $showInspector, store: store)
+                GalleryInspectorPanel(isPresented: $showInspector, store: store, viewModel: viewModel)
                     .frame(width: DS.Shell.inspectorWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
@@ -227,7 +231,7 @@ private struct AppsContent: View {
     // MARK: 派生集合
 
     private var searchQuery: String {
-        store.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var matchingApps: [CapturedAppSummary] {
@@ -281,12 +285,12 @@ private struct AppsContent: View {
 
     private func open(_ app: CapturedAppSummary) {
         withAnimation(DS.Motion.standard(reduced: reduceMotion)) {
-            store.clearSemanticResults()
+            viewModel.clearSemanticResults()
             // 首页搜索筛的是 App；进入之后应显示该 App 的全部截图，而不是继续拿
             // App 名称或 bundleID 当截图全文关键词再筛一遍。
-            store.searchText = ""
-            store.filter = .app(app.identity)
-            store.reload()
+            viewModel.searchText = ""
+            viewModel.filter = .app(app.identity)
+            viewModel.reload()
             navigation.selectedAppID = app.id
         }
     }
@@ -307,9 +311,9 @@ private struct AppsContent: View {
     }
 
     private func clearFilterIfDrilled() {
-        guard case .app = store.filter else { return }
-        store.filter = .all
-        store.reload()
+        guard case .app = viewModel.filter else { return }
+        viewModel.filter = .all
+        viewModel.reload()
     }
 }
 

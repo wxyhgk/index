@@ -141,7 +141,7 @@ private struct SimilarShotCard: View {
             .frame(height: 100)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(shot.appName ?? "未知 App")
+                Text(shot.primaryDisplayName)
                     .font(.caption.weight(.medium))
                     .lineLimit(1)
                 Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())

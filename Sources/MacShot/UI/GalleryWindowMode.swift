@@ -61,7 +61,10 @@ final class GalleryWindowMode: ObservableObject {
     /// 都没有再兜底查一次库 —— `shots` 受搜索 / 筛选影响，正在编辑的记录
     /// 可能只是被筛掉了而不是被删了。
     static func resolveShot(id: Int64, store: ShotReading = ShotStore.shared) -> Shot? {
-        return store.displayShots.first { $0.id == id }
+        let displayed = (store as? ShotStore).flatMap { concrete in
+            concrete === ShotStore.shared ? GalleryViewModel.shared.displayShots : nil
+        } ?? store.shots
+        return displayed.first { $0.id == id }
             ?? store.shots.first { $0.id == id }
             ?? store.allShots().first { $0.id == id }
     }

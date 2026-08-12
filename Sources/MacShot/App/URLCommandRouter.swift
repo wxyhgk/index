@@ -16,6 +16,7 @@ import AppKit
 final class URLCommandRouter {
 
     private let shotStore: any ShotReading
+    private let galleryViewModel: GalleryViewModel?
     private let captureCoordinator: CaptureCoordinator
 
     /// `capture?delay=N` 的一次性延时覆盖.
@@ -25,9 +26,18 @@ final class URLCommandRouter {
 
     init(
         shotStore: (any ShotReading)? = nil,
+        galleryViewModel: GalleryViewModel? = nil,
         captureCoordinator: CaptureCoordinator? = nil
     ) {
-        self.shotStore = shotStore ?? ShotStore.shared
+        let resolvedStore = shotStore ?? ShotStore.shared
+        self.shotStore = resolvedStore
+        if let galleryViewModel {
+            self.galleryViewModel = galleryViewModel
+        } else if let concrete = resolvedStore as? ShotStore, concrete === ShotStore.shared {
+            self.galleryViewModel = .shared
+        } else {
+            self.galleryViewModel = nil
+        }
         self.captureCoordinator = captureCoordinator ?? CaptureCoordinator.shared
     }
 
@@ -62,9 +72,11 @@ final class URLCommandRouter {
 
         case ("gallery", ""):
             if let text = query["query"], !text.isEmpty {
-                shotStore.searchText = text
+                galleryViewModel?.clearSemanticResults()
+                galleryViewModel?.semanticMode = false
+                galleryViewModel?.searchText = text
             }
-            // show() 内部会 reload()，searchText 随之生效。
+            // show() 内部按 GalleryViewModel 当前查询刷新。
             GalleryWindowController.shared.show()
 
         case ("last", "copy"):

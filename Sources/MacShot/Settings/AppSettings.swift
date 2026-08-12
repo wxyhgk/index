@@ -144,7 +144,7 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(recordMicrophone, forKey: Keys.recordMicrophone) }
     }
 
-    /// 录屏完成后把首帧截图入库当锚点（视频路径挂 `recording.path` 属性）。
+    /// 录屏完成后把首帧截图入库当锚点（视频作为 recording 附件关联到 Shot）。
     /// 默认关 —— 图库目前是截图库，视频只是借首帧「能被找到」。
     @Published var recordingSaveToLibrary: Bool {
         didSet { defaults.set(recordingSaveToLibrary, forKey: Keys.recordingSaveToLibrary) }

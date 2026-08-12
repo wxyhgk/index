@@ -116,9 +116,8 @@ enum AppDatabase {
 
         // 用户标签落地：同一张图要能有多行 key='tag'，v3 的表级
         // UNIQUE(shotID, key) 挡在前面，只能重建表去掉它。
-        // 单值 key 的「同图同 key 只留一份」语义由 `ShotStore.writeAttribute`
-        // 的先删后插保证（它本来就这么写的，约束只是兜底）；
-        // 标签的幂等由 `addTag` 的 EXISTS 预查保证。
+        // 单值 key 的「同图同 key 只留一份」语义由 `ShotAttributeRepository`
+        // 的先删后插保证（约束只是兜底）；标签幂等由同仓库的 EXISTS 预查保证。
         //
         // 重建步骤有讲究：attributeFts 的同步触发器挂在 shotAttribute 上，
         // 直接改名会连触发器一起改写。这里走「建新表 → 拷数据（保留 id，
@@ -184,6 +183,75 @@ enum AppDatabase {
                 t.primaryKey(["collectionID", "shotID"])
             }
             try db.create(indexOn: "shotCollectionItem", columns: ["shotID"])
+        }
+
+        // 录像和分子来源不是“派生属性”，而是 Shot 封面所代表的原始资产。
+        // v6 把这两类载荷迁入有明确用途和格式版本的附件表；旧 key 仅在
+        // 本迁移中读取，运行期业务统一走 ShotReading / ShotWriting 的附件接口。
+        migrator.registerMigration("v6_shot_assets") { db in
+            try db.create(table: "shotAsset") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("shotID", .integer)
+                    .notNull()
+                    .references("shot", onDelete: .cascade)
+                t.column("kind", .text).notNull()
+                t.column("path", .text)
+                t.column("payload", .blob)
+                t.column("schemaVersion", .integer).notNull().defaults(to: 1)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                t.uniqueKey(["shotID", "kind"])
+            }
+            try db.create(indexOn: "shotAsset", columns: ["kind", "shotID"])
+
+            // v4 允许同 key 多行；迁移时以最大 id 作为最后写入值，恢复单值语义。
+            try db.execute(sql: """
+                INSERT INTO shotAsset (
+                    shotID, kind, path, schemaVersion, createdAt, updatedAt
+                )
+                SELECT a.shotID, ?, CAST(a.payload AS TEXT),
+                       1, a.createdAt, a.createdAt
+                FROM shotAttribute a
+                WHERE a.key = ? AND a.payload IS NOT NULL
+                  AND a.id = (
+                      SELECT MAX(newest.id) FROM shotAttribute newest
+                      WHERE newest.shotID = a.shotID AND newest.key = a.key
+                  )
+                """, arguments: [
+                    ShotAssetKind.recording,
+                    LegacyAttributeKey.recordingPath,
+                ])
+
+            try db.execute(sql: """
+                INSERT INTO shotAsset (
+                    shotID, kind, payload, schemaVersion, createdAt, updatedAt
+                )
+                SELECT a.shotID, ?, a.payload,
+                       1, a.createdAt, a.createdAt
+                FROM shotAttribute a
+                WHERE a.key = ? AND a.payload IS NOT NULL
+                  AND a.id = (
+                      SELECT MAX(newest.id) FROM shotAttribute newest
+                      WHERE newest.shotID = a.shotID AND newest.key = a.key
+                  )
+                """, arguments: [
+                    ShotAssetKind.moleculeXYZ,
+                    LegacyAttributeKey.moleculeXYZSource,
+                ])
+
+            // 新表成为唯一真相；同步 FTS 触发器会同时移除旧属性索引行。
+            try db.execute(
+                sql: "DELETE FROM shotAttribute WHERE key IN (?, ?)",
+                arguments: [LegacyAttributeKey.recordingPath, LegacyAttributeKey.moleculeXYZSource]
+            )
+
+            // 现有 (shotID, key) 适合“查某张图的属性”，反向按 key 聚合需要另一顺序。
+            try db.create(indexOn: "shotAttribute", columns: ["key", "shotID"])
+            // 专题封面预览按 collectionID 过滤、再按用户顺序和加入时间排序。
+            try db.create(
+                indexOn: "shotCollectionItem",
+                columns: ["collectionID", "sortOrder", "addedAt"]
+            )
         }
 
         return migrator

@@ -52,22 +52,23 @@ struct GalleryTopBar: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    @ObservedObject private var store: ShotStore
+    @ObservedObject private var viewModel: GalleryViewModel
 
     init(
         showInspector: Binding<Bool>,
         destinationID: Binding<String>,
-        store: ShotStore = .shared,
+        viewModel: GalleryViewModel = .shared,
         settings: AppSettings = .shared
     ) {
         self._showInspector = showInspector
         self._destinationID = destinationID
-        self._store = ObservedObject(wrappedValue: store)
+        self._viewModel = ObservedObject(wrappedValue: viewModel)
         self._settings = ObservedObject(wrappedValue: settings)
     }
     // 语义模式切换只在「开关已开 + 模型已就绪」时出现，所以要订阅这两个。
     @ObservedObject private var settings: AppSettings
     @ObservedObject private var modelStore = CLIPModelStore.shared
+    @ObservedObject private var imageImporter = ImageImportCoordinator.shared
     @ObservedObject private var appsNavigation = AppsNavigationState.shared
     @ObservedObject private var collectionsNavigation = CollectionsNavigationState.shared
 
@@ -98,18 +99,18 @@ struct GalleryTopBar: View {
         .padding(.leading, DS.Shell.trafficLightInset)
         .padding(.trailing, DS.Shell.windowMargin)
         .frame(height: DS.Shell.topBarHeight)
-        .onChange(of: store.searchText) { _, newValue in
-            if store.semanticMode {
+        .onChange(of: viewModel.searchText) { _, newValue in
+            if viewModel.semanticMode {
                 // 语义搜索按回车触发；清空输入即恢复常规列表。
                 if newValue.trimmingCharacters(in: .whitespaces).isEmpty {
-                    store.clearSemanticResults()
+                    viewModel.clearSemanticResults()
                 }
             } else {
-                store.reload()
+                viewModel.reload()
             }
         }
-        .onChange(of: store.semanticMode) { _, semantic in
-            if !semantic { store.clearSemanticResults() }
+        .onChange(of: viewModel.semanticMode) { _, semantic in
+            if !semantic { viewModel.clearSemanticResults() }
         }
     }
 
@@ -191,20 +192,20 @@ struct GalleryTopBar: View {
         HStack(spacing: DS.s2) {
             searchScope
 
-            TextField("搜索", text: $store.searchText, prompt: Text(searchPrompt))
+            TextField("搜索", text: $viewModel.searchText, prompt: Text(searchPrompt))
                 .textFieldStyle(.plain)
                 .labelsHidden()
                 .font(.system(size: 13))
                 .focused($searchFocused)
                 .onSubmit {
                     // 语义搜索是「一次编码 + 全库比对」，只在回车时跑。
-                    guard store.semanticMode else { return }
-                    Task { await store.runSemanticSearch() }
+                    guard viewModel.semanticMode else { return }
+                    Task { await viewModel.runSemanticSearch() }
                 }
 
-            if !store.searchText.isEmpty {
+            if !viewModel.searchText.isEmpty {
                 Button {
-                    store.searchText = ""
+                    viewModel.searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
@@ -220,7 +221,7 @@ struct GalleryTopBar: View {
     }
 
     private var searchPrompt: String {
-        store.semanticMode
+        viewModel.semanticMode
             ? "描述画面内容，回车搜索（英文效果最好）"
             : "搜 App、标题、网址或截图里的字"
     }
@@ -232,7 +233,7 @@ struct GalleryTopBar: View {
     private var searchScope: some View {
         if semanticAvailable {
             Menu {
-                Picker("搜索模式", selection: $store.semanticMode) {
+                Picker("搜索模式", selection: $viewModel.semanticMode) {
                     Text("精确匹配").tag(false)
                     Text("语义搜索").tag(true)
                 }
@@ -244,7 +245,7 @@ struct GalleryTopBar: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 7, weight: .bold))
                 }
-                .foregroundStyle(store.semanticMode ? AnyShapeStyle(DS.accent)
+                .foregroundStyle(viewModel.semanticMode ? AnyShapeStyle(DS.accent)
                                                     : AnyShapeStyle(HierarchicalShapeStyle.secondary))
             }
             .menuStyle(.button)
@@ -260,7 +261,7 @@ struct GalleryTopBar: View {
     }
 
     private var scopeSymbol: String {
-        store.semanticMode ? "sparkle.magnifyingglass" : "magnifyingglass"
+        viewModel.semanticMode ? "sparkle.magnifyingglass" : "magnifyingglass"
     }
 
     private var shortcutBadge: some View {
@@ -288,6 +289,9 @@ struct GalleryTopBar: View {
 
     private var rightControls: some View {
         HStack(spacing: DS.s2) {
+            if destinationID == LibraryDestination.destinationID {
+                importButton
+            }
             if showsPrimaryCaptureButton {
                 captureButton
             }
@@ -333,6 +337,27 @@ struct GalleryTopBar: View {
         .controlSize(.regular)
         .help("开始截图（⌃⌘A）")
         .accessibilityLabel("开始截图")
+    }
+
+    private var importButton: some View {
+        Button {
+            guard let urls = SystemNavigator.chooseImageFiles(), !urls.isEmpty else { return }
+            viewModel.reset()
+            imageImporter.enqueue(urls)
+        } label: {
+            if imageImporter.isImporting {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Label("导入", systemImage: "square.and.arrow.down")
+                    .font(.system(size: 13, weight: .medium))
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+        .disabled(imageImporter.isImporting)
+        .help("导入本地图片")
+        .accessibilityLabel(imageImporter.isImporting ? "正在导入图片" : "导入图片")
     }
 
     // 顶栏曾经还有一个漏斗菜单（全部/收藏/未加标签/已标注 + 清除筛选）。

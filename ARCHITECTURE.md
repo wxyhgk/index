@@ -295,11 +295,15 @@ protocol GalleryDestination {
 
 **第四批（2026-08）已完成**：分页。列表按 `pageSize`(300) 取，网格滚到「倒数一屏」时取下一页，`listFetchLimit` 那个临时上限随之取消 —— 第一屏的等待从此与库的大小无关。
 
-翻页用**游标**（上一页末尾的 `(capturedAt, id)`）而不是 `OFFSET`：截图库是边看边新增的，OFFSET 在两页之间插入新行时会让下一页整体后移，表现为重复或漏项。为此排序补上 `id DESC` 作为并列打破键——`capturedAt` 会并列（同秒连拍），排序不唯一时游标定位不确定。测试覆盖「607 张翻完不重不漏（含 10 张同时刻并列）」与「翻页途中插入 5 张，已翻过的部分不变」。
+翻页用**游标**（上一页末尾的 `(capturedAt, id)`）而不是 `OFFSET`：截图库是边看边新增的，OFFSET 在两页之间插入新行时会让下一页整体后移，表现为重复或漏项。为此排序补上 `id DESC` 作为并列打破键——`capturedAt` 会并列（同秒连拍），排序不唯一时游标定位不确定。测试覆盖「607 张翻完不重不漏（含 10 张同时刻并列）」与「库存观察刷新第一页并重置游标后，继续翻页仍不重不漏」。
 
 「全选」改查 `allMatchingIDs()`（只取 id 一列，不受分页限制）——否则同一个 ⌘A 会因为用户滚了多远而选中不同的东西。翻页只发 `objectWillChange` 不发 `libraryDidChange`：库存没变，只是多显示了一段，发了会让胶片条无谓重查。
 
-剩余：`ShotDatabase` 非 MainActor 仓库类型承接全部 SQL、按职责拆门面、`ValueObservation` 替代手动通知。UI 状态（searchText / filter / semantic）届时迁出 ShotStore 成为 GalleryViewModel。
+**第五批（2026-08）已完成**：附件实体化。v6 新增精简的 `shotAsset`，录屏 MP4 与分子 XYZ 不再伪装成无类型 `shotAttribute.payload`；Shot 继续作为统一时间线里的可标注封面，附件只记录 `kind / path / payload / schemaVersion` 与时间。迁移会搬走旧 `recording.path` / `source.molecule.xyz.v1`，历史 key 只保留在 v5→v6 迁移边界，业务层统一走类型化附件接口；带附件的 Shot 永久豁免自动清理。录屏写入改走 `ShotWriting.attachRecording`，不再按 `ShotStore` / `FakeShotStore` 类型强转或兜底污染全局单例。附件自身的 CRUD 与直接查询已收进非 MainActor 的 `ShotAssetRepository`；图库筛选、搜索、游标分页与自动清理候选已收进 `ShotQueryRepository`；专题收藏集 CRUD、多对多成员关系与首页摘要已收进 `ShotCollectionRepository`；派生属性、收藏标记、多值标签、FTS 同步读写与后台载荷读取已收进 `ShotAttributeRepository`；Shot 与初始修订的原子创建、append-only 修订链及标注聚合已收进 `ShotRevisionRepository`；Shot 本体查询、来源聚合、同源候选和删除引用计数事务已收进 `ShotMetadataRepository`。`ShotStore` 已不再直接执行 SQL，只协调领域值、文件副作用与发布状态；筛选条件提升为独立 `ShotFilter` 值类型，查询层不再反向依赖状态容器。
+
+**第六批（2026-08）已完成**：图库查询状态拆分。`searchText / filter / semanticMode / semanticResults / isSemanticSearching` 已从 `ShotStore` 迁入 `GalleryViewModel`，顶栏、固定 destination、网格、Quick Look、键盘全选与 URL 自动化共享同一个会话状态。`ShotStore` 只保留当前列表的查询快照，用于库存观察和游标翻页；同步/后台查询均接收显式条件，后台旧请求迟到时按快照丢弃，不得覆盖新筛选。
+
+**第七批（2026-08）已完成**：`ValueObservation` 接管库存刷新。`ShotQueryRepository` 在同一数据库快照中读取当前页与收藏集合，显式观察 Shot、属性、附件和收藏集表；写路径不再手工安排 leading/trailing reload。查询切换会取消旧观察并以 generation 拒收迟到回调，异步首帧在观察失败或被替换时也会恢复等待者。普通修订不触发库存观察，只有 `.annotated` 筛选纳入 revision region，保留编辑自动保存不刷新胶片条的性能边界。
 
 **拆巨文件（进行中）**：`GalleryView` 已于 2026-07 拆成 9 个文件（壳 171 行，最大的 `GalleryGrid` 548 行），拆分为纯搬家、逐行对账过。
 剩余：`maskSensitiveRegions` 业务逻辑仍留在 `ShotDetailPane` 待下沉；`EditorView`（1194 行）切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。

@@ -14,9 +14,18 @@ final class GalleryKeyboard {
     static let shared = GalleryKeyboard()
 
     private let store: ShotReading
+    private let displayedShots: () -> [Shot]
+    private let matchingIDs: () async -> [Int64]
 
     init(store: ShotReading = ShotStore.shared) {
         self.store = store
+        if let concrete = store as? ShotStore, concrete === ShotStore.shared {
+            displayedShots = { GalleryViewModel.shared.displayShots }
+            matchingIDs = { await GalleryViewModel.shared.allMatchingIDs() }
+        } else {
+            displayedShots = { store.shots }
+            matchingIDs = { await store.allMatchingIDs(query: "", filter: .all) }
+        }
     }
 
     /// 网格**实际使用**的列数，由 GalleryGrid 算好上报（`columnCount()` 的唯一来源）。
@@ -73,9 +82,9 @@ final class GalleryKeyboard {
             // 分页之后这两者不再等价：`displayShots` 只是已加载的前几页，
             // 用它会让同一个 ⌘A 因为你滚了多远而选中不同的东西 —— 那是最难解释的一类行为。
             // 只查 id 一列，十万行也就几百 KB。
-            let store = self.store
+            let matchingIDs = self.matchingIDs
             Task {
-                let ids = await store.allMatchingIDs()
+                let ids = await matchingIDs()
                 GallerySelection.shared.selectAll(ids)
             }
             return true
@@ -135,7 +144,7 @@ final class GalleryKeyboard {
     /// 视觉顺序一致；多选状态下按方向键 = 收拢集合到目标一张）。
     /// 上下键传 ±列数即可跨分组自然衔接。滚动定位由网格监听 primaryID 完成。
     func moveSelection(by delta: Int) {
-        let shots = store.displayShots
+        let shots = displayedShots()
         guard !shots.isEmpty else { return }
         let selection = GallerySelection.shared
         guard let current = shots.firstIndex(where: { $0.id == selection.primaryID }) else {
@@ -150,7 +159,7 @@ final class GalleryKeyboard {
 
     /// ⇧方向键：锚点不动，主选中走格，选中扩展为锚点到主选中的区间。
     func extendSelection(by delta: Int) {
-        let shots = store.displayShots
+        let shots = displayedShots()
         guard !shots.isEmpty else { return }
         let selection = GallerySelection.shared
         guard let current = shots.firstIndex(where: { $0.id == selection.primaryID }) else {
@@ -169,21 +178,18 @@ final class GalleryKeyboard {
     }
 
     private func selectedShot() -> Shot? {
-        return store.displayShots.first { $0.id == GallerySelection.shared.primaryID }
+        return displayedShots().first { $0.id == GallerySelection.shared.primaryID }
             ?? store.shots.first { $0.id == GallerySelection.shared.primaryID }
     }
 
     private func recordingAsset(for shot: Shot) -> RecordingAsset {
-        let path = shot.id
-            .flatMap { store.attributePayload(shotID: $0, key: AttributeKey.recordingPath) }
-            .flatMap { String(data: $0, encoding: .utf8) }
-        return RecordingAsset(path: path)
+        RecordingAsset(path: store.recordingPath(for: shot))
     }
 
     /// 选中集合按展示顺序排好（删除确认框逐条列数、顺移选中都依赖顺序）。
     private func orderedSelectedIDs() -> [Int64] {
         let selected = GallerySelection.shared.selectedIDs
-        let inDisplay = store.displayShots.compactMap(\.id).filter(selected.contains)
+        let inDisplay = displayedShots().compactMap(\.id).filter(selected.contains)
         // 不在当前列表里的残留选中（筛选变化）兜底带上，保证删得干净。
         let rest = selected.subtracting(inDisplay)
         return inDisplay + rest.sorted()

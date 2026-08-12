@@ -53,8 +53,8 @@ final class ShotStoreTests: XCTestCase {
         }
     }
 
-    func testMoleculeSourceAttachmentPersistsInAttributeTable() throws {
-        let (store, _) = try makeStore()
+    func testMoleculeSourceAttachmentPersistsAsTypedAsset() throws {
+        let (store, dbQueue) = try makeStore()
         let shot = try store.save(image: makeImage(gray: 0.15), metadata: CaptureMetadata())
         let source = MoleculeSourceAttachment(
             canonicalXYZ: "2\nH2\nH 0 0 0\nH 0 0 0.74\n",
@@ -65,10 +65,12 @@ final class ShotStoreTests: XCTestCase {
         try store.attachMoleculeSource(source, to: shot)
 
         XCTAssertEqual(store.moleculeSource(for: shot), source)
-        XCTAssertNotNil(store.attributePayload(
-            shotID: try XCTUnwrap(shot.id),
-            key: AttributeKey.moleculeXYZSource
-        ))
+        try dbQueue.read { db in
+            let asset = try XCTUnwrap(ShotAsset.fetchOne(db))
+            XCTAssertEqual(asset.kind, ShotAssetKind.moleculeXYZ)
+            XCTAssertEqual(asset.schemaVersion, MoleculeSourceAttachment.currentSchemaVersion)
+            XCTAssertEqual(try ShotAttribute.fetchCount(db), 0)
+        }
     }
 
     // MARK: - 清理候选
@@ -83,11 +85,12 @@ final class ShotStoreTests: XCTestCase {
         let annotated = try store.save(image: makeImage(gray: 0.4), metadata: CaptureMetadata())
         let organized = try store.save(image: makeImage(gray: 0.5), metadata: CaptureMetadata())
         let recent = try store.save(image: makeImage(gray: 0.6), metadata: CaptureMetadata())
+        let recording = try store.save(image: makeImage(gray: 0.7), metadata: CaptureMetadata())
 
         // 前五张回填成 10 天前的老图；recent 保持当前时间。
         let oldDate = Date().addingTimeInterval(-10 * 86_400)
         try backdate(
-            [plain.id!, tagged.id!, favorited.id!, annotated.id!, organized.id!],
+            [plain.id!, tagged.id!, favorited.id!, annotated.id!, organized.id!, recording.id!],
             to: oldDate, in: dbQueue
         )
 
@@ -102,6 +105,7 @@ final class ShotStoreTests: XCTestCase {
             shotIDs: [try XCTUnwrap(organized.id)],
             collectionID: try XCTUnwrap(collection.id)
         )
+        try store.attachRecording(at: URL(fileURLWithPath: "/tmp/protected-recording.mp4"), to: recording)
 
         let cutoff = Date().addingTimeInterval(-86_400)
         let candidates = store.cleanupCandidates(olderThan: cutoff, limit: 10)
@@ -282,9 +286,8 @@ final class ShotStoreTests: XCTestCase {
     // MARK: - 智能筛选
 
     /// 按筛选跑一次 reload，返回网格里实际会显示的 ID（时间倒序）。
-    private func filteredIDs(_ store: ShotStore, _ filter: ShotStore.GalleryFilter) -> [Int64] {
-        store.filter = filter
-        store.reload()
+    private func filteredIDs(_ store: ShotStore, _ filter: ShotFilter) -> [Int64] {
+        store.reload(query: "", filter: filter)
         return store.shots.compactMap(\.id)
     }
 
@@ -299,23 +302,20 @@ final class ShotStoreTests: XCTestCase {
             metadata: CaptureMetadata()
         )
         let path = "/tmp/example-recording.mp4"
-        store.writeAttribute(
-            shotID: try XCTUnwrap(recording.id),
-            key: AttributeKey.recordingPath,
-            value: .data(Data(path.utf8), searchableText: nil)
-        )
+        try store.attachRecording(at: URL(fileURLWithPath: path), to: recording)
+
+        XCTAssertEqual(store.recordingPath(for: recording), path)
 
         XCTAssertEqual(filteredIDs(store, .recordings), [recording.id])
         XCTAssertFalse(filteredIDs(store, .recordings).contains(try XCTUnwrap(screenshot.id)))
-        XCTAssertEqual(store.attributeCount(key: AttributeKey.recordingPath), 1)
+        XCTAssertEqual(store.recordingCount(), 1)
         XCTAssertEqual(
-            store.attributePayloads(
-                key: AttributeKey.recordingPath,
-                shotIDs: [try XCTUnwrap(recording.id), try XCTUnwrap(screenshot.id)]
+            store.recordingPaths(
+                for: [try XCTUnwrap(recording.id), try XCTUnwrap(screenshot.id)]
             )[try XCTUnwrap(recording.id)],
-            Data(path.utf8)
+            path
         )
-        XCTAssertEqual(RecordingsDestination().badge(store: store), 1)
+        XCTAssertEqual(RecordingsDestination().badge(reader: store), 1)
         let semanticCandidateIDs = await store.matchingShotIDsInBackground(filter: .recordings)
         XCTAssertEqual(semanticCandidateIDs, [try XCTUnwrap(recording.id)])
     }
@@ -383,7 +383,7 @@ final class ShotStoreTests: XCTestCase {
                        "筛选口径与卡片铅笔角标必须逐张对齐")
     }
 
-    /// 未整理筛选靠 v4 建的 (shotID, key) 复合索引，不能退化成全表扫描 ——
+    /// 未整理筛选靠复合索引，不能退化成 shotAttribute 全表扫描 ——
     /// 这四个查询跟着侧边栏每轮刷新跑。
     func testUntaggedQueryUsesCompositeIndex() throws {
         let (_, dbQueue) = try makeStore()
@@ -401,7 +401,7 @@ final class ShotStoreTests: XCTestCase {
                 .joined(separator: " | ")
         }
         XCTAssertTrue(
-            plan.contains("index_shotAttribute_on_shotID_key"),
+            plan.contains("index_shotAttribute_on_key_shotID"),
             "查询计划应命中复合索引，实际为：\(plan)"
         )
     }
@@ -425,19 +425,16 @@ final class ShotStoreTests: XCTestCase {
         _ = try store.save(image: makeImage(gray: 0.2), metadata: other)
 
         // 两个汉字：走 LIKE。
-        store.searchText = "文档"
-        store.reload()
+        store.reload(query: "文档", filter: .all)
         XCTAssertEqual(store.shots.count, 1, "两字词搜不到 —— trigram 的 3 字符下限没兜住")
         XCTAssertEqual(store.shots.first?.windowTitle, "季度文档汇总")
 
         // 两个 ASCII 字符同理。
-        store.searchText = "预览"
-        store.reload()
+        store.reload(query: "预览", filter: .all)
         XCTAssertEqual(store.shots.count, 1)
 
         // 三个字符以上继续走 FTS，行为不变。
-        store.searchText = "ContentView"
-        store.reload()
+        store.reload(query: "ContentView", filter: .all)
         XCTAssertEqual(store.shots.count, 1)
         XCTAssertEqual(store.shots.first?.appName, "Xcode")
     }
@@ -455,8 +452,7 @@ final class ShotStoreTests: XCTestCase {
         plain.windowTitle = "普通标题"
         _ = try store.save(image: makeImage(gray: 0.2), metadata: plain)
 
-        store.searchText = "0%"
-        store.reload()
+        store.reload(query: "0%", filter: .all)
         XCTAssertEqual(store.shots.count, 1, "通配符没转义，把不含 % 的也匹配了")
         XCTAssertEqual(store.shots.first?.windowTitle, "CPU 90% 占用")
     }
@@ -475,9 +471,7 @@ final class ShotStoreTests: XCTestCase {
 
         store.toggleFavorite(shotA)
 
-        store.searchText = "预览"
-        store.filter = .favorites
-        store.reload()
+        store.reload(query: "预览", filter: .favorites)
         XCTAssertEqual(store.shots.count, 1, "短查询绕开了收藏筛选")
         XCTAssertEqual(store.shots.first?.id, shotA.id)
     }
@@ -516,11 +510,69 @@ final class ShotStoreTests: XCTestCase {
         )
     }
 
-    // MARK: - 两条刷新路径
+    // MARK: - 数据库观察与显式刷新
+
+    /// 写路径不再自己安排 0.5 秒后的 reload；数据库提交应直接驱动当前列表快照。
+    func testDatabaseObservationRefreshesInventoryWithoutExplicitReload() async throws {
+        let (store, _) = try makeStore()
+        let changed = expectation(description: "ValueObservation 发布新库存")
+        let token = store.libraryDidChange.sink { changed.fulfill() }
+        defer { token.cancel() }
+
+        let shot = try store.save(image: makeImage(gray: 0.42), metadata: CaptureMetadata())
+
+        await fulfillment(of: [changed], timeout: 1)
+        XCTAssertEqual(store.shots.compactMap(\.id), [shot.id].compactMap { $0 })
+    }
+
+    /// 收藏集名称不改变 Shot 行，但应用/收藏入口仍要收到库存聚合失效信号。
+    func testDatabaseObservationIncludesCollectionMutations() async throws {
+        let (store, _) = try makeStore()
+        let changed = expectation(description: "收藏集提交触发库存聚合刷新")
+        let token = store.libraryDidChange.sink { changed.fulfill() }
+        defer { token.cancel() }
+
+        _ = try store.createCollection(name: "MR-TADF")
+
+        await fulfillment(of: [changed], timeout: 1)
+        XCTAssertTrue(store.shots.isEmpty)
+        XCTAssertEqual(store.collectionCount(), 1)
+    }
+
+    /// 普通图库不应因编辑器自动保存修订而反复刷新胶片条与侧边栏聚合。
+    func testDatabaseObservationExcludesRevisionsFromOrdinaryInventory() async throws {
+        let (store, _) = try makeStore()
+        let shot = try store.save(image: makeImage(gray: 0.31), metadata: CaptureMetadata())
+        store.reload(query: "", filter: .all)
+
+        let changed = expectation(description: "普通库存不观察修订")
+        changed.isInverted = true
+        let token = store.libraryDidChange.sink { changed.fulfill() }
+        defer { token.cancel() }
+
+        XCTAssertNotNil(store.appendRevision(shot: shot, layers: Layers(), note: "标注"))
+        await fulfillment(of: [changed], timeout: 0.1)
+    }
+
+    /// “已标注”筛选的成员资格正由修订决定，因此该查询必须观察 revision 表。
+    func testAnnotatedObservationIncludesRevisionMutations() async throws {
+        let (store, _) = try makeStore()
+        let shot = try store.save(image: makeImage(gray: 0.73), metadata: CaptureMetadata())
+        store.reload(query: "", filter: .annotated)
+        XCTAssertTrue(store.shots.isEmpty)
+
+        let changed = expectation(description: "已标注筛选观察修订")
+        let token = store.libraryDidChange.sink { changed.fulfill() }
+        defer { token.cancel() }
+
+        XCTAssertNotNil(store.appendRevision(shot: shot, layers: Layers(), note: "标注"))
+        await fulfillment(of: [changed], timeout: 1)
+        XCTAssertEqual(store.shots.compactMap(\.id), [shot.id].compactMap { $0 })
+    }
 
     /// 同步 `reload()` 与后台 `reloadInBackground()` 必须给出**同样的结果**。
     ///
-    /// 它们共用 `fetchShots` 那一份 SQL，正是为了防止两条路慢慢长歪 ——
+    /// 它们共用 `ShotQueryRepository.fetchRows` 那一份 SQL，正是为了防止两条路慢慢长歪 ——
     /// 这条测试就是那份共用的守卫：将来谁只改了其中一条，这里会红。
     func testBackgroundReloadMatchesSyncReload() async throws {
         let (store, _) = try makeStore()
@@ -541,13 +593,12 @@ final class ShotStoreTests: XCTestCase {
         XCTAssertEqual(store.shots.map(\.id), syncAll, "无条件时两条路径结果应一致")
 
         // 叠加筛选 + 搜索：分支最多的那条路
-        store.filter = .app(CapturedAppIdentity(name: "Safari", bundleID: nil))
-        store.searchText = "Safari"
-        store.reload()
+        let appFilter = ShotFilter.app(CapturedAppIdentity(name: "Safari", bundleID: nil))
+        store.reload(query: "Safari", filter: appFilter)
         let syncFiltered = store.shots.map(\.id)
         XCTAssertEqual(syncFiltered.count, 2)
 
-        await store.reloadInBackground()
+        await store.reloadInBackground(query: "Safari", filter: appFilter)
         XCTAssertEqual(store.shots.map(\.id), syncFiltered, "筛选 + 搜索下两条路径结果应一致")
     }
 
@@ -617,12 +668,16 @@ final class ShotStoreTests: XCTestCase {
         _ = try saveApp(bundleID: "com.example.other", gray: 0.22)
         let fallback = try saveApp(bundleID: nil, gray: 0.33)
 
-        store.filter = .app(CapturedAppIdentity(name: "同名应用", bundleID: "com.example.target"))
-        store.reload()
+        store.reload(
+            query: "",
+            filter: .app(CapturedAppIdentity(name: "同名应用", bundleID: "com.example.target"))
+        )
         XCTAssertEqual(store.shots.compactMap(\.id), [target.id])
 
-        store.filter = .app(CapturedAppIdentity(name: "同名应用", bundleID: nil))
-        store.reload()
+        store.reload(
+            query: "",
+            filter: .app(CapturedAppIdentity(name: "同名应用", bundleID: nil))
+        )
         XCTAssertEqual(store.shots.compactMap(\.id), [fallback.id])
     }
 
@@ -666,8 +721,8 @@ final class ShotStoreTests: XCTestCase {
         }, "顺序必须是 (拍摄时间, id) 降序")
     }
 
-    /// 翻页途中新增截图不该打乱已翻过的部分 —— 这正是用游标而不是 OFFSET 的理由。
-    func testPaginationIsStableWhenRowsAreInsertedMidway() async throws {
+    /// 库存提交会刷新第一页并重置游标；随后继续翻页仍必须不重不漏。
+    func testPaginationRestartsCleanlyWhenRowsAreInsertedMidway() async throws {
         let (store, _) = try makeStore()
 
         let total = ShotStore.pageSize + 20
@@ -681,16 +736,29 @@ final class ShotStoreTests: XCTestCase {
         store.reload()
         let firstPage = store.shots.compactMap(\.id)
 
-        // 在翻下一页之前插入新截图（它们的时间最新，会排在最前）。
+        // 在翻下一页之前插入新截图（它们的时间最新，会排在最前）。持续观察应把
+        // 第一页更新到新快照，而不是继续展示节流窗口里的陈旧页。
+        var insertedIDs: [Int64] = []
         for i in 0..<5 {
-            _ = try store.save(image: makeImage(gray: 0.9 - Double(i) / 100), metadata: CaptureMetadata())
+            let shot = try store.save(
+                image: makeImage(gray: 0.9 - Double(i) / 100),
+                metadata: CaptureMetadata()
+            )
+            insertedIDs.append(try XCTUnwrap(shot.id))
         }
+        await store.reloadInBackground()
+
+        XCTAssertNotEqual(store.shots.compactMap(\.id), firstPage)
+        XCTAssertEqual(
+            Array(store.shots.compactMap(\.id).prefix(insertedIDs.count)),
+            Array(insertedIDs.reversed())
+        )
 
         await store.loadNextPage()
         let all = store.shots.compactMap(\.id)
 
-        XCTAssertEqual(Array(all.prefix(firstPage.count)), firstPage, "已翻过的部分不该被改动")
         XCTAssertEqual(Set(all).count, all.count, "OFFSET 分页会在这里产生重复；游标不会")
+        XCTAssertEqual(all.count, total + insertedIDs.count, "重置后的新游标必须覆盖完整库存")
     }
 
     /// 全选取的是「符合当前条件的全部」，不是「已经加载的那些」。
@@ -708,7 +776,7 @@ final class ShotStoreTests: XCTestCase {
         store.reload()
         XCTAssertEqual(store.shots.count, ShotStore.pageSize, "只加载了第一页")
 
-        let ids = await store.allMatchingIDs()
+        let ids = await store.allMatchingIDs(query: "", filter: .all)
         XCTAssertEqual(ids.count, total, "全选必须覆盖全部，而不是已加载的一页")
     }
 }

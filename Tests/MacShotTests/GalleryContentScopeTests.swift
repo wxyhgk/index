@@ -33,13 +33,14 @@ final class GalleryContentScopeTests: XCTestCase {
             .appendingPathComponent("GalleryContentScopeTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = ShotStore(rootDirectory: root, database: database)
-        store.filter = .recordings
-        store.searchText = "query"
+        let viewModel = GalleryViewModel(store: store)
+        viewModel.filter = .recordings
+        viewModel.searchText = "query"
 
-        GalleryContentScope.recordings.clearTransientState(in: store)
+        GalleryContentScope.recordings.clearTransientState(in: viewModel)
 
-        XCTAssertEqual(store.filter, .recordings)
-        XCTAssertEqual(store.searchText, "")
+        XCTAssertEqual(viewModel.filter, .recordings)
+        XCTAssertEqual(viewModel.searchText, "")
     }
 
     func testCollectionScopePreservesItsFixedBoundaryWhenClearingSearch() throws {
@@ -49,14 +50,15 @@ final class GalleryContentScopeTests: XCTestCase {
             .appendingPathComponent("GalleryContentScopeTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = ShotStore(rootDirectory: root, database: database)
+        let viewModel = GalleryViewModel(store: store)
         let scope = GalleryContentScope.collection(id: 42, title: "MR-TADF 分子")
-        store.filter = .collection(42)
-        store.searchText = "query"
+        viewModel.filter = .collection(42)
+        viewModel.searchText = "query"
 
-        scope.clearTransientState(in: store)
+        scope.clearTransientState(in: viewModel)
 
-        XCTAssertEqual(store.filter, .collection(42))
-        XCTAssertEqual(store.searchText, "")
+        XCTAssertEqual(viewModel.filter, .collection(42))
+        XCTAssertEqual(viewModel.searchText, "")
         XCTAssertFalse(scope.hasClearableState(
             searchText: "", filter: .collection(42), hasSemanticResults: false
         ))
@@ -69,23 +71,23 @@ final class GalleryContentScopeTests: XCTestCase {
             .appendingPathComponent("GalleryContentScopeTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = ShotStore(rootDirectory: root, database: database)
+        let viewModel = GalleryViewModel(store: store)
 
         var recordingMetadata = CaptureMetadata()
         recordingMetadata.windowTitle = "共同查询词 录屏"
         let recording = try store.save(image: image(gray: 0.2), metadata: recordingMetadata)
-        store.writeAttribute(
-            shotID: try XCTUnwrap(recording.id),
-            key: AttributeKey.recordingPath,
-            value: .data(Data("/tmp/recording.mp4".utf8), searchableText: nil)
+        try store.attachRecording(
+            at: URL(fileURLWithPath: "/tmp/recording.mp4"),
+            to: recording
         )
 
         var screenshotMetadata = CaptureMetadata()
         screenshotMetadata.windowTitle = "共同查询词 截图"
         let screenshot = try store.save(image: image(gray: 0.8), metadata: screenshotMetadata)
 
-        store.filter = .recordings
-        store.searchText = "共同查询词"
-        store.reload()
+        viewModel.filter = .recordings
+        viewModel.searchText = "共同查询词"
+        viewModel.reload()
 
         XCTAssertEqual(store.shots.compactMap(\.id), [recording.id])
         XCTAssertFalse(store.shots.compactMap(\.id).contains(try XCTUnwrap(screenshot.id)))

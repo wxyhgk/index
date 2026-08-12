@@ -28,11 +28,13 @@ final class QuickLookController: NSObject {
     private var isSyncing = false
     /// 可注入的读写源，默认 shared，单测可替。
     var store: ShotStore = .shared
+    private var viewModel: GalleryViewModel = .shared
 
     private override init() { super.init() }
 
     init(store: ShotStore) {
         self.store = store
+        self.viewModel = store === ShotStore.shared ? .shared : GalleryViewModel(store: store)
         super.init()
     }
 
@@ -57,7 +59,7 @@ final class QuickLookController: NSObject {
     // MARK: - 由 GalleryWindowController 的 begin/endPreviewPanelControl 转交
 
     func attach(to panel: QLPreviewPanel) {
-        shots = store.displayShots
+        shots = viewModel.displayShots
         panel.dataSource = self
         panel.delegate = self
         panel.currentPreviewItemIndex = selectedIndex() ?? 0
@@ -73,7 +75,7 @@ final class QuickLookController: NSObject {
             .removeDuplicates()
             .sink { [weak self] _ in self?.syncPanelIndex() }
         // objectWillChange 发在变更前，压到下一轮 runloop 再取新列表。
-        storeCancellable = store.objectWillChange
+        storeCancellable = viewModel.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.reloadShots() }
     }
@@ -114,7 +116,7 @@ final class QuickLookController: NSObject {
 
     private func reloadShots() {
         guard panelIsVisible else { return }
-        let fresh = store.displayShots
+        let fresh = viewModel.displayShots
         guard fresh != shots else { return }
         shots = fresh
         if shots.isEmpty {

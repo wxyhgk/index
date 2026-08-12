@@ -9,7 +9,7 @@ enum GalleryContentScope: Equatable {
     case favorites
     case collection(id: Int64, title: String)
 
-    var fixedFilter: ShotStore.GalleryFilter? {
+    var fixedFilter: ShotFilter? {
         switch self {
         case .library: return nil
         case .recordings: return .recordings
@@ -58,7 +58,7 @@ enum GalleryContentScope: Equatable {
 
     func hasClearableState(
         searchText: String,
-        filter: ShotStore.GalleryFilter,
+        filter: ShotFilter,
         hasSemanticResults: Bool
     ) -> Bool {
         !searchText.isEmpty
@@ -67,28 +67,22 @@ enum GalleryContentScope: Equatable {
     }
 
     @MainActor
-    func activate(in store: ShotStore) {
+    func activate(in viewModel: GalleryViewModel) {
         // destination 切换不继承上一入口的查询结果；否则语义结果会短暂越过固定范围。
-        store.searchText = ""
-        store.clearSemanticResults()
-        if let fixedFilter { store.filter = fixedFilter }
-        store.reload()
+        viewModel.searchText = ""
+        viewModel.clearSemanticResults()
+        if let fixedFilter { viewModel.filter = fixedFilter }
+        viewModel.reload()
     }
 
     @MainActor
-    func deactivate(in store: ShotStore) {
+    func deactivate(in viewModel: GalleryViewModel) {
         guard fixedFilter != nil else { return }
-        store.searchText = ""
-        store.clearSemanticResults()
-        store.filter = .all
-        store.reload()
+        viewModel.reset()
     }
 
     @MainActor
-    func clearTransientState(in store: ShotStore) {
-        store.searchText = ""
-        store.clearSemanticResults()
-        store.filter = fixedFilter ?? .all
-        store.reload()
+    func clearTransientState(in viewModel: GalleryViewModel) {
+        viewModel.reset(to: fixedFilter ?? .all)
     }
 }

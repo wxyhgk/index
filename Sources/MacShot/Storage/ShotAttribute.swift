@@ -49,8 +49,8 @@ enum AttributeKey {
     /// 规则分类结果（中文分类名，见 `ShotClassifier`）。
     static let category = "category"
     /// 用户自定义标签。**多值 key**：一张图多个标签 = 多行，
-    /// 读写走 `ShotStore` 的 addTag / removeTag 一族，
-    /// 不要用 writeAttribute（它是「同 key 先删后插」的单值语义）。
+    /// 读写走 `ShotAttributeRepository` 的多值标签入口，
+    /// 不要走单值替换入口（它会「同 key 先删后插」）。
     /// text = 标签名，自动进 attributeFts，搜标签名直接命中。
     static let tag = "tag"
     /// Vision 场景标签，逗号分隔的 identifier 列表。
@@ -64,16 +64,14 @@ enum AttributeKey {
     /// 二进制载荷，text 必须为 nil（不进全文索引）。key 带版本号 ——
     /// 换模型时换 key，新旧向量不会被误比。
     static let clipEmbedding = "clip.embedding.v1"
-    /// 录屏成品 mp4 的绝对路径（UTF-8 存 payload）。挂在录屏首帧锚点截图上，
-    /// 详情栏据此显示「打开录像」。text 必须为 nil —— attributeFts 会索引
-    /// 整个 text 列，文件路径不该进搜索索引。
-    static let recordingPath = "recording.path"
-    /// 3D 分子快照的不可变来源（`MoleculeSourceAttachment` JSON）。
-    /// 图片导出不携带这份载荷；只有 MacShot 内的 Shot 能据此复制 XYZ、
-    /// 打开工作副本或重新进入交互式 3D。
-    static let moleculeXYZSource = "source.molecule.xyz.v1"
     /// 敏感内容检测结果（[SensitiveRegion] 的 JSON）。
     /// searchableText 只放命中的**种类**汇总（如 "邮箱,密钥"）——
     /// 具体内容（邮箱地址、密钥本身）绝不进全文索引。
     static let sensitiveRegions = "sensitive.regions"
+}
+
+/// 只供数据库迁移读取的历史 key。业务代码不得再通过通用属性接口访问附件。
+enum LegacyAttributeKey {
+    static let recordingPath = "recording.path"
+    static let moleculeXYZSource = "source.molecule.xyz.v1"
 }

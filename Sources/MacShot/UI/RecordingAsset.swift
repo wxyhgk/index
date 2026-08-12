@@ -2,7 +2,7 @@ import Foundation
 
 /// 图库里一个 Shot 对应的录屏资产状态。
 ///
-/// `recording.path` 的存在定义「这是录屏」；磁盘文件是否还在只定义「现在能否播放」。
+/// recording 附件的存在定义「这是录屏」；磁盘文件是否还在只定义「现在能否播放」。
 /// 两者不能混为一谈：用户移动/删除 mp4 后，封面 Shot 仍然是录屏索引，不能退化成
 /// 普通截图并在双击或回车时误入标注编辑器。
 enum RecordingAsset: Equatable {

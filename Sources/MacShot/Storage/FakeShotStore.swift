@@ -12,8 +12,8 @@ import Combine
 // ---------
 // 1. 与 `ShotStore` 同构的 API 面：实现 `ShotReading` + `ShotWriting` 协议，
 //    调用方通过依赖注入 `reader:` / `writer:` 即可无缝替换（见 `GalleryBatch` 各方法）。
-// 2. 状态显式可控：`shots`、`favoriteIDs`、`semanticResults` 等直接暴露为可读写
-//    存储属性，测试可按需预置，无需走 `save(image:metadata:)` 造数据。
+// 2. 状态显式可控：`shots`、`favoriteIDs` 等直接暴露为可读写存储属性，
+//    图库查询状态由 `GalleryViewModel` 持有，不在存储替身里复制第二份。
 // 3. 文件兜底：真实 `ShotStore` 把原图按 sha256 写到 `originals/`，`GalleryBatch.exportAll`
 //    走 `originalURL` + `ImageCodec.load`，而 `copyImages` 走 `originalImage(for:)`。
 //    Fake 两条路径都兼容——`save` 时把 PNG 写到临时目录，`originalImage` 也可直接命中
@@ -35,16 +35,8 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         didSet { objectWillChange.send() }
     }
 
-    var searchText: String = ""
-    var filter: ShotStore.GalleryFilter = .all
-    var semanticMode: Bool = false
-    var semanticResults: [Shot]? = nil
     private(set) var favoriteIDs: Set<Int64> = [] {
         didSet { objectWillChange.send() }
-    }
-
-    var displayShots: [Shot] {
-        semanticMode ? (semanticResults ?? shots) : shots
     }
 
     // MARK: ShotObserving
@@ -62,6 +54,9 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
     private var tagsStore: [Int64: Set<String>] = [:]
     /// 通用属性二进制载荷：shotID -> key -> Data
     private var payloadStore: [Int64: [String: Data]] = [:]
+    /// 类型化附件与真实 `shotAsset` 分开建模，避免测试替身掩盖旧属性依赖。
+    private var moleculeSourceStore: [Int64: MoleculeSourceAttachment] = [:]
+    private var recordingPathStore: [Int64: String] = [:]
     /// 原图内存缓存：sha256 -> CGImage（供 originalImage 快速命中）
     private var imageCache: [String: CGImage] = [:]
 
@@ -164,11 +159,9 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         revisionsStore.removeAll()
         tagsStore.removeAll()
         payloadStore.removeAll()
+        moleculeSourceStore.removeAll()
+        recordingPathStore.removeAll()
         imageCache.removeAll()
-        semanticResults = nil
-        semanticMode = false
-        searchText = ""
-        filter = .all
         nextID = 1
         objectWillChange.send()
     }
@@ -233,6 +226,8 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             guard let id = shot.id else { return false }
             if favoriteIDs.contains(id) { return false }
             if let tags = tagsStore[id], !tags.isEmpty { return false }
+            if recordingPathStore[id] != nil { return false }
+            if moleculeSourceStore[id] != nil { return false }
             let revCount = revisionsStore[id]?.count ?? 0
             // 真库：COUNT(revision.id) <= 1（含「原始」那条）
             if revCount > 1 { return false }
@@ -248,22 +243,31 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
     }
 
     func moleculeSource(for shot: Shot) -> MoleculeSourceAttachment? {
-        guard let shotID = shot.id,
-              let payload = attributePayload(
-                shotID: shotID,
-                key: AttributeKey.moleculeXYZSource
-              )
-        else { return nil }
-        return try? JSONDecoder().decode(MoleculeSourceAttachment.self, from: payload)
+        guard let shotID = shot.id else { return nil }
+        return moleculeSourceStore[shotID]
     }
 
-    func allMatchingIDs() async -> [Int64] {
+    func recordingPath(for shot: Shot) -> String? {
+        guard let id = shot.id else { return nil }
+        return recordingPathStore[id]
+    }
+
+    func recordingPaths(for shotIDs: [Int64]) -> [Int64: String] {
+        let ids = Set(shotIDs)
+        return recordingPathStore.filter { ids.contains($0.key) }
+    }
+
+    func recordingCount() -> Int {
+        recordingPathStore.count
+    }
+
+    func allMatchingIDs(query rawQuery: String, filter: ShotFilter) async -> [Int64] {
         // 内存谓词：与 ShotStore.fetchShots 的意图一致，但简化为包含匹配。
         // 真正的 FTS/trigram 精确性由 ShotStoreTests 覆盖，Fake 只需让
         // “全选 = 符合当前条件的所有 ID” 这一语义可测。
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let matched = shots.filter { shot in
-            guard passesFilter(shot) else { return false }
+            guard passesFilter(shot, filter: filter) else { return false }
             guard !query.isEmpty else { return true }
             return matchesQuery(shot, query: query)
         }
@@ -347,6 +351,8 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             revisionsStore[id] = nil
             tagsStore[id] = nil
             payloadStore[id] = nil
+            moleculeSourceStore[id] = nil
+            recordingPathStore[id] = nil
             favoriteIDs.remove(id)
         }
         // 引用计数：sha 仍被剩余记录引用则保留文件
@@ -412,7 +418,6 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
                 tagsStore[id] = set
             }
         }
-        if filter == .tag(old) { filter = .tag(name) }
         objectWillChange.send()
     }
 
@@ -421,7 +426,6 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             set.remove(tag)
             tagsStore[id] = set
         }
-        if filter == .tag(tag) { filter = .all }
         objectWillChange.send()
     }
 
@@ -452,9 +456,13 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
 
     func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws {
         guard let shotID = shot.id else { throw ShotStore.StoreError.missingShotID }
-        var map = payloadStore[shotID] ?? [:]
-        map[AttributeKey.moleculeXYZSource] = try JSONEncoder().encode(source)
-        payloadStore[shotID] = map
+        moleculeSourceStore[shotID] = source
+        objectWillChange.send()
+    }
+
+    func attachRecording(at url: URL, to shot: Shot) throws {
+        guard let shotID = shot.id else { throw ShotStore.StoreError.missingShotID }
+        recordingPathStore[shotID] = url.path
         objectWillChange.send()
     }
 
@@ -468,7 +476,7 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
 
     // MARK: - 私有
 
-    private func passesFilter(_ shot: Shot) -> Bool {
+    private func passesFilter(_ shot: Shot, filter: ShotFilter) -> Bool {
         switch filter {
         case .all: return true
         case .favorites: return shot.id.map { favoriteIDs.contains($0) } ?? false
@@ -480,7 +488,7 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             return (revisionsStore[id]?.count ?? 0) > 1
         case .recordings:
             guard let id = shot.id else { return false }
-            return payloadStore[id]?[AttributeKey.recordingPath] != nil
+            return recordingPathStore[id] != nil
         case .category(let name):
             // Fake 未单独维护 category，退化为 tags 包含即命中，便于演示
             guard let id = shot.id else { return false }

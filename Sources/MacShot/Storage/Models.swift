@@ -202,6 +202,17 @@ extension Shot {
     var originalFileName: String { "\(sha256).png" }
     var thumbnailFileName: String { "\(sha256).jpg" }
 
+    /// 图库卡片等紧凑位置只够显示一行来源名称。截图优先显示真实来源 App；
+    /// 本地导入没有 App 元数据，但 `windowTitle` 保存了原文件名，因此应显示文件名，
+    /// 不能把一张来源明确的本地图片误报成“未知 App”。
+    var primaryDisplayName: String {
+        for candidate in [appName, windowTitle] {
+            let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let value, !value.isEmpty { return value }
+        }
+        return "未知来源"
+    }
+
     /// 一行式来源描述，给列表用。
     var sourceSummary: String {
         var parts: [String] = []

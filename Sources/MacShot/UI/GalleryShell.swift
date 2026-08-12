@@ -208,11 +208,19 @@ struct GalleryInspectorPanel: View {
     @Binding var isPresented: Bool
 
     @ObservedObject private var store: ShotStore
+    @ObservedObject private var viewModel: GalleryViewModel
     @ObservedObject private var selection = GallerySelection.shared
 
-    init(isPresented: Binding<Bool>, store: ShotStore = .shared) {
+    init(
+        isPresented: Binding<Bool>,
+        store: ShotStore = .shared,
+        viewModel: GalleryViewModel? = nil
+    ) {
         self._isPresented = isPresented
         self._store = ObservedObject(wrappedValue: store)
+        let resolvedViewModel = viewModel
+            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+        self._viewModel = ObservedObject(wrappedValue: resolvedViewModel)
     }
 
     var body: some View {
@@ -246,14 +254,14 @@ struct GalleryInspectorPanel: View {
 
     private var selectedShot: Shot? {
         // 语义结果可能不在常规列表（最近 500 张）里，两边都找。
-        store.displayShots.first { $0.id == selection.primaryID }
+        viewModel.displayShots.first { $0.id == selection.primaryID }
             ?? store.shots.first { $0.id == selection.primaryID }
     }
 
     /// 多选时按展示顺序解析出的截图（选中集合里可能残留已删除的 ID，以解析结果为准）。
     private var multiSelectedShots: [Shot] {
         guard selection.isMultiple else { return [] }
-        var picked = store.displayShots.filter { selection.isSelected($0.id) }
+        var picked = viewModel.displayShots.filter { selection.isSelected($0.id) }
         let seen = Set(picked.compactMap(\.id))
         picked += store.shots.filter { shot in
             guard let id = shot.id else { return false }

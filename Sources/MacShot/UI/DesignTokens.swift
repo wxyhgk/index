@@ -81,6 +81,8 @@ enum DS {
     static let accentFillSelected = Color.accentColor.opacity(0.22)
     /// 历史版本高亮（EditorInspector）。
     static let accentFillHistory = Color.accentColor.opacity(0.18)
+    /// 文件拖入图库时的整区浅高亮。
+    static let accentFillDropTarget = Color.accentColor.opacity(0.10)
     /// 输入框焦点描边（TagSection）。
     static let accentStrokeInput = Color.accentColor.opacity(0.5)
     /// 搜索胶囊焦点描边。

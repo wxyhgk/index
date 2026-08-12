@@ -56,17 +56,26 @@ private struct ShotSection: Identifiable {
 struct GalleryGrid: View {
 
     @ObservedObject private var store: ShotStore
+    @ObservedObject private var viewModel: GalleryViewModel
+    @ObservedObject private var imageImporter: ImageImportCoordinator
     @ObservedObject private var selection = GallerySelection.shared
     private let scope: GalleryContentScope
     private let chrome: GalleryGridChrome
 
     init(
         store: ShotStore = .shared,
+        viewModel: GalleryViewModel? = nil,
         settings: AppSettings = .shared,
         scope: GalleryContentScope = .library,
         chrome: GalleryGridChrome = .standard
     ) {
         _store = ObservedObject(wrappedValue: store)
+        let resolvedViewModel = viewModel
+            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        _imageImporter = ObservedObject(wrappedValue:
+            store === ShotStore.shared ? .shared : ImageImportCoordinator(store: store)
+        )
         _settings = ObservedObject(wrappedValue: settings)
         self.scope = scope
         self.chrome = chrome
@@ -104,6 +113,8 @@ struct GalleryGrid: View {
     /// 右键菜单打开的时间线 / 相似 sheet。
     @State private var timelineShot: Shot?
     @State private var similarShot: Shot?
+    /// 仅图库入口接受图片拖放；其它固定范围不能把新图导入后藏在范围外。
+    @State private var isImportDropTargeted = false
 
     // MARK: 宽度派生状态
     //
@@ -210,7 +221,7 @@ struct GalleryGrid: View {
     /// `runSemanticSearch` 已按当前固定筛选
     /// 约束候选，所以网格、键盘和批量操作不会各自维护第二份结果。
     private var visibleShots: [Shot] {
-        store.displayShots
+        viewModel.displayShots
     }
 
     var body: some View {
@@ -254,14 +265,41 @@ struct GalleryGrid: View {
         // 和它历史上待的位置（GalleryView 里 `.background(gridWidthReader)`）是同一层几何，
         // 只是写的 state 从三栏共同父层挪进了网格子树。
         .background(widthReader)
+        .dropDestination(for: URL.self) { urls, _ in
+            guard scope == .library else { return false }
+            guard urls.contains(where: ImageImportCoordinator.supports) else { return false }
+            viewModel.reset()
+            imageImporter.enqueue(urls)
+            return true
+        } isTargeted: { targeted in
+            isImportDropTargeted = targeted && scope == .library
+        }
+        .overlay {
+            if isImportDropTargeted {
+                RoundedRectangle(cornerRadius: DS.radiusPanel, style: .continuous)
+                    .fill(DS.accentFillDropTarget)
+                    .overlay {
+                        Label("松开以导入图片", systemImage: "square.and.arrow.down")
+                            .font(.headline)
+                            .padding(.horizontal, DS.s4)
+                            .padding(.vertical, DS.s3)
+                            .background(.regularMaterial, in: Capsule())
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: DS.radiusPanel, style: .continuous)
+                            .stroke(DS.accent, style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                    }
+                    .allowsHitTesting(false)
+            }
+        }
         // 列数是键盘导航（上下键 = ±列数）唯一需要知道的东西，网格算好直接喂。
         // 空列表时网格不渲染，这里也照样上报（值无害，且列表回来时不用等首帧）。
         .onChange(of: keyboardColumnCount, initial: true) { _, count in
             GalleryKeyboard.shared.gridColumnCount = count
         }
-        .task(id: GridKey(semanticMode: store.semanticMode, shots: visibleShots)) {
+        .task(id: GridKey(semanticMode: viewModel.semanticMode, shots: visibleShots)) {
             // 语义结果本身就是排序（相似度降序），按时间分组会打乱它 —— 单段平铺。
-            if store.semanticMode, store.semanticResults != nil {
+            if viewModel.semanticMode, viewModel.semanticResults != nil {
                 sections = visibleShots.isEmpty
                     ? []
                     : [ShotSection(id: "语义", title: "按相似度排序", shots: visibleShots)]
@@ -272,9 +310,7 @@ struct GalleryGrid: View {
             let ids = visibleShots.compactMap(\.id)
             categoriesByShot = store.attributeTexts(key: AttributeKey.category, shotIDs: ids)
             annotatedIDs = store.annotatedShotIDs(among: ids)
-            recordingPathsByShot = store
-                .attributePayloads(key: AttributeKey.recordingPath, shotIDs: ids)
-                .compactMapValues { String(data: $0, encoding: .utf8) }
+            recordingPathsByShot = store.recordingPaths(for: ids)
             refreshCollectionMetadata(for: ids)
         }
         .onReceive(store.libraryDidChangePublisher) {
@@ -518,7 +554,7 @@ struct GalleryGrid: View {
         guard loaded.count >= 12,
               let index = loaded.firstIndex(where: { $0.id == shot.id }),
               index >= loaded.count - 12 else { return }
-        Task { await store.loadNextPage() }
+        Task { await viewModel.loadNextPage() }
     }
 
     @ViewBuilder
@@ -632,44 +668,54 @@ struct GalleryGrid: View {
             Text(emptyDescription)
         } actions: {
             if hasActiveFilter {
-                Button("清除筛选") { scope.clearTransientState(in: store) }
+                Button("清除筛选") { scope.clearTransientState(in: viewModel) }
             } else if scope.showsStartCaptureAction {
-                Button("开始截图") { CaptureCoordinator.shared.begin() }
-                    .buttonStyle(.borderedProminent)
+                HStack {
+                    Button("开始截图") { CaptureCoordinator.shared.begin() }
+                        .buttonStyle(.borderedProminent)
+                    Button("导入图片…") { chooseImagesToImport() }
+                        .buttonStyle(.bordered)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func chooseImagesToImport() {
+        guard let urls = SystemNavigator.chooseImageFiles(), !urls.isEmpty else { return }
+        viewModel.reset()
+        imageImporter.enqueue(urls)
+    }
+
     /// 空态是「筛出来的空」还是「真的一张都没有」——决定给哪个按钮。
     private var hasActiveFilter: Bool {
         scope.hasClearableState(
-            searchText: store.searchText,
-            filter: store.filter,
-            hasSemanticResults: store.semanticMode && store.semanticResults != nil
+            searchText: viewModel.searchText,
+            filter: viewModel.filter,
+            hasSemanticResults: viewModel.semanticMode && viewModel.semanticResults != nil
         )
     }
 
     private var emptyTitle: String {
-        if store.semanticMode && store.semanticResults != nil { return "没有语义匹配的结果" }
-        if store.searchText.isEmpty, let scopedTitle = scope.emptyTitle { return scopedTitle }
-        return store.searchText.isEmpty ? "还没有截图" : "没有匹配的结果"
+        if viewModel.semanticMode && viewModel.semanticResults != nil { return "没有语义匹配的结果" }
+        if viewModel.searchText.isEmpty, let scopedTitle = scope.emptyTitle { return scopedTitle }
+        return viewModel.searchText.isEmpty ? "还没有截图" : "没有匹配的结果"
     }
 
     private var emptyIcon: String {
-        if store.semanticMode && store.semanticResults != nil { return "sparkle.magnifyingglass" }
-        if store.searchText.isEmpty, let scopedIcon = scope.emptyIcon { return scopedIcon }
-        return store.searchText.isEmpty ? "photo.on.rectangle.angled" : "magnifyingglass"
+        if viewModel.semanticMode && viewModel.semanticResults != nil { return "sparkle.magnifyingglass" }
+        if viewModel.searchText.isEmpty, let scopedIcon = scope.emptyIcon { return scopedIcon }
+        return viewModel.searchText.isEmpty ? "photo.on.rectangle.angled" : "magnifyingglass"
     }
 
     private var emptyDescription: String {
-        if store.semanticMode && store.semanticResults != nil {
+        if viewModel.semanticMode && viewModel.semanticResults != nil {
             return "截图可能还没完成向量分析，或换种描述再试（英文效果最好）"
         }
-        if store.searchText.isEmpty, let scopedDescription = scope.emptyDescription {
+        if viewModel.searchText.isEmpty, let scopedDescription = scope.emptyDescription {
             return scopedDescription
         }
-        return store.searchText.isEmpty ? "按 ⌃⌘A 开始截图" : "换个关键词，或清除侧边栏筛选"
+        return viewModel.searchText.isEmpty ? "按 ⌃⌘A 开始截图" : "换个关键词，或清除侧边栏筛选"
     }
 
     // MARK: - 底部悬浮工具条（设计稿 §5）
@@ -761,10 +807,10 @@ struct GalleryGrid: View {
     /// 平时空着，有话说时才出现，不改变两组控件的位置。
     ///
     /// 旧底栏那句「N 张截图」没有搬过来：`GalleryPageHeader` 的「N 个项目」是同一个
-    /// `store.displayShots.count`，同屏两处报同一个数是冗余。
+    /// `viewModel.displayShots.count`，同屏两处报同一个数是冗余。
     @ViewBuilder
     private var semanticStatus: some View {
-        if store.isSemanticSearching {
+        if viewModel.isSemanticSearching {
             HStack(spacing: DS.s2) {
                 ProgressView().controlSize(.mini)
                 Text("语义搜索中…")
@@ -772,7 +818,7 @@ struct GalleryGrid: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-        } else if store.semanticMode, store.semanticResults != nil {
+        } else if viewModel.semanticMode, viewModel.semanticResults != nil {
             Text("语义搜索：最相关的 \(visibleShots.count) 张")
                 .font(.caption)
                 .foregroundStyle(.secondary)

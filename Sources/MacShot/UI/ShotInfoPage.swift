@@ -288,9 +288,7 @@ struct ShotInfoPage: View {
         visionLabels = store.attributeText(shotID: id, key: AttributeKey.visionLabels)
         sensitiveRegions = store.attributePayload(shotID: id, key: AttributeKey.sensitiveRegions)
             .flatMap { try? JSONDecoder().decode([SensitiveRegion].self, from: $0) } ?? []
-        // 路径存在 payload 里（不进全文索引），这里转回字符串。
-        recordingPath = store.attributePayload(shotID: id, key: AttributeKey.recordingPath)
-            .flatMap { String(data: $0, encoding: .utf8) }
+        recordingPath = store.recordingPath(for: shot)
     }
 }
 

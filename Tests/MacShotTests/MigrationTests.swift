@@ -18,6 +18,15 @@ final class MigrationTests: XCTestCase {
             XCTAssertTrue(try db.tableExists("attributeFts"))
             XCTAssertTrue(try db.tableExists("shotCollection"))
             XCTAssertTrue(try db.tableExists("shotCollectionItem"))
+            XCTAssertTrue(try db.tableExists("shotAsset"))
+            XCTAssertEqual(
+                try db.columns(in: "shotAsset").map(\.name),
+                [
+                    "id", "shotID", "kind", "path", "payload",
+                    "schemaVersion", "createdAt", "updatedAt",
+                ],
+                "附件表保持精简；能从 kind 或数据推出的信息不要重复落列"
+            )
             XCTAssertTrue(try AppDatabase.migrator.hasCompletedMigrations(db))
         }
     }
@@ -83,6 +92,55 @@ final class MigrationTests: XCTestCase {
                 WHERE attributeFts MATCH '"travel"'
                 """)
             XCTAssertEqual(newHits, [1])
+        }
+    }
+
+    /// v6 将录像和分子来源从无类型属性迁入正式附件表；重复旧值只取最后一条，
+    /// 迁移完成后旧属性删除，避免两个来源继续漂移。
+    func testV6MigratesLegacyAssetsAndAddsQueryIndexes() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v5_shot_collections")
+        let molecule = Data("{\"schemaVersion\":1,\"format\":\"xyz\"}".utf8)
+
+        try dbQueue.write { db in
+            try db.execute(sql: """
+                INSERT INTO shot (sha256, capturedAt, pixelWidth, pixelHeight)
+                VALUES ('asset-shot', ?, 10, 10)
+                """, arguments: [Date()])
+            try db.execute(sql: """
+                INSERT INTO shotAttribute (shotID, key, payload, createdAt)
+                VALUES (1, ?, ?, ?), (1, ?, ?, ?), (1, ?, ?, ?)
+                """, arguments: [
+                    LegacyAttributeKey.recordingPath, Data("/tmp/old.mp4".utf8), Date(timeIntervalSince1970: 1),
+                    LegacyAttributeKey.recordingPath, Data("/tmp/new.mp4".utf8), Date(timeIntervalSince1970: 2),
+                    LegacyAttributeKey.moleculeXYZSource, molecule, Date(timeIntervalSince1970: 3),
+                ])
+        }
+
+        try AppDatabase.migrator.migrate(dbQueue)
+
+        try dbQueue.read { db in
+            let assets = try ShotAsset.order(Column("kind")).fetchAll(db)
+            XCTAssertEqual(assets.count, 2)
+            XCTAssertEqual(
+                assets.first(where: { $0.kind == ShotAssetKind.recording })?.path,
+                "/tmp/new.mp4"
+            )
+            XCTAssertEqual(
+                assets.first(where: { $0.kind == ShotAssetKind.moleculeXYZ })?.payload,
+                molecule
+            )
+            let legacyCount = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM shotAttribute WHERE key IN (?, ?)
+                """, arguments: [LegacyAttributeKey.recordingPath, LegacyAttributeKey.moleculeXYZSource])
+            XCTAssertEqual(legacyCount, 0)
+
+            let attributeIndexes = try db.indexes(on: "shotAttribute").map(\.name)
+            XCTAssertTrue(attributeIndexes.contains("index_shotAttribute_on_key_shotID"))
+            let collectionIndexes = try db.indexes(on: "shotCollectionItem").map(\.name)
+            XCTAssertTrue(collectionIndexes.contains(
+                "index_shotCollectionItem_on_collectionID_sortOrder_addedAt"
+            ))
         }
     }
 }

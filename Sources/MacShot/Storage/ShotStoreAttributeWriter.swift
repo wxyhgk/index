@@ -20,13 +20,7 @@ struct ShotStoreAttributeWriter: ShotAttributeWriter {
     /// 直接注入 `ShotWriting` 协议实例。
     init(store: any ShotWriting) {
         self.writer = { shotID, key, value in
-            if let s = store as? ShotStore {
-                s.writeAttribute(shotID: shotID, key: key, value: value)
-            } else if let f = store as? FakeShotStore {
-                f.writeAttribute(shotID: shotID, key: key, value: value)
-            } else {
-                ShotStore.shared.writeAttribute(shotID: shotID, key: key, value: value)
-            }
+            store.writeAttribute(shotID: shotID, key: key, value: value)
         }
     }
 

@@ -6,11 +6,6 @@ import Combine
 @MainActor
 protocol ShotReading: AnyObject {
     var shots: [Shot] { get }
-    var displayShots: [Shot] { get }
-    var searchText: String { get set }
-    var filter: ShotStore.GalleryFilter { get set }
-    var semanticMode: Bool { get }
-    var semanticResults: [Shot]? { get }
     var favoriteIDs: Set<Int64> { get }
 
     func originalURL(for shot: Shot) -> URL
@@ -24,7 +19,10 @@ protocol ShotReading: AnyObject {
     func cleanupCandidates(olderThan date: Date, limit: Int) -> [Shot]
     func attributePayload(shotID: Int64, key: String) -> Data?
     func moleculeSource(for shot: Shot) -> MoleculeSourceAttachment?
-    func allMatchingIDs() async -> [Int64]
+    func recordingPath(for shot: Shot) -> String?
+    func recordingPaths(for shotIDs: [Int64]) -> [Int64: String]
+    func recordingCount() -> Int
+    func allMatchingIDs(query: String, filter: ShotFilter) async -> [Int64]
     func allTags() -> [(name: String, count: Int)]
     func shotsMissingAttribute(key: String) -> [Shot]
     var totalCount: Int { get }
@@ -43,11 +41,13 @@ protocol ShotWriting: AnyObject {
     func renameTag(_ old: String, to new: String)
     func deleteTag(_ tag: String)
     func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws
+    func attachRecording(at url: URL, to shot: Shot) throws
+    func writeAttribute(shotID: Int64, key: String, value: AttributeValue)
 }
 
 /// 可观察：需要订阅刷新的视图。
 ///
-/// # 发布语义（ShotStore 现状的契约化）
+/// # 发布语义
 ///
 /// `ShotStore` 是 `@MainActor final class ObservableObject`，但 `shots` / `favoriteIDs`
 /// 刻意**不是** `@Published`，而在 `publish(shots:favorites:)` 里手动合并为
@@ -79,22 +79,15 @@ protocol ShotWriting: AnyObject {
 ///
 /// ## 刷新机制
 ///
-/// - `reload()`：同步查询（主线程 `dbQueue.read`），赋值后经 `publish` 发两条信号。
-///   保留给**需要立即可读**的调用方：测试、`GalleryWindowController.show(selecting:)`
-///   这类“先刷新再选中”场景。
-/// - `reloadInBackground()`：`await dbQueue.read` 在后台读连接上执行，`publish` 回主线程。
-///   节流路径（`setNeedsReload` 的 leading/trailing 0.5s 合并、截图落库、属性回填、
-///   批量删除）全部走它，UI 订阅式无需立即可读。
-/// - `setNeedsReload()`：leading + trailing 0.5s 节流，密集写入坍缩为 ≤2Hz。
-///   外部不应直接调 `reload`，除非需要同步语义。
+/// - `ShotQueryRepository.observeLibrary` 用 GRDB `ValueObservation` 持续观察 Shot、属性、
+///   附件与收藏集表；提交后在同一数据库快照里重查当前页和收藏集合。
+/// - `reload()`：同步取消旧观察、建立新查询观察，并立即发布首个快照。保留给测试、
+///   `GalleryWindowController.show(selecting:)` 等需要立即可读的调用方。
+/// - `reloadInBackground()`：异步建立同一份持续观察并等待首个快照；生产 `DatabasePool`
+///   可在非主线程取值，迟到的旧观察由 generation + 查询快照一起丢弃。
 /// - `loadNextPage()`：游标分页追加，`objectWillChange` 前发，`libraryDidChange` 不发。
-///
-/// ## 演进方向
-///
-/// ARCHITECTURE 阶段 6 剩余项：`ShotDatabase` 非 MainActor 仓库承接全部 SQL、
-/// `ValueObservation` 替代手动通知、UI 状态（`searchText`/`filter`/`semantic`）
-/// 迁出为 `GalleryViewModel`。届时 `libraryDidChange` 将由
-/// `ValueObservation` 驱动，本协议保持不变，订阅方无需改动。
+/// - 普通修订表不在库存观察范围内；仅 `.annotated` 筛选观察修订。这样编辑器自动保存
+///   仍只发轻量 `objectWillChange`，不会反复重查胶片条与侧边栏聚合。
 @MainActor
 protocol ShotObserving: ObservableObject {
     /// 库存内容已重查并赋值完成。订阅方可同步读取 `shots` / `favoriteIDs`。
@@ -109,7 +102,6 @@ protocol ShotObserving: ObservableObject {
     /// 即可完成订阅-读取闭环。
     var shots: [Shot] { get }
     var favoriteIDs: Set<Int64> { get }
-    var displayShots: [Shot] { get }
 }
 
 extension ShotObserving {

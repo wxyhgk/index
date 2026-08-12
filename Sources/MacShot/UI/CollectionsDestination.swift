@@ -34,6 +34,7 @@ struct CollectionsDestination: GalleryDestination {
 
 private struct CollectionsContent: View {
     @ObservedObject private var store: ShotStore
+    @ObservedObject private var viewModel: GalleryViewModel
     @ObservedObject private var navigation = CollectionsNavigationState.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("galleryInspectorShown") private var showInspector = true
@@ -51,8 +52,11 @@ private struct CollectionsContent: View {
         GridItem(.adaptive(minimum: 230, maximum: 340), spacing: DS.s3)
     ]
 
-    init(store: ShotStore = .shared) {
+    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
         _store = ObservedObject(wrappedValue: store)
+        let resolvedViewModel = viewModel
+            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
     }
 
     var body: some View {
@@ -86,7 +90,7 @@ private struct CollectionsContent: View {
             presenting: deleteTarget
         ) { target in
             Button("删除“\(target.name)”", role: .destructive) {
-                store.deleteCollection(id: target.id)
+                viewModel.deleteCollection(id: target.id)
                 deleteTarget = nil
                 reload()
             }
@@ -191,7 +195,7 @@ private struct CollectionsContent: View {
                         Text(title(for: route))
                             .font(.title2.weight(.bold))
                             .lineLimit(1)
-                        Text("\(store.displayShots.count) 张图片")
+                        Text("\(viewModel.displayShots.count) 张图片")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
@@ -202,13 +206,18 @@ private struct CollectionsContent: View {
                 .padding(.top, DS.s4)
                 .padding(.bottom, DS.s2)
 
-                GalleryGrid(store: store, scope: scope(for: route), chrome: .libraryPanel)
+                GalleryGrid(
+                    store: store,
+                    viewModel: viewModel,
+                    scope: scope(for: route),
+                    chrome: .libraryPanel
+                )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .floatingPanel()
 
             if showInspector {
-                GalleryInspectorPanel(isPresented: $showInspector, store: store)
+                GalleryInspectorPanel(isPresented: $showInspector, store: store, viewModel: viewModel)
                     .frame(width: DS.Shell.inspectorWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
@@ -217,7 +226,7 @@ private struct CollectionsContent: View {
     }
 
     private var filteredCollections: [ShotCollectionSummary] {
-        let query = store.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return collections }
         return collections.filter {
             $0.name.localizedCaseInsensitiveContains(query)
@@ -228,7 +237,7 @@ private struct CollectionsContent: View {
     private func open(_ route: CollectionsNavigationState.Route) {
         withAnimation(DS.Motion.standard(reduced: reduceMotion)) {
             let scope = scope(for: route)
-            scope.activate(in: store)
+            scope.activate(in: viewModel)
             navigation.route = route
         }
     }
@@ -241,16 +250,13 @@ private struct CollectionsContent: View {
     }
 
     private func clearScopedFilter() {
-        let isFavoriteFilter = store.filter == .favorites
+        let isFavoriteFilter = viewModel.filter == .favorites
         guard isFavoriteFilter || isCollectionFilter else { return }
-        store.searchText = ""
-        store.clearSemanticResults()
-        store.filter = .all
-        store.reload()
+        viewModel.reset()
     }
 
     private var isCollectionFilter: Bool {
-        if case .collection = store.filter { return true }
+        if case .collection = viewModel.filter { return true }
         return false
     }
 
