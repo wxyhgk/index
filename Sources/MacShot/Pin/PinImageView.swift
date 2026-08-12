@@ -23,6 +23,8 @@ final class PinImageView: NSView {
     var onToolbarKey: ((NSEvent) -> Bool)?
     var onToolbarFocusClear: (() -> Void)?
     var isActionExecuting: ((String) -> Bool)?
+    /// 只有由 XYZ 定格得到的图片才有；工具栏据此显示分子来源图标。
+    var moleculeSourceActions: MoleculeSourceActions?
     /// 鼠标进出图片区。控制器把它和工具条窗口的进出合并成一个悬停状态。
     var onHoverChanged: (() -> Void)?
     /// ⌘T 切换鼠标穿透。
@@ -114,7 +116,8 @@ final class PinImageView: NSView {
                 : nil,
             isActionExecuting: { [weak self] actionID in
                 self?.isActionExecuting?(actionID) ?? false
-            }
+            },
+            moleculeSourceActions: moleculeSourceActions
         )
     }
 

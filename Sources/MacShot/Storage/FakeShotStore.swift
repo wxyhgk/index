@@ -247,6 +247,16 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         payloadStore[shotID]?[key]
     }
 
+    func moleculeSource(for shot: Shot) -> MoleculeSourceAttachment? {
+        guard let shotID = shot.id,
+              let payload = attributePayload(
+                shotID: shotID,
+                key: AttributeKey.moleculeXYZSource
+              )
+        else { return nil }
+        return try? JSONDecoder().decode(MoleculeSourceAttachment.self, from: payload)
+    }
+
     func allMatchingIDs() async -> [Int64] {
         // 内存谓词：与 ShotStore.fetchShots 的意图一致，但简化为包含匹配。
         // 真正的 FTS/trigram 精确性由 ShotStoreTests 覆盖，Fake 只需让
@@ -437,6 +447,14 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             }
             payloadStore[shotID] = map
         }
+        objectWillChange.send()
+    }
+
+    func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws {
+        guard let shotID = shot.id else { throw ShotStore.StoreError.missingShotID }
+        var map = payloadStore[shotID] ?? [:]
+        map[AttributeKey.moleculeXYZSource] = try JSONEncoder().encode(source)
+        payloadStore[shotID] = map
         objectWillChange.send()
     }
 

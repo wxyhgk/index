@@ -12,6 +12,9 @@
 |---|---|---|
 | `Platform.swift` | `ClipboardWriting / ScreenshotCapturing / ScreenCapturing / WindowListing / WindowPinning` 协议 + `MacClipboard / MacScreenCapturer / MacWindowLister` 等包装 | PAL 骨架；新增能力先在此加协议 |
 | `Clipboard.swift` | `Clipboard` / `MacClipboard` | 剪贴板读写（文本/单图/多图） |
+| `MoleculePinPresenter.swift` | `MacMoleculePinPresenter` | XYZ + 3Dmol.js 交互式分子钉图 |
+| `MoleculeSourceFilePresenter.swift` | `MoleculeSourceFilePresenter` | 为不可变 XYZ 附件建立可编辑工作副本，并用默认应用打开 |
+| `PinWindowShell.swift` | `PinnedContentPanel` / `PinPassthroughRegistry` | 图片与分子钉图共用的窗口外壳和穿透恢复 |
 | `AppAlert.swift` | `AppAlert` | `confirm / info / error` 三形态，`NSAlert` 唯一构造点 |
 | `ImageExporter.swift` | `ImageExporter` | 存盘面板 + PNG 写盘 |
 | `SystemNavigator.swift` | `SystemNavigator` | 目录选择、在访达中显示、打开 URL |
@@ -41,6 +44,7 @@
 | 窗口列表 | `MacWindowLister`（`Platform/macOS/`） | `WindowListing`（已落地，`onScreenWindows / frontmost / bestMatch`） | `WinWindowLister` |
 | 截图契约 | `ImmediateScreenSource`（`Capture/Snapshot` 仅作 `CaptureSource` 适配） | `ScreenshotCapturing`（已落地，`makeSnapshots` 适配层） | `WinScreenshot` |
 | 钉图 | `PinWindowController` | `WindowPinning`（已落地） | `WinPin` |
+| 3D 分子钉图 | `MacMoleculePinPresenter` | `MoleculePinning`（已落地） | `WinMoleculePin` |
 
 ## 捕获边界（ScreenCapturing / WindowListing）
 

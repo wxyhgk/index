@@ -305,6 +305,100 @@ struct RedoControl: ToolbarControl {
     }
 }
 
+// MARK: - 分子来源
+
+/// XYZ 定格图片的来源入口。图标属于 MacShot 界面，不烤进 PNG；普通截图没有
+/// `moleculeSourceActions`，因此不会占工具栏位置。
+struct MoleculeSourceControl: ToolbarControl {
+    let id = "molecule.source"
+    var scopes: Set<ActionScope> { [.pinned] }
+    var group: ToolbarGroup { .actions }
+    var order: Int { -100 }
+
+    func isVisible(_ context: ToolbarContext) -> Bool {
+        context.moleculeSourceActions != nil
+    }
+
+    func accessibilityLabel(_ context: ToolbarContext) -> String { "分子来源" }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("atom", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        guard let actions = context.moleculeSourceActions,
+              let event = NSApp.currentEvent,
+              let window = event.window,
+              let view = window.contentView
+        else { return }
+
+        let target = MoleculeSourceMenuTarget(actions: actions)
+        Self.retainedTarget = target
+        let menu = NSMenu()
+        menu.addItem(Self.item(
+            title: "复制 XYZ 坐标",
+            symbol: "doc.on.doc",
+            command: .copy,
+            target: target
+        ))
+        menu.addItem(Self.item(
+            title: "用默认应用打开工作副本",
+            symbol: "arrow.up.forward.app",
+            command: .open,
+            target: target
+        ))
+        menu.addItem(Self.item(
+            title: "重新进入交互式 3D",
+            symbol: "rotate.3d",
+            command: .reopen,
+            target: target
+        ))
+
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
+    }
+
+    private static func item(
+        title: String,
+        symbol: String,
+        command: MoleculeSourceMenuTarget.Command,
+        target: MoleculeSourceMenuTarget
+    ) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: title,
+            action: #selector(MoleculeSourceMenuTarget.run(_:)),
+            keyEquivalent: ""
+        )
+        item.target = target
+        item.representedObject = command.rawValue
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        return item
+    }
+
+    @MainActor private static var retainedTarget: MoleculeSourceMenuTarget?
+}
+
+private final class MoleculeSourceMenuTarget: NSObject {
+    enum Command: String { case copy, open, reopen }
+
+    private let actions: MoleculeSourceActions
+
+    init(actions: MoleculeSourceActions) {
+        self.actions = actions
+        super.init()
+    }
+
+    @objc func run(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let command = Command(rawValue: raw)
+        else { return }
+        switch command {
+        case .copy: actions.copyXYZ()
+        case .open: actions.openInDefaultApp()
+        case .reopen: actions.reopen3D()
+        }
+    }
+}
+
 // MARK: - 出口动作（由 CaptureActionRegistry 自动展开，不需要单独登记）
 
 struct ActionControl: ToolbarControl {
@@ -486,5 +580,6 @@ extension ToolbarRegistry {
         }
         registry.register(UndoControl())
         registry.register(RedoControl())
+        registry.register(MoleculeSourceControl())
     }
 }

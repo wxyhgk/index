@@ -13,6 +13,14 @@ enum ToolbarGroup: Int, Comparable {
     }
 }
 
+/// 某张钉图带有分子来源时才注入。Toolbar 不读取数据库、不写文件，只负责把
+/// 用户选择的来源操作回调给宿主。
+struct MoleculeSourceActions {
+    let copyXYZ: () -> Void
+    let openInDefaultApp: () -> Void
+    let reopen3D: () -> Void
+}
+
 /// 控件绘制和响应时能看到的东西。
 @MainActor
 struct ToolbarContext {
@@ -27,6 +35,8 @@ struct ToolbarContext {
     let toggleLiveText: (() -> Void)?
     /// 某个出口动作是否正在当前宿主中执行。
     let isActionExecuting: (String) -> Bool
+    /// 普通图片为 nil；由 XYZ 定格得到的钉图提供三个来源动作。
+    let moleculeSourceActions: MoleculeSourceActions?
 
     init(
         annotation: AnnotationState,
@@ -34,7 +44,8 @@ struct ToolbarContext {
         perform: @escaping (String) -> Void,
         isLiveTextActive: @escaping () -> Bool = { false },
         toggleLiveText: (() -> Void)? = nil,
-        isActionExecuting: @escaping (String) -> Bool = { _ in false }
+        isActionExecuting: @escaping (String) -> Bool = { _ in false },
+        moleculeSourceActions: MoleculeSourceActions? = nil
     ) {
         self.annotation = annotation
         self.scope = scope
@@ -42,6 +53,7 @@ struct ToolbarContext {
         self.isLiveTextActive = isLiveTextActive
         self.toggleLiveText = toggleLiveText
         self.isActionExecuting = isActionExecuting
+        self.moleculeSourceActions = moleculeSourceActions
     }
 }
 

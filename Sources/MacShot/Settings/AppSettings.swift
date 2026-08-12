@@ -77,6 +77,7 @@ final class AppSettings: ObservableObject {
         static let delayedCaptureShortcut = "delayedCaptureShortcut"
         static let recordingShortcut = "recordingShortcut"
         static let scrollCaptureShortcut = "scrollCaptureShortcut"
+        static let moleculePinShortcut = "moleculePinShortcut"
         static let watermarkText = "watermarkText"
         static let watermarkMode = "watermarkMode"
         static let watermarkAlpha = "watermarkAlpha"
@@ -366,6 +367,13 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var moleculePinShortcut: KeyboardShortcut {
+        didSet {
+            store(moleculePinShortcut, forKey: Keys.moleculePinShortcut)
+            onShortcutsChanged?()
+        }
+    }
+
     /// 由 AppDelegate 装上：快捷键一改就重新注册。
     var onShortcutsChanged: (() -> Void)?
 
@@ -462,6 +470,8 @@ final class AppSettings: ObservableObject {
         recordingShortcut = Self.load(Keys.recordingShortcut, from: defaults) ?? .recordingDefault
         scrollCaptureShortcut = Self.load(Keys.scrollCaptureShortcut, from: defaults)
             ?? .scrollCaptureDefault
+        moleculePinShortcut = Self.load(Keys.moleculePinShortcut, from: defaults)
+            ?? .moleculePinDefault
     }
 
     func resetShortcuts() {
@@ -470,6 +480,7 @@ final class AppSettings: ObservableObject {
         delayedCaptureShortcut = .delayedCaptureDefault
         recordingShortcut = .recordingDefault
         scrollCaptureShortcut = .scrollCaptureDefault
+        moleculePinShortcut = .moleculePinDefault
     }
 
     private func store(_ shortcut: KeyboardShortcut, forKey key: String) {

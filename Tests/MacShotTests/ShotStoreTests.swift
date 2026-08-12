@@ -53,6 +53,24 @@ final class ShotStoreTests: XCTestCase {
         }
     }
 
+    func testMoleculeSourceAttachmentPersistsInAttributeTable() throws {
+        let (store, _) = try makeStore()
+        let shot = try store.save(image: makeImage(gray: 0.15), metadata: CaptureMetadata())
+        let source = MoleculeSourceAttachment(
+            canonicalXYZ: "2\nH2\nH 0 0 0\nH 0 0 0.74\n",
+            atomCount: 2,
+            createdAt: Date(timeIntervalSince1970: 456)
+        )
+
+        try store.attachMoleculeSource(source, to: shot)
+
+        XCTAssertEqual(store.moleculeSource(for: shot), source)
+        XCTAssertNotNil(store.attributePayload(
+            shotID: try XCTUnwrap(shot.id),
+            key: AttributeKey.moleculeXYZSource
+        ))
+    }
+
     // MARK: - 清理候选
 
     /// 有标签 / 收藏 / 修订（标注过）的截图不进清理候选；过期且无保护的进。

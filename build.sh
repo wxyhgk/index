@@ -135,7 +135,27 @@ codesign --verify --deep --strict "$APP_BUNDLE"
 
 if [[ "$WAS_RUNNING" == "1" ]]; then
     echo "==> 启动新 MacShot"
-    open "$PWD/$APP_BUNDLE"
+    # 旧进程刚退出时 LaunchServices 偶尔仍把 bundle 记成“正在终止”，
+    # `open` 会瞬时返回 -600。App 已经原子替换成功，此时有限重试并以新 PID
+    # 真正出现为准，不能只信 `open` 的退出码。
+    STARTED=0
+    for attempt in {1..5}; do
+        open "$PWD/$APP_BUNDLE" || true
+        for _ in {1..10}; do
+            if [[ -n "$(running_pids)" ]]; then
+                STARTED=1
+                break
+            fi
+            sleep 0.1
+        done
+        [[ "$STARTED" == "1" ]] && break
+        echo "==> 新进程尚未出现，重试启动（$attempt/5）"
+        sleep 0.2
+    done
+    if [[ "$STARTED" != "1" ]]; then
+        echo "新 MacShot 未能自动启动；App 已安全替换，可手动运行: open $APP_BUNDLE" >&2
+        exit 1
+    fi
 fi
 
 echo

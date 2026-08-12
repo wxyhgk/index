@@ -8,22 +8,7 @@ import AppKit
 /// **窗口只装图片**：工具条是挂在下方的独立子窗口（`PinToolbarPanel`），
 /// 尺寸只由「此刻有哪些控件可见」决定。钉图缩到多小、放到多大，工具条都不变。
 @MainActor
-final class PinWindowController: NSWindowController, CaptureActionHost {
-
-    /// 穿透中的钉图索引。弱引用 —— 生命周期由 WindowRegistry 持有，
-    /// 这里只是给菜单栏「解除钉图穿透」查询和遍历用，窗口析构后自动出表。
-    private static let passthroughPins = NSHashTable<PinWindowController>.weakObjects()
-
-    /// 菜单栏据此决定要不要显示「解除钉图穿透」。
-    static var hasPassthroughPins: Bool { !passthroughPins.allObjects.isEmpty }
-
-    /// 恢复所有穿透中的钉图。穿透后窗口收不到任何鼠标键盘事件，
-    /// ⌘T 按不进去 —— 菜单栏这一项是唯一的解除入口。
-    static func liftAllPassthrough() {
-        for controller in passthroughPins.allObjects {
-            controller.setPassthrough(false)
-        }
-    }
+final class PinWindowController: NSWindowController, CaptureActionHost, PinPassthroughControlling {
 
     private let base: CGImage
     private let shot: Shot?
@@ -47,16 +32,34 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
     private var imageView: PinImageView? { window?.contentView as? PinImageView }
 
     /// 把一张图钉在它被截取的位置上。
-    static func pin(base: CGImage, layers: Layers<ImageSpace>, shot: Shot?, at globalRegion: CGRect) {
+    static func pin(
+        base: CGImage,
+        layers: Layers<ImageSpace>,
+        shot: Shot?,
+        at globalRegion: CGRect,
+        moleculeSource: MoleculeSourceAttachment? = nil
+    ) {
         let anchor: CGRect = (globalRegion.width >= 20 && globalRegion.height >= 20)
             ? globalRegion
             : .zero
-        let controller = PinWindowController(base: base, layers: layers, shot: shot, anchor: anchor)
+        let controller = PinWindowController(
+            base: base,
+            layers: layers,
+            shot: shot,
+            anchor: anchor,
+            moleculeSource: moleculeSource
+        )
         // 钉图是浮动面板，不算「正经窗口」，不该让 App 跳出 Dock 图标。
         WindowRegistry.shared.present(controller, dockIcon: false, retain: true)
     }
 
-    private init(base: CGImage, layers: Layers<ImageSpace>, shot: Shot?, anchor: CGRect) {
+    private init(
+        base: CGImage,
+        layers: Layers<ImageSpace>,
+        shot: Shot?,
+        anchor: CGRect,
+        moleculeSource: MoleculeSourceAttachment?
+    ) {
         self.base = base
         self.shot = shot
         self.savedLayers = layers
@@ -69,7 +72,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
             : anchor
         self.naturalSize = imageFrame.size
 
-        let panel = PinPanel(
+        let panel = PinnedContentPanel(
             contentRect: imageFrame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -86,6 +89,36 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         panel.isMovableByWindowBackground = false
 
         let view = PinImageView(base: base, layers: layers)
+        let attachedMolecule = moleculeSource ?? shot.flatMap {
+            ShotStore.shared.moleculeSource(for: $0)
+        }
+        if let attachedMolecule {
+            view.moleculeSourceActions = MoleculeSourceActions(
+                copyXYZ: {
+                    Clipboard.copy(text: attachedMolecule.canonicalXYZ)
+                },
+                openInDefaultApp: { [weak self] in
+                    do {
+                        try MoleculeSourceFilePresenter.openWorkingCopy(
+                            attachedMolecule,
+                            shotID: shot?.id
+                        )
+                    } catch {
+                        AppAlert.error(
+                            "无法打开 XYZ 工作副本",
+                            error: error,
+                            host: self?.window
+                        )
+                    }
+                },
+                reopen3D: {
+                    MacMoleculePinPresenter.shared.pinMolecule(
+                        xyz: attachedMolecule.canonicalXYZ,
+                        atomCount: attachedMolecule.atomCount
+                    )
+                }
+            )
+        }
         view.onScrollZoom = { [weak self] delta in self?.applyZoom(delta) }
         view.onOpacityStep = { [weak self] step in self?.applyOpacity(step) }
         view.onAction = { [weak self] actionID in self?.perform(actionID) }
@@ -321,9 +354,9 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
         if on {
             // 文字输入态收不到后续按键了，先落库结束。
             imageView?.annotation.endTextEditing()
-            Self.passthroughPins.add(self)
+            PinPassthroughRegistry.shared.register(self)
         } else {
-            Self.passthroughPins.remove(self)
+            PinPassthroughRegistry.shared.unregister(self)
         }
 
         panel.ignoresMouseEvents = on
@@ -344,15 +377,14 @@ final class PinWindowController: NSWindowController, CaptureActionHost {
 
     override func close() {
         saveRevisionIfNeeded()
-        Self.passthroughPins.remove(self)
+        PinPassthroughRegistry.shared.unregister(self)
         toolbarPanel.toolbarView.clearToolTips()
         window?.removeChildWindow(toolbarPanel)
         toolbarPanel.orderOut(nil)
         super.close()
     }
-}
 
-/// 无边框浮动面板。默认不能成为 key，但我们需要它接收键盘事件。
-private final class PinPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    func setPinPassthrough(_ enabled: Bool) {
+        setPassthrough(enabled)
+    }
 }

@@ -59,6 +59,7 @@ protocol StyleStore: AnyObject, ObservableObject {
     var delayedCaptureShortcut: KeyboardShortcut { get }
     var recordingShortcut: KeyboardShortcut { get }
     var scrollCaptureShortcut: KeyboardShortcut { get }
+    var moleculePinShortcut: KeyboardShortcut { get }
 }
 
 extension AppSettings: StyleStore {}
@@ -117,6 +118,7 @@ final class FakeStyleStore: ObservableObject, StyleStore {
     @Published var delayedCaptureShortcut: KeyboardShortcut = .delayedCaptureDefault
     @Published var recordingShortcut: KeyboardShortcut = .recordingDefault
     @Published var scrollCaptureShortcut: KeyboardShortcut = .scrollCaptureDefault
+    @Published var moleculePinShortcut: KeyboardShortcut = .moleculePinDefault
 
     init(
         galleryScrollDepth: Bool = true,
@@ -149,7 +151,8 @@ final class FakeStyleStore: ObservableObject, StyleStore {
         galleryShortcut: KeyboardShortcut = .galleryDefault,
         delayedCaptureShortcut: KeyboardShortcut = .delayedCaptureDefault,
         recordingShortcut: KeyboardShortcut = .recordingDefault,
-        scrollCaptureShortcut: KeyboardShortcut = .scrollCaptureDefault
+        scrollCaptureShortcut: KeyboardShortcut = .scrollCaptureDefault,
+        moleculePinShortcut: KeyboardShortcut = .moleculePinDefault
     ) {
         self.galleryScrollDepth = galleryScrollDepth
         self.semanticSearch = semanticSearch
@@ -182,5 +185,6 @@ final class FakeStyleStore: ObservableObject, StyleStore {
         self.delayedCaptureShortcut = delayedCaptureShortcut
         self.recordingShortcut = recordingShortcut
         self.scrollCaptureShortcut = scrollCaptureShortcut
+        self.moleculePinShortcut = moleculePinShortcut
     }
 }

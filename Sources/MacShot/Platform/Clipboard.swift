@@ -7,6 +7,10 @@ import AppKit
 @MainActor
 enum Clipboard {
 
+    static func readText() -> String? {
+        NSPasteboard.general.string(forType: .string)
+    }
+
     static func copy(text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

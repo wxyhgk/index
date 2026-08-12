@@ -436,6 +436,10 @@ private struct ShortcutSettings: View {
                     ShortcutRecorder(shortcut: $settings.galleryShortcut)
                         .frame(width: 130, height: 24)
                 }
+                LabeledContent("3D 分子钉图") {
+                    ShortcutRecorder(shortcut: $settings.moleculePinShortcut)
+                        .frame(width: 130, height: 24)
+                }
 
                 HStack {
                     Spacer()

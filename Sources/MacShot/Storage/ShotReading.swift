@@ -23,6 +23,7 @@ protocol ShotReading: AnyObject {
     func relatedShots(to shot: Shot) -> [Shot]
     func cleanupCandidates(olderThan date: Date, limit: Int) -> [Shot]
     func attributePayload(shotID: Int64, key: String) -> Data?
+    func moleculeSource(for shot: Shot) -> MoleculeSourceAttachment?
     func allMatchingIDs() async -> [Int64]
     func allTags() -> [(name: String, count: Int)]
     func shotsMissingAttribute(key: String) -> [Shot]
@@ -41,6 +42,7 @@ protocol ShotWriting: AnyObject {
     func removeTag(shotID: Int64, _ tag: String)
     func renameTag(_ old: String, to new: String)
     func deleteTag(_ tag: String)
+    func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws
 }
 
 /// 可观察：需要订阅刷新的视图。

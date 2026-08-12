@@ -33,6 +33,11 @@ protocol ClipboardWriting {
 }
 
 @MainActor
+protocol ClipboardReading {
+    func readText() -> String?
+}
+
+@MainActor
 protocol ScreenshotCapturing {
     func makeSnapshots() async throws -> [DisplaySnapshot]
 }
@@ -62,6 +67,39 @@ protocol WindowPinning {
     func pin(image: CGImage, layers: Layers<ImageSpace>)
 }
 
+/// 交互式分子钉图边界。调用方只传已经校验过的标准 XYZ 文本，不认识
+/// WKWebView / NSPanel，也不承担窗口生命周期。
+@MainActor
+protocol MoleculePinning {
+    func pinMolecule(xyz: String, atomCount: Int)
+    /// 由 App 编排层注入“定格后如何落库并转为普通钉图”。平台窗口只负责
+    /// 产生当前相机视角的像素，不反向依赖 Storage / Pin。
+    func configureFreezeHandler(_ handler: @escaping MoleculeFreezeHandler)
+}
+
+struct MoleculeFreezeSnapshot {
+    let image: CGImage
+    /// 交互窗口内容区在全局 AppKit 坐标中的位置，普通钉图据此原地接替。
+    let globalRegion: CGRect
+    let scale: Double
+}
+
+typealias MoleculeFreezeHandler = @MainActor (
+    MoleculeFreezeSnapshot,
+    MoleculeSourceAttachment
+) throws -> Void
+
+extension MoleculePinning {
+    /// 让简单替身继续只实现 `pinMolecule`；生产实现会保存此闭包。
+    func configureFreezeHandler(_ handler: @escaping MoleculeFreezeHandler) {}
+}
+
+/// 进入鼠标穿透后的钉图收不到键盘事件，由统一注册表和菜单栏负责恢复。
+@MainActor
+protocol PinPassthroughControlling: AnyObject {
+    func setPinPassthrough(_ enabled: Bool)
+}
+
 // ============================================================
 // MARK: - 预留 PAL（下一步按需抽协议）
 //
@@ -89,7 +127,8 @@ protocol WindowPinning {
 
 /// macOS 实现（现 `Clipboard` 的包装，未来 `WinClipboard` 另实现）
 @MainActor
-final class MacClipboard: ClipboardWriting {
+final class MacClipboard: ClipboardWriting, ClipboardReading {
+    func readText() -> String? { Clipboard.readText() }
     func copy(text: String) { Clipboard.copy(text: text) }
     func copy(_ image: CGImage) { Clipboard.copy(image) }
     func copy(_ images: [CGImage]) { Clipboard.copy(images) }

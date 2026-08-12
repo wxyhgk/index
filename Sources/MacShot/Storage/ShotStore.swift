@@ -222,6 +222,41 @@ final class ShotStore: ObservableObject {
         setNeedsReload()
     }
 
+    /// 把分子来源作为 Shot 的独立附件写入。这里使用可抛错入口，保证“定格”流程
+    /// 能在附件失败时撤销刚创建的图片记录，而不是留下没有 XYZ 的半成品。
+    func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws {
+        guard let shotID = shot.id else { throw StoreError.missingShotID }
+        let payload = try JSONEncoder().encode(source)
+        var record = ShotAttribute(
+            id: nil,
+            shotID: shotID,
+            key: AttributeKey.moleculeXYZSource,
+            text: "XYZ \(source.atomCount) atoms",
+            payload: payload,
+            createdAt: Date()
+        )
+        try dbQueue.write { db in
+            try ShotAttribute
+                .filter(
+                    Column("shotID") == shotID
+                        && Column("key") == AttributeKey.moleculeXYZSource
+                )
+                .deleteAll(db)
+            try record.insert(db)
+        }
+        setNeedsReload()
+    }
+
+    func moleculeSource(for shot: Shot) -> MoleculeSourceAttachment? {
+        guard let shotID = shot.id,
+              let payload = attributePayload(
+                shotID: shotID,
+                key: AttributeKey.moleculeXYZSource
+              )
+        else { return nil }
+        return try? JSONDecoder().decode(MoleculeSourceAttachment.self, from: payload)
+    }
+
     /// 删除一条派生属性。取消收藏这类「有即为真」的标记需要真正删除记录，
     /// 而不是写一个空值 —— 筛选和计数都靠 EXISTS 判断。
     func removeAttribute(shotID: Int64, key: String) {
@@ -1256,5 +1291,6 @@ final class ShotStore: ObservableObject {
 
     enum StoreError: Error {
         case encodingFailed
+        case missingShotID
     }
 }

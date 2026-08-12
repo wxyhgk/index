@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings: any StyleStore
     private let shotStore: any ShotReading & ShotWriting & ShotObserving
     private let pipeline: CapturePipeline
+    private let clipboardReader: any ClipboardReading
+    private let moleculePinner: any MoleculePinning
     /// 录制中每秒刷一次菜单里的「停止录制（mm:ss）」计时。
     private var recordingTimer: Timer?
 
@@ -18,12 +20,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings: (any StyleStore)? = nil,
         shotStore: (any ShotReading & ShotWriting & ShotObserving)? = nil,
         pipeline: CapturePipeline? = nil,
-        urlRouter: URLCommandRouter? = nil
+        urlRouter: URLCommandRouter? = nil,
+        clipboardReader: (any ClipboardReading)? = nil,
+        moleculePinner: (any MoleculePinning)? = nil
     ) {
         self.settings = settings ?? AppSettings.shared
         self.shotStore = shotStore ?? ShotStore.shared
         self.pipeline = pipeline ?? CapturePipeline.shared
         self.urlRouter = urlRouter ?? URLCommandRouter()
+        self.clipboardReader = clipboardReader ?? MacClipboard.shared
+        self.moleculePinner = moleculePinner ?? MacMoleculePinPresenter.shared
         super.init()
     }
 
@@ -58,6 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CapturePipeline.registerBuiltins(into: pipeline, styleStore: settings)
         ToolbarRegistry.registerBuiltins(into: .shared)
         GalleryDestinationRegistry.registerBuiltins(into: .shared)
+
+        // 3D 窗口只负责产生当前相机视角；图片落库、来源附件与普通钉图的编排
+        // 留在 App 层，避免 Platform 反向依赖 Storage / Pin。
+        moleculePinner.configureFreezeHandler { [weak self] snapshot, source in
+            guard let self else { return }
+            try self.freezeMolecule(snapshot, source: source)
+        }
 
         // 修订落库后重画缩略图所需的两件事，在这里接线 ——
         // Storage 不许认识 Render（渲染）和 UI（缓存），所以由编排层注入。
@@ -175,6 +188,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         gallery.tag = Tag.gallery
         menu.addItem(gallery)
 
+        let molecule = NSMenuItem(
+            title: "从剪贴板钉住 3D 分子",
+            action: #selector(pinMoleculeFromClipboard),
+            keyEquivalent: ""
+        )
+        molecule.target = self
+        molecule.tag = Tag.moleculePin
+        menu.addItem(molecule)
+
         // 穿透中的钉图收不到任何鼠标键盘事件（⌘T 按不进去），这里是唯一的解除入口。
         // 平时藏起来，menuNeedsUpdate 里按需显示。
         let liftPassthrough = NSMenuItem(
@@ -215,6 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         static let scrollCapture = 5
         static let liftPassthrough = 6
         static let recordPause = 7
+        static let moleculePin = 8
     }
 
     // MARK: - 快捷键
@@ -235,6 +258,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.bind("gallery", to: settings.galleryShortcut) { [weak self] in
             self?.openGallery()
         }
+        GlobalHotKeyCenter.shared.bind("pin-molecule", to: settings.moleculePinShortcut) { [weak self] in
+            self?.pinMoleculeFromClipboard()
+        }
     }
 
     private func refreshHotKeys() {
@@ -243,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.update("record", to: settings.recordingShortcut)
         GlobalHotKeyCenter.shared.update("capture-scroll", to: settings.scrollCaptureShortcut)
         GlobalHotKeyCenter.shared.update("gallery", to: settings.galleryShortcut)
+        GlobalHotKeyCenter.shared.update("pin-molecule", to: settings.moleculePinShortcut)
     }
 
     // MARK: - 动作
@@ -273,8 +300,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GalleryWindowController.shared.show()
     }
 
+    @objc private func pinMoleculeFromClipboard() {
+        guard let text = clipboardReader.readText(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            AppAlert.error(
+                "无法创建 3D 分子钉图",
+                message: "请先复制标准 XYZ 文本，或复制若干行“元素 X Y Z”坐标。"
+            )
+            return
+        }
+        do {
+            let molecule = try MoleculeXYZ.parse(text)
+            moleculePinner.pinMolecule(xyz: molecule.canonicalText, atomCount: molecule.atomCount)
+        } catch {
+            AppAlert.error("无法创建 3D 分子钉图", error: error)
+        }
+    }
+
+    private func freezeMolecule(
+        _ snapshot: MoleculeFreezeSnapshot,
+        source: MoleculeSourceAttachment
+    ) throws {
+        var metadata = CaptureMetadata()
+        metadata.globalRegion = snapshot.globalRegion
+        metadata.scale = snapshot.scale
+        metadata.appName = "MacShot 3D 分子"
+        metadata.appBundleID = Bundle.main.bundleIdentifier
+        metadata.appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        metadata.appBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        let moleculeComment = source.canonicalXYZ
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .dropFirst()
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        metadata.windowTitle = moleculeComment.flatMap { $0.isEmpty ? nil : $0 } ?? "3D 分子"
+
+        if let screen = Geometry.screen(containing: CGPoint(
+            x: snapshot.globalRegion.midX,
+            y: snapshot.globalRegion.midY
+        )) {
+            metadata.displayID = Geometry.displayID(of: screen)
+            metadata.displayName = screen.localizedName
+        }
+
+        let shot = try shotStore.save(image: snapshot.image, metadata: metadata)
+        do {
+            try shotStore.attachMoleculeSource(source, to: shot)
+        } catch {
+            // 来源附件是这类 Shot 的产品契约。写失败就撤销图片记录，不能留下
+            // 一个工具栏里再也找不回 XYZ 的半成品。
+            shotStore.delete(shot)
+            throw error
+        }
+
+        if let shotID = shot.id {
+            pipeline.run(PostProcessInput(
+                shotID: shotID,
+                image: snapshot.image,
+                appBundleID: metadata.appBundleID
+            ))
+        }
+        PinWindowController.pin(
+            base: snapshot.image,
+            layers: Layers(),
+            shot: shot,
+            at: snapshot.globalRegion,
+            moleculeSource: source
+        )
+    }
+
     @objc private func liftPinPassthrough() {
-        PinWindowController.liftAllPassthrough()
+        PinPassthroughRegistry.shared.liftAll()
     }
 
     // MARK: - 录制状态
@@ -458,8 +554,11 @@ extension AppDelegate: NSMenuDelegate {
         menu.item(withTag: Tag.scrollCapture)?.title =
             "滚动截图\t\(settings.scrollCaptureShortcut.displayString)"
         menu.item(withTag: Tag.gallery)?.title = "图库…\t\(settings.galleryShortcut.displayString)"
+        menu.item(withTag: Tag.moleculePin)?.title =
+            "从剪贴板钉住 3D 分子\t\(settings.moleculePinShortcut.displayString)"
         // 有穿透中的钉图才显示「解除钉图穿透」。
-        menu.item(withTag: Tag.liftPassthrough)?.isHidden = !PinWindowController.hasPassthroughPins
+        menu.item(withTag: Tag.liftPassthrough)?.isHidden =
+            !PinPassthroughRegistry.shared.hasPassthroughPins
         updateRecordingMenuItem()
     }
 }

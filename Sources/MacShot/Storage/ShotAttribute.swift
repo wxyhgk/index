@@ -68,6 +68,10 @@ enum AttributeKey {
     /// 详情栏据此显示「打开录像」。text 必须为 nil —— attributeFts 会索引
     /// 整个 text 列，文件路径不该进搜索索引。
     static let recordingPath = "recording.path"
+    /// 3D 分子快照的不可变来源（`MoleculeSourceAttachment` JSON）。
+    /// 图片导出不携带这份载荷；只有 MacShot 内的 Shot 能据此复制 XYZ、
+    /// 打开工作副本或重新进入交互式 3D。
+    static let moleculeXYZSource = "source.molecule.xyz.v1"
     /// 敏感内容检测结果（[SensitiveRegion] 的 JSON）。
     /// searchableText 只放命中的**种类**汇总（如 "邮箱,密钥"）——
     /// 具体内容（邮箱地址、密钥本身）绝不进全文索引。

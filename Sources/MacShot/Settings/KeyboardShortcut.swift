@@ -29,6 +29,10 @@ struct KeyboardShortcut: Codable, Equatable {
         keyCode: 1,                                    // S
         modifiers: UInt32(controlKey) | UInt32(cmdKey)
     )
+    static let moleculePinDefault = KeyboardShortcut(
+        keyCode: 46,                                   // M
+        modifiers: UInt32(controlKey) | UInt32(cmdKey)
+    )
 
     /// 至少要有一个修饰键，否则会把普通打字全劫走。
     var isValid: Bool { modifiers != 0 }

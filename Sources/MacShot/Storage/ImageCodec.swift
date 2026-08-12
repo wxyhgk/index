@@ -31,6 +31,13 @@ enum ImageCodec {
         return CGImageSourceCreateImageAtIndex(src, 0, nil)
     }
 
+    static func load(from data: Data) -> CGImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(src, 0, [
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary)
+    }
+
     /// 等比缩放到最长边 maxDimension。
     static func resized(_ image: CGImage, maxDimension: Int) -> CGImage? {
         let w = image.width
