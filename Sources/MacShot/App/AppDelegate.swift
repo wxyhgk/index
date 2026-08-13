@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 LayerRenderer.render(base: base, layers: layers)
             }
             store.thumbnailInvalidator = { shot in
-                ThumbnailCache.shared.remove(forKey: shot.sha256)
+                ThumbnailLoader.shared.remove(forKey: shot.sha256)
             }
         }
         registerCaptureSources()

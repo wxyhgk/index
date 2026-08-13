@@ -10,13 +10,25 @@ import Foundation
 final class GallerySelection: ObservableObject {
     static let shared = GallerySelection()
 
+    private struct SelectionState: Equatable {
+        var selectedIDs: Set<Int64> = []
+        var anchorID: Int64?
+        var primaryID: Int64?
+    }
+
+    /// 三个强相关字段作为一个值发布，一次用户操作只产生一次刷新。
+    @Published private var state = SelectionState()
+
     /// 选中集合。空 = 未选；1 张 = 单选；多张 = 批量语义。
-    @Published private(set) var selectedIDs: Set<Int64> = []
+    var selectedIDs: Set<Int64> { state.selectedIDs }
     /// ⇧ 范围选择的锚点：普通点击 / ⌘点击把锚点移到落点，⇧点击保持不动。
-    @Published private(set) var anchorID: Int64?
+    var anchorID: Int64? { state.anchorID }
     /// 主选中：单选时的那张 / 多选时最后操作的那张。
     /// inspector 展示、键盘走格起点、Quick Look 定位都以它为准。
-    @Published private(set) var primaryID: Int64?
+    var primaryID: Int64? { state.primaryID }
+    var primaryIDPublisher: AnyPublisher<Int64?, Never> {
+        $state.map(\.primaryID).removeDuplicates().eraseToAnyPublisher()
+    }
     /// 待确认删除的截图 ID（展示顺序）。键盘 ⌘⌫、右键菜单、多选面板都写这里，
     /// 由 GalleryGrid 上唯一的 confirmationDialog 消费 —— 确认框只有一套。
     @Published var pendingDeleteIDs: [Int64]?
@@ -35,45 +47,53 @@ final class GallerySelection: ObservableObject {
     /// 单选（清空集合）。定位类场景（时间线 / 相似 / 开窗定位 / Quick Look 翻页）
     /// 语义 = 清空后单选，全走这里。
     func select(only id: Int64?) {
-        selectedIDs = id.map { [$0] } ?? []
-        anchorID = id
-        primaryID = id
+        state = SelectionState(
+            selectedIDs: id.map { [$0] } ?? [],
+            anchorID: id,
+            primaryID: id
+        )
     }
 
     /// ⌘点击：toggle 该张的选中态，锚点移到落点。
     func toggle(_ id: Int64) {
-        if selectedIDs.contains(id) {
-            selectedIDs.remove(id)
-            if primaryID == id { primaryID = selectedIDs.first }
+        var next = state
+        if next.selectedIDs.contains(id) {
+            next.selectedIDs.remove(id)
+            if next.primaryID == id { next.primaryID = next.selectedIDs.first }
         } else {
-            selectedIDs.insert(id)
-            primaryID = id
+            next.selectedIDs.insert(id)
+            next.primaryID = id
         }
-        anchorID = id
+        next.anchorID = id
+        state = next
     }
 
     /// ⇧点击 / ⇧方向键：选中锚点到目标的**全局顺序**区间（跨分组连续）。
     /// `orderedIDs` 是当前列表的展示顺序；锚点失效时退化为单选。
     func selectRange(to id: Int64, in orderedIDs: [Int64]) {
-        guard let anchorID,
+        guard let anchorID = state.anchorID,
               let a = orderedIDs.firstIndex(of: anchorID),
               let b = orderedIDs.firstIndex(of: id)
         else {
             select(only: id)
             return
         }
-        selectedIDs = Set(orderedIDs[min(a, b)...max(a, b)])
-        primaryID = id
+        var next = state
+        next.selectedIDs = Set(orderedIDs[min(a, b)...max(a, b)])
+        next.primaryID = id
+        state = next
     }
 
     /// ⌘A：全选当前列表。主选中还在列表里就不跳。
     func selectAll(_ orderedIDs: [Int64]) {
         guard !orderedIDs.isEmpty else { return }
-        selectedIDs = Set(orderedIDs)
-        anchorID = orderedIDs.first
-        if primaryID.map({ selectedIDs.contains($0) }) != true {
-            primaryID = orderedIDs.last
+        var next = state
+        next.selectedIDs = Set(orderedIDs)
+        next.anchorID = orderedIDs.first
+        if next.primaryID.map({ next.selectedIDs.contains($0) }) != true {
+            next.primaryID = orderedIDs.last
         }
+        state = next
     }
 
     /// Esc：多选收拢回主选中那一张。

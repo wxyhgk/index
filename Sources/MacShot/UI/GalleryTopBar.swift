@@ -106,11 +106,16 @@ struct GalleryTopBar: View {
                     viewModel.clearSemanticResults()
                 }
             } else {
-                viewModel.reload()
+                viewModel.scheduleExactSearch()
             }
         }
         .onChange(of: viewModel.semanticMode) { _, semantic in
-            if !semantic { viewModel.clearSemanticResults() }
+            if semantic {
+                viewModel.cancelPendingExactSearch()
+            } else {
+                viewModel.clearSemanticResults()
+                viewModel.scheduleExactSearch()
+            }
         }
     }
 

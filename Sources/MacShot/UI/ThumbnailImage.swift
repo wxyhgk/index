@@ -1,29 +1,214 @@
-import SwiftUI
 import AppKit
+import ImageIO
+import SwiftUI
 
-/// 缩略图内存缓存。
-/// 没有它的话，SwiftUI 每次重建 body 都会把每张缩略图重新从磁盘解码一遍 —— 点选一次就卡一次。
+/// 一次后台解码的不可变结果。`CGImage` 可安全跨线程只读，NSImage 只在主线程创建。
+struct DecodedThumbnail: @unchecked Sendable {
+    let image: CGImage
+    let cost: Int
+}
+
+protocol ThumbnailDecoding: Sendable {
+    func decode(contentsOf url: URL) -> DecodedThumbnail?
+}
+
+/// 用 ImageIO 强制完成像素解码，避免 `NSImage(data:)` 把昂贵工作推迟到主线程绘制阶段。
+struct ImageIOThumbnailDecoder: ThumbnailDecoding {
+    let maximumPixelSize: Int
+
+    init(maximumPixelSize: Int = 640) {
+        self.maximumPixelSize = maximumPixelSize
+    }
+
+    func decode(contentsOf url: URL) -> DecodedThumbnail? {
+        let sourceOptions = [
+            kCGImageSourceShouldCache: false,
+        ] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else {
+            return nil
+        }
+
+        let decodeOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
+            kCGImageSourceShouldCacheImmediately: true,
+        ] as CFDictionary
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, decodeOptions) else {
+            return nil
+        }
+        return DecodedThumbnail(
+            image: image,
+            cost: ThumbnailCache.decodedCost(width: image.width, height: image.height)
+        )
+    }
+}
+
+/// 一个轻量异步信号量。排队中的请求响应 Task 取消，不会继续占用解码名额。
+private actor ThumbnailDecodeLimiter {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    private let limit: Int
+    private var activeCount = 0
+    private var waiters: [Waiter] = []
+
+    init(limit: Int) {
+        self.limit = max(1, limit)
+    }
+
+    func acquire() async -> Bool {
+        let id = UUID()
+        if Task.isCancelled { return false }
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if activeCount < limit {
+                    activeCount += 1
+                    continuation.resume(returning: true)
+                } else {
+                    waiters.append(Waiter(id: id, continuation: continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id: id) }
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            activeCount = max(0, activeCount - 1)
+        } else {
+            waiters.removeFirst().continuation.resume(returning: true)
+        }
+    }
+
+    private func cancelWaiter(id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(returning: false)
+    }
+}
+
+/// 后台加载管线：同一个缓存键只解码一次，并把全局并发限制在四个任务。
+actor ThumbnailLoadPipeline {
+    private struct InFlight {
+        let task: Task<DecodedThumbnail?, Never>
+        var waiters: Set<UUID>
+    }
+
+    private let decoder: any ThumbnailDecoding
+    private let limiter: ThumbnailDecodeLimiter
+    private var inFlight: [String: InFlight] = [:]
+
+    init(decoder: any ThumbnailDecoding = ImageIOThumbnailDecoder(), maximumConcurrentLoads: Int = 4) {
+        self.decoder = decoder
+        limiter = ThumbnailDecodeLimiter(limit: maximumConcurrentLoads)
+    }
+
+    func load(url: URL, key: String) async -> DecodedThumbnail? {
+        guard !Task.isCancelled else { return nil }
+        let waiterID = UUID()
+        let task: Task<DecodedThumbnail?, Never>
+        if var existing = inFlight[key] {
+            existing.waiters.insert(waiterID)
+            inFlight[key] = existing
+            task = existing.task
+        } else {
+            let decoder = self.decoder
+            let limiter = self.limiter
+            task = Task.detached(priority: .userInitiated) {
+                guard await limiter.acquire() else { return nil }
+                guard !Task.isCancelled else {
+                    await limiter.release()
+                    return nil
+                }
+                let result = decoder.decode(contentsOf: url)
+                await limiter.release()
+                return Task.isCancelled ? nil : result
+            }
+            inFlight[key] = InFlight(task: task, waiters: [waiterID])
+        }
+
+        return await withTaskCancellationHandler {
+            let result = await task.value
+            finishWaiter(waiterID, key: key)
+            return Task.isCancelled ? nil : result
+        } onCancel: {
+            Task { await self.cancelWaiter(waiterID, key: key) }
+        }
+    }
+
+    func cancelAll() {
+        inFlight.values.forEach { $0.task.cancel() }
+        inFlight.removeAll()
+    }
+
+    private func finishWaiter(_ waiterID: UUID, key: String) {
+        guard var request = inFlight[key] else { return }
+        request.waiters.remove(waiterID)
+        if request.waiters.isEmpty {
+            inFlight.removeValue(forKey: key)
+        } else {
+            inFlight[key] = request
+        }
+    }
+
+    private func cancelWaiter(_ waiterID: UUID, key: String) {
+        guard var request = inFlight[key] else { return }
+        request.waiters.remove(waiterID)
+        if request.waiters.isEmpty {
+            request.task.cancel()
+            inFlight.removeValue(forKey: key)
+        } else {
+            inFlight[key] = request
+        }
+    }
+}
+
+/// 每个缓存键一枚独立失效令牌。一张图重画只通知正在显示这一张的视图。
 @MainActor
-final class ThumbnailCache: ObservableObject {
+final class ThumbnailInvalidationToken: ObservableObject {
+    @Published fileprivate(set) var version = 0
 
+    fileprivate func invalidate() {
+        version &+= 1
+    }
+}
+
+/// 缩略图内存缓存。成本按解码后的像素计算，而不是 JPEG 文件的压缩字节数。
+@MainActor
+final class ThumbnailCache {
     static let shared = ThumbnailCache()
-
-    /// 每个键各自的作废版本号。`CachedImage` 把**自己那一个**编进 `.task` 的 id，
-    /// 于是只有被作废的那张会重新读盘，别人一动不动。
-    ///
-    /// 起初这里是一个全局世代号（任何作废都 +1）。那样每保存一次修订，
-    /// 编辑器胶片条上**所有**可见缩略图都会各跑一次 `load()` ——
-    /// 虽然除被作废的那张之外都在第一行命中缓存返回，但几十个 `.task`
-    /// 的重建本身也是活儿，而这活儿每隔一秒多就来一遍。
-    @Published private(set) var versions: [String: Int] = [:]
-
-    func version(forKey key: String) -> Int { versions[key] ?? 0 }
+    nonisolated static let totalCostLimit = 96 * 1024 * 1024
 
     private let cache = NSCache<NSString, NSImage>()
+    private var tokens: [String: ThumbnailInvalidationToken] = [:]
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
 
-    private init() {
+    init(observesMemoryPressure: Bool = true) {
         cache.countLimit = 500
-        cache.totalCostLimit = 128 * 1024 * 1024
+        cache.totalCostLimit = Self.totalCostLimit
+        guard observesMemoryPressure else { return }
+
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            // 内存压力下只释放共享缓存；不要立即通知可见卡片重读同一批图片。
+            MainActor.assumeIsolated { self?.purgeMemory() }
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    nonisolated static func decodedCost(width: Int, height: Int) -> Int {
+        let (pixels, pixelOverflow) = max(0, width).multipliedReportingOverflow(by: max(0, height))
+        guard !pixelOverflow else { return Int.max }
+        let (bytes, byteOverflow) = pixels.multipliedReportingOverflow(by: 4)
+        return byteOverflow ? Int.max : bytes
     }
 
     func image(forKey key: String) -> NSImage? {
@@ -34,71 +219,157 @@ final class ThumbnailCache: ObservableObject {
         cache.setObject(image, forKey: key as NSString, cost: cost)
     }
 
-    /// 作废一张。缩略图文件被覆盖（编辑后重画）时必须调 ——
-    /// 缓存键是 sha256，而 sha 只认原图字节，加标注不会让它变，
-    /// 不主动作废就会一直命中旧图。
-    func remove(forKey key: String) {
-        cache.removeObject(forKey: key as NSString)
-        versions[key, default: 0] &+= 1
+    func token(forKey key: String) -> ThumbnailInvalidationToken {
+        if let token = tokens[key] { return token }
+        let token = ThumbnailInvalidationToken()
+        tokens[key] = token
+        return token
     }
 
-    /// 全部作废（清理任务等）。这一下确实要惊动所有人，逐键 +1。
+    func remove(forKey key: String) {
+        cache.removeObject(forKey: key as NSString)
+        tokens[key]?.invalidate()
+    }
+
     func removeAll() {
         cache.removeAllObjects()
-        for key in versions.keys { versions[key]! &+= 1 }
+        tokens.values.forEach { $0.invalidate() }
+    }
+
+    func purgeMemory() {
+        cache.removeAllObjects()
     }
 }
 
-/// 异步加载 + 缓存的图片视图。命中缓存时**同步**返回，避免选中态切换时闪一下空白。
-struct CachedImage: View {
+/// UI 使用的统一缩略图入口。缓存和 AppKit 对象留在主线程，像素解码留在 actor 管线。
+@MainActor
+protocol ThumbnailLoading: AnyObject {
+    func cachedImage(forKey key: String) -> NSImage?
+    func invalidationToken(forKey key: String) -> ThumbnailInvalidationToken
+    func load(url: URL, key: String) async -> NSImage?
+    func remove(forKey key: String)
+    func removeAll()
+}
 
+@MainActor
+final class ThumbnailLoader: ThumbnailLoading {
+    static let shared = ThumbnailLoader(cache: .shared, pipeline: ThumbnailLoadPipeline())
+
+    private let cache: ThumbnailCache
+    private let pipeline: ThumbnailLoadPipeline
+    private var hasReportedFirstDecode = false
+    private var isLoadingEnabled = true
+    private var pendingSuspension: Task<Void, Never>?
+
+    init(cache: ThumbnailCache, pipeline: ThumbnailLoadPipeline) {
+        self.cache = cache
+        self.pipeline = pipeline
+    }
+
+    func cachedImage(forKey key: String) -> NSImage? {
+        cache.image(forKey: key)
+    }
+
+    func invalidationToken(forKey key: String) -> ThumbnailInvalidationToken {
+        cache.token(forKey: key)
+    }
+
+    func load(url: URL, key: String) async -> NSImage? {
+        if let hit = cache.image(forKey: key) { return hit }
+        guard isLoadingEnabled else { return nil }
+        if let pendingSuspension {
+            await pendingSuspension.value
+            self.pendingSuspension = nil
+            guard isLoadingEnabled else { return nil }
+        }
+        guard let decoded = await pipeline.load(url: url, key: key), !Task.isCancelled else {
+            return nil
+        }
+        guard isLoadingEnabled else { return nil }
+        if let hit = cache.image(forKey: key) { return hit }
+
+        let image = NSImage(
+            cgImage: decoded.image,
+            size: NSSize(width: decoded.image.width, height: decoded.image.height)
+        )
+        cache.insert(image, forKey: key, cost: decoded.cost)
+        if !hasReportedFirstDecode {
+            hasReportedFirstDecode = true
+            GalleryPerformance.firstThumbnailDecoded()
+        }
+        return image
+    }
+
+    func remove(forKey key: String) {
+        cache.remove(forKey: key)
+    }
+
+    func removeAll() {
+        cache.removeAll()
+        hasReportedFirstDecode = false
+    }
+
+    /// 隐藏图库时释放缓存和视图持有的图片，并停止还没完成的后台读取。
+    func suspendAndClear() {
+        isLoadingEnabled = false
+        pendingSuspension?.cancel()
+        pendingSuspension = Task { await pipeline.cancelAll() }
+        removeAll()
+    }
+
+    /// 重新打开图库时触发当前卡片按需加载，而不是一次性回填全部缓存。
+    func resume() {
+        guard !isLoadingEnabled else { return }
+        isLoadingEnabled = true
+        cache.removeAll()
+    }
+}
+
+/// 异步加载 + 缓存的图片视图。命中缓存时同步返回，避免选中态切换时闪空白。
+struct CachedImage: View {
     let url: URL
-    /// 缓存键，用截图的 sha256 —— 内容寻址，内容不变键就不变。
     let key: String
 
     @State private var image: NSImage?
+    @ObservedObject private var invalidation: ThumbnailInvalidationToken
     @Environment(\.colorScheme) private var colorScheme
-    /// 只为拿到作废世代 —— 缓存被清掉时本视图要重新读盘（见 `ThumbnailCache.generation`）。
-    @ObservedObject private var cacheState = ThumbnailCache.shared
+    private let loader: ThumbnailLoader
+
+    @MainActor
+    init(url: URL, key: String) {
+        self.init(url: url, key: key, loader: .shared)
+    }
+
+    @MainActor
+    init(url: URL, key: String, loader: ThumbnailLoader) {
+        self.url = url
+        self.key = key
+        self.loader = loader
+        _invalidation = ObservedObject(wrappedValue: loader.invalidationToken(forKey: key))
+    }
 
     var body: some View {
         Group {
-            if let image = image ?? ThumbnailCache.shared.image(forKey: key) {
+            if let image = image ?? loader.cachedImage(forKey: key) {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.medium)
                     .aspectRatio(contentMode: .fit)
                     .transition(.opacity)
             } else {
-                // 加载中的占位。与卡片衬底同色 —— 图片出现前后底色不该跳一下。
                 Rectangle().fill(DS.thumbnailBacking(colorScheme))
             }
         }
-        // id 里编进**本键自己的**版本号：换图（key 变）和「这一张被重画」都要重新加载，
-        // 而别人被重画时本视图纹丝不动。
-        .task(id: "\(key)#\(cacheState.version(forKey: key))") { await load() }
+        .task(id: "\(key)#\(invalidation.version)") { await load() }
     }
 
     private func load() async {
-        if let hit = ThumbnailCache.shared.image(forKey: key) {
-            // 命中即返回，不读盘 —— 世代变化会让所有可见卡片都跑一次这里，
-            // 除被作废的那张之外全在这一行结束。
+        if let hit = loader.cachedImage(forKey: key) {
             image = hit
             return
         }
-        // 缓存里没有了：先把 @State 里那份旧图丢掉，否则重画后的一瞬间
-        // 屏幕上仍是旧内容（body 是 `image ?? 缓存`）。
         image = nil
-
-        let target = url
-        // 解码放到后台，主线程只做赋值。
-        let data = await Task.detached(priority: .userInitiated) {
-            try? Data(contentsOf: target)
-        }.value
-
-        guard let data, let decoded = NSImage(data: data) else { return }
-        ThumbnailCache.shared.insert(decoded, forKey: key, cost: data.count)
-        // 首次从磁盘解码的图淡入 0.15s；命中缓存的同步路径不经过这里，不闪不抖。
+        guard let decoded = await loader.load(url: url, key: key), !Task.isCancelled else { return }
         withAnimation(.easeOut(duration: 0.15)) { image = decoded }
     }
 }

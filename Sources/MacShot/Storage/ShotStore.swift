@@ -705,24 +705,20 @@ final class ShotStore: ObservableObject {
     /// 只取 id 一列，十万行也就几百 KB。
     func allMatchingIDs(query rawQuery: String, filter: ShotFilter) async -> [Int64] {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        // 复用同一份查询体（共用 SQL 那条纪律），只是不限量、只要 id。
-        let all = (try? await queryRepository.shotsInBackground(
+        return (try? await queryRepository.matchingIDsInBackground(
             query: query,
-            filter: filter,
-            limit: Int.max
+            filter: filter
         )) ?? []
-        return all.compactMap(\.id)
     }
 
     /// 语义搜索的候选范围只看固定筛选，不把自然语言查询误当成精确文本查询。
     /// 复用 `ShotQueryRepository` 的筛选 SQL，避免录屏 / 标签 / App 各写一套条件。
     func matchingShotIDsInBackground(filter: ShotFilter) async -> Set<Int64> {
-        let rows = (try? await queryRepository.shotsInBackground(
+        let ids = (try? await queryRepository.matchingIDsInBackground(
             query: "",
-            filter: filter,
-            limit: Int.max
+            filter: filter
         )) ?? []
-        return Set(rows.compactMap(\.id))
+        return Set(ids)
     }
 
     /// 「库存内容变了」——新增 / 删除 / 筛选重查，即每次 `reload()`。

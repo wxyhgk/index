@@ -71,11 +71,14 @@ final class QuickLookController: NSObject {
             }
         }
         // 网格里点选 / 键盘导航 → 面板跟着换页。多选时面板预览主选中那张。
-        selectionCancellable = GallerySelection.shared.$primaryID
+        selectionCancellable = GallerySelection.shared.primaryIDPublisher
             .removeDuplicates()
             .sink { [weak self] _ in self?.syncPanelIndex() }
-        // objectWillChange 发在变更前，压到下一轮 runloop 再取新列表。
-        storeCancellable = viewModel.objectWillChange
+        // 搜索会话变化与库存快照是两条定向信号；不再依赖 ViewModel 转发所有 Store 写入。
+        storeCancellable = Publishers.Merge(
+            viewModel.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            store.libraryDidChangePublisher
+        )
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.reloadShots() }
     }

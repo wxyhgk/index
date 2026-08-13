@@ -75,10 +75,9 @@ struct GalleryView: View {
                 gallery
             }
         }
-        .onReceive(store.objectWillChange) { _ in
-            // objectWillChange 发在变更**之前**，转一拍再查库。
-            // 正在编辑的 shot 被删（自动清理等）时退回图库。
-            DispatchQueue.main.async { closeEditorIfShotDeleted() }
+        .onReceive(store.libraryDidChangePublisher) {
+            // 只订库存快照完成信号；修订自动保存与分页不再让整个窗口外壳失效。
+            closeEditorIfShotDeleted()
         }
     }
 

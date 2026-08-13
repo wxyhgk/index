@@ -10,6 +10,7 @@ final class GalleryWindowController: NSWindowController {
 
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
+    private var closeObserver: NSObjectProtocol?
 
     private init() {
         // 没有 `sceneBridgingOptions = [.toolbars]` 了：窗口不再有工具栏，
@@ -65,9 +66,23 @@ final class GalleryWindowController: NSWindowController {
                     QuickLookController.shared.close()
                 }
             }
+
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                ThumbnailLoader.shared.suspendAndClear()
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+    }
 
     // MARK: - Quick Look 责任链接管
     //
@@ -131,6 +146,8 @@ final class GalleryWindowController: NSWindowController {
     }
 
     func show(selecting shot: Shot? = nil) {
+        GalleryPerformance.galleryOpen()
+        ThumbnailLoader.shared.resume()
         GalleryViewModel.shared.reload()
         if let shot {
             // 定位类场景：清空多选后单选目标。

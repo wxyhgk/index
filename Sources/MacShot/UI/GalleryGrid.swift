@@ -118,6 +118,7 @@ struct GalleryGrid: View {
     @State private var renameName = ""
     /// 仅图库入口接受图片拖放；其它固定范围不能把新图导入后藏在范围外。
     @State private var isImportDropTargeted = false
+    @State private var hasReportedFirstPage = false
 
     // MARK: 宽度派生状态
     //
@@ -217,7 +218,8 @@ struct GalleryGrid: View {
     /// 网格内容的重算触发器：模式切换或数据变化都要重新分组。
     private struct GridKey: Equatable {
         let semanticMode: Bool
-        let shots: [Shot]
+        let hasSemanticResults: Bool
+        let shotIDs: [Int64?]
     }
 
     /// destination 的最终可见集合。精确搜索和语义搜索共用同一个 store 数据源；
@@ -300,24 +302,16 @@ struct GalleryGrid: View {
         .onChange(of: keyboardColumnCount, initial: true) { _, count in
             GalleryKeyboard.shared.gridColumnCount = count
         }
-        .task(id: GridKey(semanticMode: viewModel.semanticMode, shots: visibleShots)) {
-            // 语义结果本身就是排序（相似度降序），按时间分组会打乱它 —— 单段平铺。
-            if viewModel.semanticMode, viewModel.semanticResults != nil {
-                sections = visibleShots.isEmpty
-                    ? []
-                    : [ShotSection(id: "语义", title: "按相似度排序", shots: visibleShots)]
-            } else {
-                sections = ShotSection.group(visibleShots)
-            }
-            // 分组的同时把卡片要的派生信息批量查好：分类胶囊 + 标注角标。
-            let ids = visibleShots.compactMap(\.id)
-            categoriesByShot = store.attributeTexts(key: AttributeKey.category, shotIDs: ids)
-            annotatedIDs = store.annotatedShotIDs(among: ids)
-            recordingPathsByShot = store.recordingPaths(for: ids)
-            refreshCollectionMetadata(for: ids)
+        .task(id: GridKey(
+            semanticMode: viewModel.semanticMode,
+            hasSemanticResults: viewModel.semanticResults != nil,
+            shotIDs: visibleShots.map(\.id)
+        )) {
+            refreshGridSnapshot()
         }
         .onReceive(store.libraryDidChangePublisher) {
-            refreshCollectionMetadata(for: visibleShots.compactMap(\.id))
+            // 相同 ID 的标题/属性变化不会改变 task identity，由库存完成信号补这一轮。
+            refreshGridSnapshot()
         }
         .onChange(of: selection.pendingRenameID) { _, requestedID in
             guard let requestedID else { return }
@@ -505,6 +499,7 @@ struct GalleryGrid: View {
                                     columnWidth: waterfallColumnWidth
                                 )
                             )
+                            .onAppear { loadMoreIfNeeded(reaching: shot) }
                         }
                     }
                     .padding(.bottom, DS.s4)
@@ -583,10 +578,31 @@ struct GalleryGrid: View {
 
     @ViewBuilder
     private func card(for shot: Shot, height: CGFloat) -> some View {
-        if settings.galleryScrollDepth {
+        if settings.galleryScrollDepth && visibleShots.count <= ShotStore.pageSize {
             cardBody(for: shot, height: height).scrollDepth()
         } else {
             cardBody(for: shot, height: height)
+        }
+    }
+
+    private func refreshGridSnapshot() {
+        let shots = visibleShots
+        if viewModel.semanticMode, viewModel.semanticResults != nil {
+            sections = shots.isEmpty
+                ? []
+                : [ShotSection(id: "语义", title: "按相似度排序", shots: shots)]
+        } else {
+            sections = ShotSection.group(shots)
+        }
+
+        let ids = shots.compactMap(\.id)
+        categoriesByShot = store.attributeTexts(key: AttributeKey.category, shotIDs: ids)
+        annotatedIDs = store.annotatedShotIDs(among: ids)
+        recordingPathsByShot = store.recordingPaths(for: ids)
+        refreshCollectionMetadata(for: ids)
+        if !hasReportedFirstPage, !shots.isEmpty {
+            hasReportedFirstPage = true
+            GalleryPerformance.firstPagePublished(count: shots.count)
         }
     }
 

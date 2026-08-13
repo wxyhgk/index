@@ -20,13 +20,11 @@ final class GalleryViewModel: ObservableObject {
     @Published private(set) var isSemanticSearching = false
 
     private var semanticSearchGeneration = 0
-    private var storeSubscription: AnyCancellable?
+    private var exactSearchGeneration = 0
+    private var exactSearchTask: Task<Void, Never>?
 
     init(store: ShotStore) {
         self.store = store
-        storeSubscription = store.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
     }
 
     var shots: [Shot] { store.shots }
@@ -40,6 +38,37 @@ final class GalleryViewModel: ObservableObject {
 
     func reloadInBackground() async {
         await store.reloadInBackground(query: searchText, filter: filter)
+    }
+
+    /// 精确搜索只在输入停顿后执行。每轮捕获查询快照，旧任务即使迟到也不能覆盖新条件。
+    func scheduleExactSearch(debounce: Duration = .milliseconds(200)) {
+        exactSearchGeneration += 1
+        let generation = exactSearchGeneration
+        let query = searchText
+        let activeFilter = filter
+        exactSearchTask?.cancel()
+        exactSearchTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: debounce)
+            } catch {
+                return
+            }
+            guard let self,
+                  generation == self.exactSearchGeneration,
+                  !self.semanticMode,
+                  self.searchText == query,
+                  self.filter == activeFilter
+            else { return }
+            await self.store.reloadInBackground(query: query, filter: activeFilter)
+            guard generation == self.exactSearchGeneration else { return }
+            GalleryPerformance.searchFinished(generation: generation, count: self.store.shots.count)
+        }
+    }
+
+    func cancelPendingExactSearch() {
+        exactSearchGeneration += 1
+        exactSearchTask?.cancel()
+        exactSearchTask = nil
     }
 
     func loadNextPage() async {
@@ -79,6 +108,7 @@ final class GalleryViewModel: ObservableObject {
     }
 
     func reset(to filter: ShotFilter = .all) {
+        cancelPendingExactSearch()
         searchText = ""
         clearSemanticResults()
         self.filter = filter

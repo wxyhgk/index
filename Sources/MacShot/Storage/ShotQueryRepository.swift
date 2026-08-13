@@ -57,6 +57,20 @@ struct ShotQueryRepository {
         }
     }
 
+    /// 与列表查询完全相同的搜索/筛选语义，但只解码主键。
+    func matchingIDsInBackground(query: String, filter: ShotFilter) async throws -> [Int64] {
+        try await database.read { db in
+            let statement = Self.makeListStatement(
+                selection: "shot.id",
+                query: query,
+                filter: filter,
+                after: nil,
+                limit: Int.max
+            )
+            return try Int64.fetchAll(db, sql: statement.sql, arguments: statement.arguments)
+        }
+    }
+
     /// 观察图库库存，并把数据库提交自动转换成完整的列表快照。
     ///
     /// 这里故意使用显式 region，而不是只依赖查询自动推导：应用/收藏集首页还要在
@@ -165,6 +179,29 @@ struct ShotQueryRepository {
         after cursor: PageCursor?,
         limit: Int
     ) throws -> [Shot] {
+        let statement = makeListStatement(
+            selection: "shot.*",
+            query: query,
+            filter: filter,
+            after: cursor,
+            limit: limit
+        )
+        return try Shot.fetchAll(db, sql: statement.sql, arguments: statement.arguments)
+    }
+
+    private struct ListStatement {
+        let sql: String
+        let arguments: StatementArguments
+    }
+
+    /// 列表与 ID-only 查询共用这一份 SQL 组装，避免全选的筛选语义慢慢漂移。
+    private static func makeListStatement(
+        selection: String,
+        query: String,
+        filter: ShotFilter,
+        after cursor: PageCursor?,
+        limit: Int
+    ) -> ListStatement {
         let filterClause: String
         var arguments: [String: (any DatabaseValueConvertible)?] = [:]
 
@@ -249,8 +286,8 @@ struct ShotQueryRepository {
         }
 
         if query.isEmpty {
-            return try Shot.fetchAll(db, sql: """
-                SELECT shot.* FROM shot
+            return ListStatement(sql: """
+                SELECT \(selection) FROM shot
                 WHERE 1 = 1 \(filterClause)
                 \(cursorClause)
                 ORDER BY shot.capturedAt DESC, shot.id DESC
@@ -265,8 +302,8 @@ struct ShotQueryRepository {
                 .replacingOccurrences(of: "%", with: "\\%")
                 .replacingOccurrences(of: "_", with: "\\_")
             arguments["like"] = "%\(escaped)%"
-            return try Shot.fetchAll(db, sql: """
-                SELECT shot.* FROM shot
+            return ListStatement(sql: """
+                SELECT \(selection) FROM shot
                 WHERE (
                     shot.customTitle LIKE :like ESCAPE '\\'
                     OR shot.appName LIKE :like ESCAPE '\\'
@@ -286,8 +323,8 @@ struct ShotQueryRepository {
 
         let escaped = query.replacingOccurrences(of: "\"", with: "\"\"")
         arguments["pattern"] = "\"\(escaped)\""
-        return try Shot.fetchAll(db, sql: """
-            SELECT shot.* FROM shot
+        return ListStatement(sql: """
+            SELECT \(selection) FROM shot
             WHERE shot.id IN (
                 SELECT shotFts.rowid FROM shotFts WHERE shotFts MATCH :pattern
                 UNION

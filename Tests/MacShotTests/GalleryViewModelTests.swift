@@ -70,6 +70,27 @@ final class GalleryViewModelTests: XCTestCase {
         XCTAssertNotEqual(ids, [first.id, second.id].compactMap { $0 })
     }
 
+    func testExactSearchDebouncesAndOnlyPublishesLatestQuery() async throws {
+        let (viewModel, store, root) = try makeSubject()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var firstMetadata = CaptureMetadata()
+        firstMetadata.windowTitle = "alpha only"
+        _ = try store.save(image: image(gray: 0.2), metadata: firstMetadata)
+        var secondMetadata = CaptureMetadata()
+        secondMetadata.windowTitle = "beta only"
+        let beta = try store.save(image: image(gray: 0.8), metadata: secondMetadata)
+
+        viewModel.searchText = "alpha"
+        viewModel.scheduleExactSearch(debounce: .milliseconds(80))
+        try await Task.sleep(for: .milliseconds(10))
+        viewModel.searchText = "beta"
+        viewModel.scheduleExactSearch(debounce: .milliseconds(5))
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(viewModel.displayShots.compactMap(\.id), [beta.id].compactMap { $0 })
+    }
+
     private func image(gray: CGFloat) throws -> CGImage {
         let context = try XCTUnwrap(CGContext(
             data: nil,

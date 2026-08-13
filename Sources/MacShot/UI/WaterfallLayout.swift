@@ -27,10 +27,52 @@ struct WaterfallLayout: Layout {
     var spacing: CGFloat
 
     /// 一次贪心排布的结果：每个子视图的偏移 + 尺寸，以及内容总高。
-    private struct Placement {
+    struct Cache {
+        var placement = Placement()
+        var signature = Signature.empty
+    }
+
+    struct Signature: Equatable {
+        let columnCount: Int
+        let columnWidth: CGFloat
+        let spacing: CGFloat
+        let subviewCount: Int
+
+        static let empty = Signature(columnCount: 0, columnWidth: 0, spacing: 0, subviewCount: 0)
+    }
+
+    struct Placement {
         var origins: [CGPoint] = []
         var sizes: [CGSize] = []
         var height: CGFloat = 0
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache(
+            placement: computePlacement(subviews: subviews),
+            signature: currentSignature(subviewCount: subviews.count)
+        )
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache.placement = computePlacement(subviews: subviews)
+        cache.signature = currentSignature(subviewCount: subviews.count)
+    }
+
+    private func currentSignature(subviewCount: Int) -> Signature {
+        Signature(
+            columnCount: columnCount,
+            columnWidth: columnWidth,
+            spacing: spacing,
+            subviewCount: subviewCount
+        )
+    }
+
+    private func ensureCurrent(_ cache: inout Cache, subviews: Subviews) {
+        let signature = currentSignature(subviewCount: subviews.count)
+        guard cache.signature != signature else { return }
+        cache.placement = computePlacement(subviews: subviews)
+        cache.signature = signature
     }
 
     /// 贪心算法本体：按子视图顺序放入当前最矮的列（并列取最左），
@@ -67,15 +109,16 @@ struct WaterfallLayout: Layout {
     func sizeThatFits(
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout Void
+        cache: inout Cache
     ) -> CGSize {
+        ensureCurrent(&cache, subviews: subviews)
         let columns = max(1, columnCount)
         let naturalWidth = CGFloat(columns) * columnWidth
             + CGFloat(columns - 1) * spacing
         return CGSize(
             // 撑满提案宽度（列数不吃满时右侧留白，和网格模式的 .leading 对齐一致）。
             width: max(proposal.width ?? naturalWidth, naturalWidth),
-            height: computePlacement(subviews: subviews).height
+            height: cache.placement.height
         )
     }
 
@@ -83,9 +126,10 @@ struct WaterfallLayout: Layout {
         in bounds: CGRect,
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout Void
+        cache: inout Cache
     ) {
-        let placement = computePlacement(subviews: subviews)
+        ensureCurrent(&cache, subviews: subviews)
+        let placement = cache.placement
         for (index, subview) in subviews.enumerated() {
             let origin = placement.origins[index]
             subview.place(
