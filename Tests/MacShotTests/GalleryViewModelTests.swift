@@ -1,4 +1,5 @@
 import CoreGraphics
+import Combine
 import GRDB
 import XCTest
 @testable import MacShot
@@ -89,6 +90,33 @@ final class GalleryViewModelTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
 
         XCTAssertEqual(viewModel.displayShots.compactMap(\.id), [beta.id].compactMap { $0 })
+    }
+
+    func testGridPresentationIgnoresTypingAndFilterChangesButTracksSemanticContent() throws {
+        let (viewModel, _, root) = try makeSubject()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let presentation = GalleryGridPresentation(viewModel: viewModel)
+        var changeCount = 0
+        let cancellable = presentation.objectWillChange.sink { changeCount += 1 }
+        defer { cancellable.cancel() }
+
+        viewModel.searchText = "MR-TADF"
+        viewModel.filter = .favorites
+
+        XCTAssertEqual(changeCount, 0, "顶栏输入不应逐字符重建整棵网格")
+        XCTAssertEqual(presentation.revision, 0)
+
+        viewModel.semanticMode = true
+
+        XCTAssertEqual(changeCount, 1)
+        XCTAssertEqual(presentation.revision, 1)
+        XCTAssertTrue(presentation.semanticMode)
+
+        viewModel.clearSemanticResults()
+
+        XCTAssertEqual(changeCount, 2)
+        XCTAssertEqual(presentation.revision, 2)
+        XCTAssertNil(presentation.semanticResults)
     }
 
     private func image(gray: CGFloat) throws -> CGImage {

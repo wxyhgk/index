@@ -12,15 +12,23 @@ final class GallerySelection: ObservableObject {
 
     private struct SelectionState: Equatable {
         var selectedIDs: Set<Int64> = []
+        var orderedIDs: [Int64] = []
         var anchorID: Int64?
         var primaryID: Int64?
+        var generation = 0
     }
 
-    /// 三个强相关字段作为一个值发布，一次用户操作只产生一次刷新。
+    /// 强相关字段作为一个值发布，一次用户操作只产生一次刷新。
     @Published private var state = SelectionState()
 
     /// 选中集合。空 = 未选；1 张 = 单选；多张 = 批量语义。
     var selectedIDs: Set<Int64> { state.selectedIDs }
+    /// 选中项的稳定展示顺序。分页后的批量动作不能再从当前页反推这份顺序：
+    /// ⌘A 可能选中了尚未加载成 `Shot` 的后续页面。
+    var orderedSelectedIDs: [Int64] { state.orderedIDs }
+    /// 每次选择事务递增一次，供异步详情快照拒收旧结果，避免把巨大 ID 数组拿去做
+    /// SwiftUI `.task(id:)` 的哈希键。
+    var generation: Int { state.generation }
     /// ⇧ 范围选择的锚点：普通点击 / ⌘点击把锚点移到落点，⇧点击保持不动。
     var anchorID: Int64? { state.anchorID }
     /// 主选中：单选时的那张 / 多选时最后操作的那张。
@@ -49,8 +57,10 @@ final class GallerySelection: ObservableObject {
     func select(only id: Int64?) {
         state = SelectionState(
             selectedIDs: id.map { [$0] } ?? [],
+            orderedIDs: id.map { [$0] } ?? [],
             anchorID: id,
-            primaryID: id
+            primaryID: id,
+            generation: state.generation &+ 1
         )
     }
 
@@ -59,12 +69,15 @@ final class GallerySelection: ObservableObject {
         var next = state
         if next.selectedIDs.contains(id) {
             next.selectedIDs.remove(id)
-            if next.primaryID == id { next.primaryID = next.selectedIDs.first }
+            next.orderedIDs.removeAll { $0 == id }
+            if next.primaryID == id { next.primaryID = next.orderedIDs.last }
         } else {
             next.selectedIDs.insert(id)
+            next.orderedIDs.append(id)
             next.primaryID = id
         }
         next.anchorID = id
+        next.generation &+= 1
         state = next
     }
 
@@ -79,8 +92,10 @@ final class GallerySelection: ObservableObject {
             return
         }
         var next = state
-        next.selectedIDs = Set(orderedIDs[min(a, b)...max(a, b)])
+        next.orderedIDs = Array(orderedIDs[min(a, b)...max(a, b)])
+        next.selectedIDs = Set(next.orderedIDs)
         next.primaryID = id
+        next.generation &+= 1
         state = next
     }
 
@@ -88,11 +103,14 @@ final class GallerySelection: ObservableObject {
     func selectAll(_ orderedIDs: [Int64]) {
         guard !orderedIDs.isEmpty else { return }
         var next = state
-        next.selectedIDs = Set(orderedIDs)
-        next.anchorID = orderedIDs.first
+        var seen = Set<Int64>()
+        next.orderedIDs = orderedIDs.filter { seen.insert($0).inserted }
+        next.selectedIDs = seen
+        next.anchorID = next.orderedIDs.first
         if next.primaryID.map({ next.selectedIDs.contains($0) }) != true {
-            next.primaryID = orderedIDs.last
+            next.primaryID = next.orderedIDs.last
         }
+        next.generation &+= 1
         state = next
     }
 

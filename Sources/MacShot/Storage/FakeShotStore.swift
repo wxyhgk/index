@@ -275,6 +275,25 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         return sorted.compactMap(\.id)
     }
 
+    func shotsInBackground(ids: [Int64]) async -> [Shot] {
+        let byID = Dictionary(uniqueKeysWithValues: shots.compactMap { shot in
+            shot.id.map { ($0, shot) }
+        })
+        var seen = Set<Int64>()
+        return ids.filter { seen.insert($0).inserted }.compactMap { byID[$0] }
+    }
+
+    func outputMaterialsInBackground(ids: [Int64]) async -> [ShotOutputMaterial] {
+        let resolved = await shotsInBackground(ids: ids)
+        return resolved.map { shot in
+            ShotOutputMaterial(
+                shot: shot,
+                originalURL: originalURL(for: shot),
+                layers: latestRevision(for: shot)?.imageLayers ?? Layers()
+            )
+        }
+    }
+
     func allTags() -> [(name: String, count: Int)] {
         var counter: [String: Int] = [:]
         for tags in tagsStore.values {
@@ -342,9 +361,15 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
     }
 
     func delete(_ shotsToDelete: [Shot]) {
-        let ids = Set(shotsToDelete.compactMap(\.id))
+        delete(shotIDs: shotsToDelete.compactMap(\.id))
+    }
+
+    func delete(shotIDs: [Int64]) {
+        let ids = Set(shotIDs)
         guard !ids.isEmpty else { return }
-        let shas = Set(shotsToDelete.compactMap { $0.id != nil ? $0.sha256 : nil })
+        let shas = Set(shots.compactMap { shot in
+            shot.id.map(ids.contains) == true ? shot.sha256 : nil
+        })
 
         shots.removeAll { $0.id.map { ids.contains($0) } ?? false }
         for id in ids {
@@ -390,6 +415,17 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             favoriteIDs.remove(id)
         } else {
             favoriteIDs.insert(id)
+        }
+        objectWillChange.send()
+    }
+
+    func setFavorite(shotIDs: [Int64], isFavorite: Bool) {
+        let existing = Set(shots.compactMap(\.id))
+        let ids = Set(shotIDs).intersection(existing)
+        if isFavorite {
+            favoriteIDs.formUnion(ids)
+        } else {
+            favoriteIDs.subtract(ids)
         }
         objectWillChange.send()
     }

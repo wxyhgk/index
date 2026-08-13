@@ -100,9 +100,16 @@ final class GalleryKeyboard {
             // 让位判定已经在入口那道 `GalleryKeyContext` 里做过了 ——
             // 搜索框、标签输入、重命名弹窗聚焦时首响应者是 NSTextView，
             // 那里直接返回 .none，⌘C 原样交给系统去复制文字，不会被这里劫走。
-            let shots = GalleryBatch.selectedShots()
-            guard !shots.isEmpty else { return false }
-            GalleryBatch.copyImages(shots)
+            guard !GallerySelection.shared.selectedIDs.isEmpty else { return false }
+            guard !GalleryBatchActivity.shared.isBusy else { return true }
+            if let shots = GalleryBatch.loadedSelectedShots(
+                displayedShots: displayedShots(),
+                reader: store
+            ) {
+                GalleryBatch.copyImages(shots, reader: store)
+            } else {
+                Task { _ = await GalleryBatch.copySelectedImages(reader: store) }
+            }
             return true
 
         case KeyCode.escape where flags.isEmpty:
@@ -117,6 +124,7 @@ final class GalleryKeyboard {
             // 由 GalleryGrid 上唯一的 confirmationDialog 出确认框（和右键同一套）。
             let selection = GallerySelection.shared
             guard !selection.selectedIDs.isEmpty else { return false }
+            guard !GalleryBatchActivity.shared.isBusy else { return true }
             selection.pendingDeleteIDs = orderedSelectedIDs()
             return true
 
@@ -193,11 +201,7 @@ final class GalleryKeyboard {
 
     /// 选中集合按展示顺序排好（删除确认框逐条列数、顺移选中都依赖顺序）。
     private func orderedSelectedIDs() -> [Int64] {
-        let selected = GallerySelection.shared.selectedIDs
-        let inDisplay = displayedShots().compactMap(\.id).filter(selected.contains)
-        // 不在当前列表里的残留选中（筛选变化）兜底带上，保证删得干净。
-        let rest = selected.subtracting(inDisplay)
-        return inDisplay + rest.sorted()
+        GallerySelection.shared.orderedSelectedIDs
     }
 
     /// 仅含 ⌘ 的判定（忽略 CapsLock/Function 等与意图无关的位）。

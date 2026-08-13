@@ -28,6 +28,21 @@ final class GallerySelectionTests: XCTestCase {
 
         selection.selectAll([1, 2, 3, 4])
         XCTAssertEqual(selection.selectedIDs, [1, 2, 3, 4])
+        XCTAssertEqual(selection.orderedSelectedIDs, [1, 2, 3, 4])
         XCTAssertEqual(selection.primaryID, 3, "仍在集合里的主选中不应跳动")
+    }
+
+    func testSelectionPreservesStableOrderForCrossPageBatchActions() {
+        let selection = GallerySelection()
+        selection.selectAll([8, 5, 3, 5, 1])
+        XCTAssertEqual(selection.orderedSelectedIDs, [8, 5, 3, 1], "重复 ID 不得破坏展示顺序")
+
+        selection.toggle(5)
+        XCTAssertEqual(selection.orderedSelectedIDs, [8, 3, 1])
+        selection.toggle(13)
+        XCTAssertEqual(selection.orderedSelectedIDs, [8, 3, 1, 13])
+
+        selection.collapseToPrimary()
+        XCTAssertEqual(selection.orderedSelectedIDs, [13])
     }
 }

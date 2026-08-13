@@ -155,4 +155,17 @@ final class ShotAttributeRepositoryTests: XCTestCase {
         XCTAssertTrue(try repository.textCounts(key: AttributeKey.tag).isEmpty)
         XCTAssertTrue(try repository.tags(shotID: shotIDs[0]).isEmpty)
     }
+
+    func testLargeFavoriteMutationUsesOneChunkSafeTransaction() throws {
+        let database = try makeDatabase()
+        let shotIDs = try insertShots(count: 1_205, into: database)
+        let repository = ShotAttributeRepository(database: database)
+
+        try repository.setFavorite(shotIDs: shotIDs + [shotIDs[0], 9_999_999], isFavorite: true)
+        XCTAssertEqual(try repository.favoriteIDs(), Set(shotIDs), "重复和陈旧 ID 必须安全过滤")
+
+        let removed = Array(shotIDs.prefix(705))
+        try repository.setFavorite(shotIDs: removed, isFavorite: false)
+        XCTAssertEqual(try repository.favoriteIDs(), Set(shotIDs.dropFirst(removed.count)))
+    }
 }

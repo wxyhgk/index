@@ -53,12 +53,40 @@ private struct ShotSection: Identifiable {
     }
 }
 
+/// `.task(id:)` 的廉价键。库存内容变更另有 `libraryDidChange` 强制刷新；分页只会
+/// 追加，因此数量/尾 ID 足够识别。避免每次选中或悬停导致 body 重算时都重新构造、
+/// 哈希数千个 ID 的数组。
+struct GalleryGridSnapshotKey: Equatable {
+    let presentationRevision: Int
+    let count: Int
+    let firstID: Int64?
+    let lastID: Int64?
+
+    init(presentationRevision: Int, shots: [Shot]) {
+        self.presentationRevision = presentationRevision
+        count = shots.count
+        firstID = shots.first?.id
+        lastID = shots.last?.id
+    }
+}
+
+/// 元数据和它对应的可见顺序必须一起发布，否则 SwiftUI 可能在分页帧里短暂看到
+/// “新卡片 + 旧元数据”。保留 ID 前缀也让下一页只查询新增后缀。
+struct GalleryGridMetadataSnapshot: Equatable {
+    let shotIDs: [Int64]
+    let metadata: ShotPageMetadata
+
+    static let empty = GalleryGridMetadataSnapshot(shotIDs: [], metadata: .empty)
+}
+
 struct GalleryGrid: View {
 
     @ObservedObject private var store: ShotStore
-    @ObservedObject private var viewModel: GalleryViewModel
+    private let viewModel: GalleryViewModel
+    @StateObject private var presentation: GalleryGridPresentation
     @ObservedObject private var imageImporter: ImageImportCoordinator
     @ObservedObject private var selection = GallerySelection.shared
+    @ObservedObject private var batchActivity = GalleryBatchActivity.shared
     private let scope: GalleryContentScope
     private let chrome: GalleryGridChrome
 
@@ -72,7 +100,8 @@ struct GalleryGrid: View {
         _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
             ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
-        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        self.viewModel = resolvedViewModel
+        _presentation = StateObject(wrappedValue: GalleryGridPresentation(viewModel: resolvedViewModel))
         _imageImporter = ObservedObject(wrappedValue:
             store === ShotStore.shared ? .shared : ImageImportCoordinator(store: store)
         )
@@ -100,16 +129,18 @@ struct GalleryGrid: View {
 
     /// 按时间段分好组的结果，随 store.shots 变化重算一次。
     @State private var sections: [ShotSection] = []
-    /// shotID → 分类名。分组时一条 IN 查询批量拉好，卡片只收结果，保持不订阅 store。
-    @State private var categoriesByShot: [Int64: String] = [:]
-    /// 修订数 > 1（真的标注过）的截图 ID，卡片右下角角标用。同样批量查好下发。
-    @State private var annotatedIDs: Set<Int64> = []
-    /// 录屏 Shot → mp4 路径。与分类/标注一样按当前页批量读取，不让卡片逐条查库。
-    @State private var recordingPathsByShot: [Int64: String] = [:]
-    /// 专题收藏集与当前可见截图的成员关系。和其它卡片派生状态一样批量读取，
-    /// 右键菜单的 ViewBuilder 只纯读状态，绝不在渲染阶段查库。
-    @State private var collectionSummaries: [ShotCollectionSummary] = []
-    @State private var collectionIDsByShot: [Int64: Set<Int64>] = [:]
+    /// 当前可见集合的派生信息与对应 ID 一次发布。分页只查新增后缀并 merge，避免
+    /// 第 N 页到来时重新读取前 N-1 页；五份独立 @State 也收敛为一次视图失效。
+    @State private var metadataSnapshot = GalleryGridMetadataSnapshot.empty
+    private var categoriesByShot: [Int64: String] { metadataSnapshot.metadata.categoriesByShot }
+    private var annotatedIDs: Set<Int64> { metadataSnapshot.metadata.annotatedShotIDs }
+    private var recordingPathsByShot: [Int64: String] { metadataSnapshot.metadata.recordingPathsByShot }
+    private var collectionSummaries: [ShotCollectionSummary] { metadataSnapshot.metadata.collectionSummaries }
+    private var collectionIDsByShot: [Int64: Set<Int64>] { metadataSnapshot.metadata.collectionIDsByShot }
+    /// 全选可能跨越尚未加载的分页；菜单只保存“每个专题集命中多少张”，不为
+    /// 数万张选中项构造逐图成员字典。
+    @State private var selectedCollectionMembershipCounts: [Int64: Int] = [:]
+    @State private var selectedCollectionSnapshotGeneration = -1
     /// 右键菜单打开的时间线 / 相似 sheet。
     @State private var timelineShot: Shot?
     @State private var similarShot: Shot?
@@ -119,6 +150,7 @@ struct GalleryGrid: View {
     /// 仅图库入口接受图片拖放；其它固定范围不能把新图导入后藏在范围外。
     @State private var isImportDropTargeted = false
     @State private var hasReportedFirstPage = false
+    @State private var metadataGeneration = 0
 
     // MARK: 宽度派生状态
     //
@@ -215,18 +247,11 @@ struct GalleryGrid: View {
         layoutMode == .waterfall ? 1 : columnCount
     }
 
-    /// 网格内容的重算触发器：模式切换或数据变化都要重新分组。
-    private struct GridKey: Equatable {
-        let semanticMode: Bool
-        let hasSemanticResults: Bool
-        let shotIDs: [Int64?]
-    }
-
     /// destination 的最终可见集合。精确搜索和语义搜索共用同一个 store 数据源；
     /// `runSemanticSearch` 已按当前固定筛选
     /// 约束候选，所以网格、键盘和批量操作不会各自维护第二份结果。
     private var visibleShots: [Shot] {
-        viewModel.displayShots
+        presentation.displayShots(fallback: store.shots)
     }
 
     var body: some View {
@@ -302,16 +327,18 @@ struct GalleryGrid: View {
         .onChange(of: keyboardColumnCount, initial: true) { _, count in
             GalleryKeyboard.shared.gridColumnCount = count
         }
-        .task(id: GridKey(
-            semanticMode: viewModel.semanticMode,
-            hasSemanticResults: viewModel.semanticResults != nil,
-            shotIDs: visibleShots.map(\.id)
+        .task(id: GalleryGridSnapshotKey(
+            presentationRevision: presentation.revision,
+            shots: visibleShots
         )) {
-            refreshGridSnapshot()
+            await refreshGridSnapshot()
+        }
+        .task(id: selection.generation) {
+            await refreshSelectedCollectionMemberships()
         }
         .onReceive(store.libraryDidChangePublisher) {
             // 相同 ID 的标题/属性变化不会改变 task identity，由库存完成信号补这一轮。
-            refreshGridSnapshot()
+            Task { await refreshGridSnapshot(forceFullMetadata: true) }
         }
         .onChange(of: selection.pendingRenameID) { _, requestedID in
             guard let requestedID else { return }
@@ -364,19 +391,15 @@ struct GalleryGrid: View {
 
     /// 真正执行删除。之后把选中顺移到相邻一张，键盘导航不断档。
     private func deleteShots(_ ids: [Int64]) {
+        guard !batchActivity.isBusy else { return }
         let idSet = Set(ids)
         let display = visibleShots
         let anchorIndex = display.firstIndex { $0.id.map(idSet.contains) ?? false }
-        // 语义结果可能不在常规列表里，两边找齐（去重）再删。
-        var seen = Set<Int64>()
-        let targets = (display + store.shots).filter { shot in
-            guard let id = shot.id, idSet.contains(id), !seen.contains(id) else { return false }
-            seen.insert(id)
-            return true
+        // 直接按全量 ID 单事务删除；后续分页尚未加载成 Shot 也不能漏。
+        store.delete(shotIDs: ids)
+        let remaining = visibleShots.filter { shot in
+            shot.id.map(idSet.contains) != true
         }
-        // 单事务批量删除：逐张 delete 会打出「张数 × (写 + 读 + 全量 reload)」的主线程风暴。
-        store.delete(targets)
-        let remaining = visibleShots
         if let anchorIndex, !remaining.isEmpty {
             selection.select(only: remaining[min(anchorIndex, remaining.count - 1)].id)
         } else {
@@ -585,9 +608,9 @@ struct GalleryGrid: View {
         }
     }
 
-    private func refreshGridSnapshot() {
+    private func refreshGridSnapshot(forceFullMetadata: Bool = false) async {
         let shots = visibleShots
-        if viewModel.semanticMode, viewModel.semanticResults != nil {
+        if presentation.semanticMode, presentation.semanticResults != nil {
             sections = shots.isEmpty
                 ? []
                 : [ShotSection(id: "语义", title: "按相似度排序", shots: shots)]
@@ -595,15 +618,31 @@ struct GalleryGrid: View {
             sections = ShotSection.group(shots)
         }
 
-        let ids = shots.compactMap(\.id)
-        categoriesByShot = store.attributeTexts(key: AttributeKey.category, shotIDs: ids)
-        annotatedIDs = store.annotatedShotIDs(among: ids)
-        recordingPathsByShot = store.recordingPaths(for: ids)
-        refreshCollectionMetadata(for: ids)
         if !hasReportedFirstPage, !shots.isEmpty {
             hasReportedFirstPage = true
             GalleryPerformance.firstPagePublished(count: shots.count)
         }
+
+        let ids = shots.compactMap(\.id)
+        let previous = metadataSnapshot
+        let isPureAppend = !forceFullMetadata
+            && !previous.shotIDs.isEmpty
+            && ids.count > previous.shotIDs.count
+            && ids.starts(with: previous.shotIDs)
+        let requestedIDs = isPureAppend
+            ? Array(ids.dropFirst(previous.shotIDs.count))
+            : ids
+        metadataGeneration &+= 1
+        let generation = metadataGeneration
+        let fetched = await store.pageMetadataInBackground(shotIDs: requestedIDs)
+        guard !Task.isCancelled,
+              generation == metadataGeneration,
+              ids == visibleShots.compactMap(\.id)
+        else { return }
+        let metadata = isPureAppend && metadataSnapshot.shotIDs == previous.shotIDs
+            ? previous.metadata.merging(fetched)
+            : fetched
+        metadataSnapshot = GalleryGridMetadataSnapshot(shotIDs: ids, metadata: metadata)
     }
 
     private func cardBody(for shot: Shot, height: CGFloat) -> some View {
@@ -683,22 +722,26 @@ struct GalleryGrid: View {
     /// 多选右键的批量菜单：标题带张数，动作与多选详情栏共用一套实现。
     @ViewBuilder
     private func batchContextMenu() -> some View {
-        let shots = GalleryBatch.selectedShots()
-        let count = shots.count
-        Button(GalleryBatch.allFavorited(shots) ? "取消收藏 \(count) 张" : "收藏 \(count) 张") {
-            GalleryBatch.toggleFavorites(shots)
+        let ids = selection.orderedSelectedIDs
+        let count = ids.count
+        Button(GalleryBatch.allFavorited(ids: ids) ? "取消收藏 \(count) 张" : "收藏 \(count) 张") {
+            GalleryBatch.toggleFavorites(ids: ids)
         }
-        collectionMenu(for: shots.compactMap(\.id))
+        .disabled(batchActivity.isBusy)
+        collectionMenu(for: ids)
         Button("复制 \(count) 张图片") {
-            GalleryBatch.copyImages(shots)
+            Task { _ = await GalleryBatch.copyImages(ids: ids) }
         }
+        .disabled(batchActivity.isBusy)
         Button("导出 \(count) 张…") {
-            Task { _ = await GalleryBatch.exportAll(shots) }
+            Task { _ = await GalleryBatch.exportAll(ids: ids) }
         }
+        .disabled(batchActivity.isBusy)
         Divider()
         Button("删除 \(count) 张截图…", role: .destructive) {
-            selection.pendingDeleteIDs = shots.compactMap(\.id)
+            selection.pendingDeleteIDs = ids
         }
+        .disabled(batchActivity.isBusy)
     }
 
     private var emptyState: some View {
@@ -881,6 +924,7 @@ struct GalleryGrid: View {
         Button(shot.id.map(store.isFavorite) ?? false ? "取消收藏" : "收藏") {
             store.toggleFavorite(shot)
         }
+        .disabled(batchActivity.isBusy)
         Button("重命名…") { beginRename(shot) }
         if let id = shot.id {
             collectionMenu(for: [id])
@@ -888,6 +932,7 @@ struct GalleryGrid: View {
         Button("编辑标注") { GalleryWindowMode.shared.openEditor(shotID: shot.id) }
         Button("钉在桌面") { pin(shot) }
         Button("复制图片") { copy(shot) }
+            .disabled(batchActivity.isBusy)
         Divider()
         Button("相似截图") { similarShot = shot }
         Button("时间线") { timelineShot = shot }
@@ -899,6 +944,7 @@ struct GalleryGrid: View {
         }
         Divider()
         Button(recording.isRecording ? "导出封面…" : "导出…") { export(shot) }
+            .disabled(batchActivity.isBusy)
         if !settings.uploadEndpoint.isEmpty {
             Button("上传并复制链接") { upload(shot) }
         }
@@ -913,6 +959,7 @@ struct GalleryGrid: View {
         Button("删除…", role: .destructive) {
             selection.pendingDeleteIDs = shot.id.map { [$0] }
         }
+        .disabled(batchActivity.isBusy)
     }
 
     private func beginRename(_ shot: Shot) {
@@ -1037,14 +1084,23 @@ struct GalleryGrid: View {
 
     @ViewBuilder
     private func collectionMenu(for shotIDs: [Int64]) -> some View {
+        let isCurrentSelection = shotIDs.count == selection.selectedIDs.count
+            && shotIDs.allSatisfy(selection.selectedIDs.contains)
         Menu {
             if collectionSummaries.isEmpty {
                 Text("尚无专题集，请先到“收藏”页创建")
             } else {
                 ForEach(collectionSummaries) { collection in
-                    let isInAll = !shotIDs.isEmpty && shotIDs.allSatisfy {
-                        collectionIDsByShot[$0]?.contains(collection.id) == true
-                    }
+                    let membershipKnown = !isCurrentSelection
+                        || selectedCollectionSnapshotGeneration == selection.generation
+                    let isInAll = !shotIDs.isEmpty && (
+                        isCurrentSelection
+                            ? membershipKnown
+                                && selectedCollectionMembershipCounts[collection.id] == shotIDs.count
+                            : shotIDs.allSatisfy {
+                                collectionIDsByShot[$0]?.contains(collection.id) == true
+                            }
+                    )
                     Button {
                         setMembership(
                             shotIDs: shotIDs,
@@ -1057,12 +1113,13 @@ struct GalleryGrid: View {
                             systemImage: isInAll ? "checkmark" : "rectangle.stack.badge.plus"
                         )
                     }
+                    .disabled(!membershipKnown)
                 }
             }
         } label: {
             Label("加入专题收藏集", systemImage: "rectangle.stack.badge.plus")
         }
-        .disabled(collectionSummaries.isEmpty || shotIDs.isEmpty)
+        .disabled(collectionSummaries.isEmpty || shotIDs.isEmpty || batchActivity.isBusy)
     }
 
     private func setMembership(shotIDs: [Int64], collectionID: Int64, remove: Bool) {
@@ -1075,12 +1132,16 @@ struct GalleryGrid: View {
                 NSLog("[MacShot] 加入收藏集失败: \(error)")
             }
         }
-        refreshCollectionMetadata(for: visibleShots.compactMap(\.id))
+        Task { await refreshSelectedCollectionMemberships() }
     }
 
-    private func refreshCollectionMetadata(for shotIDs: [Int64]) {
-        collectionSummaries = store.collectionSummaries()
-        collectionIDsByShot = store.collectionMemberships(shotIDs: shotIDs)
+    private func refreshSelectedCollectionMemberships() async {
+        let generation = selection.generation
+        let ids = selection.orderedSelectedIDs
+        let counts = await store.collectionMembershipCountsInBackground(shotIDs: ids)
+        guard !Task.isCancelled, generation == selection.generation else { return }
+        selectedCollectionMembershipCounts = counts
+        selectedCollectionSnapshotGeneration = generation
     }
 
     /// 回到出处：优先开网址（默认浏览器），否则激活来源 App。

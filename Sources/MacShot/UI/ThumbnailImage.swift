@@ -46,14 +46,14 @@ struct ImageIOThumbnailDecoder: ThumbnailDecoding {
 
 /// 一个轻量异步信号量。排队中的请求响应 Task 取消，不会继续占用解码名额。
 private actor ThumbnailDecodeLimiter {
-    private struct Waiter {
-        let id: UUID
-        let continuation: CheckedContinuation<Bool, Never>
-    }
-
     private let limit: Int
     private var activeCount = 0
-    private var waiters: [Waiter] = []
+    /// FIFO 顺序与 continuation 分开保存：取消按 UUID 从字典 O(1) 删除，队列里留下
+    /// 一个廉价 tombstone，release 时顺手跳过。旧数组版每次取消都 firstIndex+remove，
+    /// 快速滚动同时撤销几百张卡片时会退化成 O(n²)。
+    private var waiterOrder: [UUID] = []
+    private var waiterHead = 0
+    private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
 
     init(limit: Int) {
         self.limit = max(1, limit)
@@ -69,7 +69,8 @@ private actor ThumbnailDecodeLimiter {
                     activeCount += 1
                     continuation.resume(returning: true)
                 } else {
-                    waiters.append(Waiter(id: id, continuation: continuation))
+                    waiterOrder.append(id)
+                    waiters[id] = continuation
                 }
             }
         } onCancel: {
@@ -78,16 +79,30 @@ private actor ThumbnailDecodeLimiter {
     }
 
     func release() {
-        if waiters.isEmpty {
-            activeCount = max(0, activeCount - 1)
-        } else {
-            waiters.removeFirst().continuation.resume(returning: true)
+        while waiterHead < waiterOrder.count {
+            let id = waiterOrder[waiterHead]
+            waiterHead += 1
+            if let continuation = waiters.removeValue(forKey: id) {
+                compactWaiterOrderIfNeeded()
+                continuation.resume(returning: true)
+                return
+            }
         }
+        activeCount = max(0, activeCount - 1)
+        waiterOrder.removeAll(keepingCapacity: true)
+        waiterHead = 0
     }
 
     private func cancelWaiter(id: UUID) {
-        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
-        waiters.remove(at: index).continuation.resume(returning: false)
+        guard let continuation = waiters.removeValue(forKey: id) else { return }
+        continuation.resume(returning: false)
+    }
+
+    /// 防止长期滚动后 tombstone 顺序数组只增不减；摊销成本仍为 O(1)。
+    private func compactWaiterOrderIfNeeded() {
+        guard waiterHead >= 256, waiterHead * 2 >= waiterOrder.count else { return }
+        waiterOrder.removeFirst(waiterHead)
+        waiterHead = 0
     }
 }
 
@@ -184,7 +199,12 @@ final class ThumbnailCache {
     nonisolated static let totalCostLimit = 96 * 1024 * 1024
 
     private let cache = NSCache<NSString, NSImage>()
-    private var tokens: [String: ThumbnailInvalidationToken] = [:]
+    /// View 自己强持有正在显示的 token；缓存只弱引用。离屏后 token 可释放，浏览过
+    /// 十万张图片也不会在这里永久留下十万个 ObservableObject。
+    private let tokens = NSMapTable<NSString, ThumbnailInvalidationToken>(
+        keyOptions: .strongMemory,
+        valueOptions: .weakMemory
+    )
     private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     init(observesMemoryPressure: Bool = true) {
@@ -220,20 +240,23 @@ final class ThumbnailCache {
     }
 
     func token(forKey key: String) -> ThumbnailInvalidationToken {
-        if let token = tokens[key] { return token }
+        if let token = tokens.object(forKey: key as NSString) { return token }
         let token = ThumbnailInvalidationToken()
-        tokens[key] = token
+        tokens.setObject(token, forKey: key as NSString)
         return token
     }
 
     func remove(forKey key: String) {
         cache.removeObject(forKey: key as NSString)
-        tokens[key]?.invalidate()
+        tokens.object(forKey: key as NSString)?.invalidate()
     }
 
     func removeAll() {
         cache.removeAllObjects()
-        tokens.values.forEach { $0.invalidate() }
+        let enumerator = tokens.objectEnumerator()
+        while let token = enumerator?.nextObject() as? ThumbnailInvalidationToken {
+            token.invalidate()
+        }
     }
 
     func purgeMemory() {
@@ -282,10 +305,16 @@ final class ThumbnailLoader: ThumbnailLoading {
             self.pendingSuspension = nil
             guard isLoadingEnabled else { return nil }
         }
-        guard let decoded = await pipeline.load(url: url, key: key), !Task.isCancelled else {
+        // 强持有 token 直到解码结束。重画会递增 version；新请求因此使用不同的
+        // pipeline key，不会加入旧文件内容的 in-flight 任务，旧结果也过不了回填门。
+        let invalidation = cache.token(forKey: key)
+        let generation = invalidation.version
+        let requestKey = "\(key)|generation:\(generation)"
+        guard let decoded = await pipeline.load(url: url, key: requestKey),
+              !Task.isCancelled else {
             return nil
         }
-        guard isLoadingEnabled else { return nil }
+        guard isLoadingEnabled, invalidation.version == generation else { return nil }
         if let hit = cache.image(forKey: key) { return hit }
 
         let image = NSImage(

@@ -787,7 +787,7 @@ final class ShotStoreTests: XCTestCase {
 
     /// 全选取的是「符合当前条件的全部」，不是「已经加载的那些」。
     func testSelectAllIDsIgnorePagination() async throws {
-        let (store, _) = try makeStore()
+        let (store, database) = try makeStore()
 
         let total = ShotStore.pageSize + 50
         for i in 0..<total {
@@ -802,5 +802,24 @@ final class ShotStoreTests: XCTestCase {
 
         let ids = await store.allMatchingIDs(query: "", filter: .all)
         XCTAssertEqual(ids.count, total, "全选必须覆盖全部，而不是已加载的一页")
+
+        let requested = Array(ids.reversed()) + [ids[0]]
+        let resolved = await store.shotsInBackground(ids: requested)
+        XCTAssertEqual(
+            resolved.compactMap(\.id),
+            Array(ids.reversed()),
+            "批量动作必须分块解析后续页，并保持选中顺序与去重语义"
+        )
+
+        store.setFavorite(shotIDs: ids, isFavorite: true)
+        let favoriteCount = try await database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM shotAttribute WHERE key = ?", arguments: [AttributeKey.favorite])
+        }
+        XCTAssertEqual(favoriteCount, total, "跨分页收藏必须在一个批量写路径覆盖全部 ID")
+
+        let tail = Array(ids.suffix(25))
+        store.delete(shotIDs: tail)
+        let remaining = try await database.read { db in try Shot.fetchCount(db) }
+        XCTAssertEqual(remaining, total - tail.count, "尚未加载页里的 ID 也必须能被批量删除")
     }
 }

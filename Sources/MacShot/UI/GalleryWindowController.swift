@@ -11,6 +11,7 @@ final class GalleryWindowController: NSWindowController {
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
     private var closeObserver: NSObjectProtocol?
+    private var reloadTask: Task<Void, Never>?
 
     private init() {
         // 没有 `sceneBridgingOptions = [.toolbars]` 了：窗口不再有工具栏，
@@ -73,6 +74,7 @@ final class GalleryWindowController: NSWindowController {
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
+                GalleryWindowController.shared.reloadTask?.cancel()
                 ThumbnailLoader.shared.suspendAndClear()
             }
         }
@@ -108,9 +110,15 @@ final class GalleryWindowController: NSWindowController {
         // 仅在图库模式且有选中时复制成品（与右键/⌘C monitor 同一渲染口径）。
         // 不再以 firstResponder/keyWindow 守卫，文本框有选区时 NSTextView 先响应，冒泡到这里时自然是图片路径。
         guard GalleryWindowMode.shared.mode == .library else { return }
-        let shots = GalleryBatch.selectedShots()
-        guard !shots.isEmpty else { return }
-        GalleryBatch.copyImages(shots)
+        guard !GallerySelection.shared.selectedIDs.isEmpty else { return }
+        guard !GalleryBatchActivity.shared.isBusy else { return }
+        if let shots = GalleryBatch.loadedSelectedShots(
+            displayedShots: GalleryViewModel.shared.displayShots
+        ) {
+            GalleryBatch.copyImages(shots)
+        } else {
+            Task { _ = await GalleryBatch.copySelectedImages() }
+        }
     }
 
     @objc override func selectAll(_ sender: Any?) {
@@ -148,12 +156,17 @@ final class GalleryWindowController: NSWindowController {
     func show(selecting shot: Shot? = nil) {
         GalleryPerformance.galleryOpen()
         ThumbnailLoader.shared.resume()
-        GalleryViewModel.shared.reload()
         if let shot {
             // 定位类场景：清空多选后单选目标。
             GallerySelection.shared.select(only: shot.id)
         }
         WindowRegistry.shared.present(self, dockIcon: true)
+        // 窗口先响应用户，再在 DatabasePool 的读连接上建立当前查询观察。
+        // 多次 show 时取消旧等待；ShotStore 自己的 generation 会丢弃迟到快照。
+        reloadTask?.cancel()
+        reloadTask = Task {
+            await GalleryViewModel.shared.reloadInBackground()
+        }
     }
 
     /// 图库外部的编辑入口（钉图「编辑标注」、滚动截图完成等）：

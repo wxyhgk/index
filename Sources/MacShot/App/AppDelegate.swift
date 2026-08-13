@@ -485,9 +485,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return // 交由 NSTextView 自身的 copy: 处理
         }
         guard GalleryWindowMode.shared.mode == .library else { return }
-        let shots = GalleryBatch.selectedShots()
-        guard !shots.isEmpty else { return }
-        GalleryBatch.copyImages(shots)
+        guard !GallerySelection.shared.selectedIDs.isEmpty else { return }
+        guard !GalleryBatchActivity.shared.isBusy else { return }
+        let displayed = (shotStore as? ShotStore).flatMap { concrete in
+            concrete === ShotStore.shared ? GalleryViewModel.shared.displayShots : nil
+        }
+        if let shots = GalleryBatch.loadedSelectedShots(
+            displayedShots: displayed,
+            reader: shotStore
+        ) {
+            GalleryBatch.copyImages(shots, reader: shotStore)
+        } else {
+            Task { [shotStore] in
+                _ = await GalleryBatch.copySelectedImages(reader: shotStore)
+            }
+        }
     }
 
     @objc func selectAll(_ sender: Any?) {

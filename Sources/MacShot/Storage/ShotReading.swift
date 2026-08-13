@@ -2,6 +2,14 @@ import Foundation
 import CoreGraphics
 import Combine
 
+/// 复制、导出等“生成成品”动作所需的不可变输入。数据库在后台一次取好 Shot 与
+/// 最新修订，主线程只负责组装原图 URL；随后整个值会转移给后台渲染任务。
+struct ShotOutputMaterial: Equatable, @unchecked Sendable {
+    let shot: Shot
+    let originalURL: URL
+    let layers: Layers<ImageSpace>
+}
+
 /// 读侧：图库、编辑器、预览只需读，不触写。
 @MainActor
 protocol ShotReading: AnyObject {
@@ -23,6 +31,10 @@ protocol ShotReading: AnyObject {
     func recordingPaths(for shotIDs: [Int64]) -> [Int64: String]
     func recordingCount() -> Int
     func allMatchingIDs(query: String, filter: ShotFilter) async -> [Int64]
+    /// 按调用方给定顺序解析任意数量的 ID。生产实现必须走后台读并分块，不能受当前分页限制。
+    func shotsInBackground(ids: [Int64]) async -> [Shot]
+    /// 在同一数据库快照中批量取得 Shot 与各自最新修订，避免批量复制/导出逐张查库。
+    func outputMaterialsInBackground(ids: [Int64]) async -> [ShotOutputMaterial]
     func allTags() -> [(name: String, count: Int)]
     func shotsMissingAttribute(key: String) -> [Shot]
     var totalCount: Int { get }
@@ -36,6 +48,10 @@ protocol ShotWriting: AnyObject {
     func delete(_ shot: Shot)
     @discardableResult func appendRevision(shot: Shot, layers: Layers<ImageSpace>, note: String?) -> Revision?
     func toggleFavorite(_ shot: Shot)
+    /// 一次事务设置一批收藏状态；跨分页全选不得退化成逐张写入风暴。
+    func setFavorite(shotIDs: [Int64], isFavorite: Bool)
+    /// 直接按 ID 批量删除；无需先把后续分页全部装成主线程对象。
+    func delete(shotIDs: [Int64])
     func addTag(shotID: Int64, _ tag: String)
     func removeTag(shotID: Int64, _ tag: String)
     func renameTag(_ old: String, to new: String)

@@ -27,6 +27,20 @@ final class ThumbnailLoadingTests: XCTestCase {
         withExtendedLifetime([firstSubscription, secondSubscription]) {}
     }
 
+    @MainActor
+    func testOffscreenInvalidationTokenIsNotRetainedByCache() {
+        let cache = ThumbnailCache(observesMemoryPressure: false)
+        weak var releasedToken: ThumbnailInvalidationToken?
+
+        autoreleasepool {
+            let token = cache.token(forKey: "offscreen")
+            releasedToken = token
+            XCTAssertNotNil(releasedToken)
+        }
+
+        XCTAssertNil(releasedToken, "离屏 View 释放后，token 不能按浏览历史永久增长")
+    }
+
     func testConcurrentRequestsForSameKeyDecodeOnce() async throws {
         let decoder = CountingDecoder(delay: 0.05)
         let pipeline = ThumbnailLoadPipeline(decoder: decoder, maximumConcurrentLoads: 4)
@@ -100,6 +114,63 @@ final class ThumbnailLoadingTests: XCTestCase {
         XCTAssertNil(queuedResult)
         XCTAssertEqual(decoder.totalDecodes, 1)
     }
+
+    func testCancellingManyQueuedRequestsDoesNotStartTheirDecodes() async {
+        let decoder = BlockingDecoder()
+        let pipeline = ThumbnailLoadPipeline(decoder: decoder, maximumConcurrentLoads: 1)
+        let first = Task {
+            await pipeline.load(url: URL(fileURLWithPath: "/tmp/active.png"), key: "active")
+        }
+        XCTAssertEqual(decoder.started.wait(timeout: .now() + 1), .success)
+
+        let queued = (0..<300).map { index in
+            Task {
+                await pipeline.load(
+                    url: URL(fileURLWithPath: "/tmp/queued-\(index).png"),
+                    key: "queued-\(index)"
+                )
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+        queued.forEach { $0.cancel() }
+        decoder.proceed.signal()
+
+        _ = await first.value
+        for task in queued {
+            let result = await task.value
+            XCTAssertNil(result)
+        }
+        XCTAssertEqual(decoder.totalDecodes, 1)
+    }
+
+    @MainActor
+    func testInvalidationDoesNotLetOldInFlightDecodeRefillCache() async throws {
+        let decoder = RevisionRaceDecoder()
+        let cache = ThumbnailCache(observesMemoryPressure: false)
+        let pipeline = ThumbnailLoadPipeline(decoder: decoder, maximumConcurrentLoads: 1)
+        let loader = ThumbnailLoader(cache: cache, pipeline: pipeline)
+        let url = URL(fileURLWithPath: "/tmp/revision-race.jpg")
+
+        let oldRequest = Task { @MainActor in
+            await loader.load(url: url, key: "same-shot").map { Int($0.size.width) }
+        }
+        await Task.yield()
+        XCTAssertEqual(decoder.firstStarted.wait(timeout: .now() + 1), .success)
+
+        loader.remove(forKey: "same-shot")
+        let newRequest = Task { @MainActor in
+            await loader.load(url: url, key: "same-shot").map { Int($0.size.width) }
+        }
+        await Task.yield()
+        decoder.allowFirstToFinish.signal()
+
+        let oldResult = await oldRequest.value
+        let newResult = await newRequest.value
+        XCTAssertNil(oldResult, "失效前启动的旧像素不得回填缓存")
+        XCTAssertEqual(newResult, 3)
+        XCTAssertEqual(loader.cachedImage(forKey: "same-shot")?.size.width, 3)
+        XCTAssertEqual(decoder.totalDecodes, 2, "新一代请求不得加入旧一代 in-flight 解码")
+    }
 }
 
 private final class BlockingDecoder: ThumbnailDecoding, @unchecked Sendable {
@@ -171,5 +242,48 @@ private final class CountingDecoder: ThumbnailDecoding, @unchecked Sendable {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )
         return context?.makeImage()
+    }
+}
+
+private final class RevisionRaceDecoder: ThumbnailDecoding, @unchecked Sendable {
+    let firstStarted = DispatchSemaphore(value: 0)
+    let allowFirstToFinish = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var total = 0
+
+    var totalDecodes: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return total
+    }
+
+    func decode(contentsOf url: URL) -> DecodedThumbnail? {
+        lock.lock()
+        total += 1
+        let invocation = total
+        lock.unlock()
+
+        if invocation == 1 {
+            firstStarted.signal()
+            allowFirstToFinish.wait()
+        }
+        let size = invocation == 1 ? 2 : 3
+        guard let image = Self.makeImage(size: size) else { return nil }
+        return DecodedThumbnail(
+            image: image,
+            cost: ThumbnailCache.decodedCost(width: size, height: size)
+        )
+    }
+
+    private static func makeImage(size: Int) -> CGImage? {
+        CGContext(
+            data: nil,
+            width: size,
+            height: size,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )?.makeImage()
     }
 }

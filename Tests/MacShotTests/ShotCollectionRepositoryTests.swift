@@ -98,4 +98,39 @@ final class ShotCollectionRepositoryTests: XCTestCase {
             XCTAssertEqual(error as? ShotCollectionError, .collectionNotFound)
         }
     }
+
+    func testSummariesScaleAcrossManyCollectionsAndKeepPreviewOrder() throws {
+        let database = try makeDatabase()
+        let repository = ShotCollectionRepository(database: database)
+        let shotIDs = try insertShots(count: 4, into: database)
+
+        for index in 0..<24 {
+            let id = try XCTUnwrap(repository.create(name: "专题 \(index)", note: "").id)
+            try repository.add(shotIDs: shotIDs, to: id)
+        }
+
+        let summaries = try repository.summaries(previewLimit: 2)
+        XCTAssertEqual(summaries.count, 24)
+        XCTAssertTrue(summaries.allSatisfy { $0.itemCount == 4 })
+        XCTAssertTrue(summaries.allSatisfy { $0.previews.count == 2 })
+        XCTAssertTrue(summaries.allSatisfy { summary in
+            Set(summary.previews.compactMap(\.id)).isSubset(of: Set(shotIDs))
+        })
+    }
+
+    func testLargeMembershipReadsAndRemovalsAreChunked() async throws {
+        let database = try makeDatabase()
+        let repository = ShotCollectionRepository(database: database)
+        let shotIDs = try insertShots(count: 1_205, into: database)
+        let collectionID = try XCTUnwrap(repository.create(name: "大型专题", note: "").id)
+        try repository.add(shotIDs: shotIDs, to: collectionID)
+
+        let memberships = try repository.memberships(shotIDs: shotIDs)
+        XCTAssertEqual(memberships.count, shotIDs.count)
+        let counts = try await repository.membershipCountsInBackground(shotIDs: shotIDs)
+        XCTAssertEqual(counts[collectionID], shotIDs.count)
+
+        try repository.remove(shotIDs: shotIDs, from: collectionID)
+        XCTAssertTrue(try repository.memberships(shotIDs: shotIDs).isEmpty)
+    }
 }

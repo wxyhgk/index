@@ -21,6 +21,7 @@ struct MultiSelectionPane: View {
     // 订阅 store 是为了收藏态实时刷新（批量收藏后按钮文案要翻转）。
     @ObservedObject private var store: ShotStore
     @ObservedObject private var selection = GallerySelection.shared
+    @ObservedObject private var batchActivity = GalleryBatchActivity.shared
 
     init(shots: [Shot], store: ShotStore = .shared) {
         self.shots = shots
@@ -31,18 +32,25 @@ struct MultiSelectionPane: View {
     /// 最近一次批量导出的结果提示，几秒后自动消失。
     @State private var exportSummary: String?
     @State private var collectionSummaries: [ShotCollectionSummary] = []
-    @State private var collectionIDsByShot: [Int64: Set<Int64>] = [:]
+    @State private var collectionMembershipCounts: [Int64: Int] = [:]
+    @State private var collectionSnapshotGeneration = -1
+
+    private var selectedIDs: [Int64] { selection.orderedSelectedIDs }
+    private var selectedCount: Int { selectedIDs.count }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.s3) {
                 collage
-                Text("已选 \(shots.count) 张")
+                Text("已选 \(selectedCount) 张")
                     .font(.title3.weight(.semibold))
                 Text("批量动作作用于全部选中项。按 Esc 回到单选。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 actions
+                if let state = batchActivity.state {
+                    batchProgress(state)
+                }
                 if let exportSummary {
                     Label(exportSummary, systemImage: "checkmark.circle.fill")
                         .font(.caption.weight(.medium))
@@ -56,8 +64,10 @@ struct MultiSelectionPane: View {
             .padding(.top, InspectorMetrics.closeButtonLane)
             .padding(.bottom, DS.s4)
         }
-        .task(id: shots.compactMap(\.id)) { refreshCollections() }
-        .onReceive(store.libraryDidChangePublisher) { refreshCollections() }
+        .task(id: selection.generation) { await refreshCollections() }
+        .onReceive(store.libraryDidChangePublisher) {
+            Task { await refreshCollections() }
+        }
     }
 
     /// 2×2 拼贴：展示顺序前 4 张，超出的在最后一格盖 +N。
@@ -81,10 +91,10 @@ struct MultiSelectionPane: View {
                 }
                 .frame(height: 76)
                 .overlay {
-                    if shot.id == previews.last?.id, shots.count > 4 {
+                    if shot.id == previews.last?.id, selectedCount > 4 {
                         RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
                             .fill(DS.overlayDim)
-                        Text("+\(shots.count - 4)")
+                        Text("+\(selectedCount - 4)")
                             .font(.title3.weight(.bold))
                             .foregroundStyle(.white)
                     }
@@ -98,27 +108,29 @@ struct MultiSelectionPane: View {
     /// 是同一条规矩（同屏只允许一个控件戴强调色，规格 §7.1）。
     private var actions: some View {
         VStack(spacing: DS.s2) {
-            let allFavorited = GalleryBatch.allFavorited(shots)
+            let ids = selectedIDs
+            let allFavorited = GalleryBatch.allFavorited(ids: ids)
             Button {
-                GalleryBatch.toggleFavorites(shots)
+                GalleryBatch.toggleFavorites(ids: ids)
             } label: {
                 Label(
-                    allFavorited ? "取消收藏 \(shots.count) 张" : "全部收藏",
+                    allFavorited ? "取消收藏 \(selectedCount) 张" : "全部收藏",
                     systemImage: allFavorited ? "star.slash" : "star"
                 )
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.inspectorPillWide)
+            .disabled(batchActivity.isBusy)
 
             Menu {
                 if collectionSummaries.isEmpty {
                     Text("尚无专题集，请先到“收藏”页创建")
                 } else {
                     ForEach(collectionSummaries) { collection in
-                        let ids = shots.compactMap(\.id)
-                        let isInAll = !ids.isEmpty && ids.allSatisfy {
-                            collectionIDsByShot[$0]?.contains(collection.id) == true
-                        }
+                        let membershipKnown = collectionSnapshotGeneration == selection.generation
+                        let isInAll = membershipKnown
+                            && !ids.isEmpty
+                            && collectionMembershipCounts[collection.id] == ids.count
                         Button {
                             setMembership(ids, collectionID: collection.id, remove: isInAll)
                         } label: {
@@ -127,6 +139,7 @@ struct MultiSelectionPane: View {
                                 systemImage: isInAll ? "checkmark" : "rectangle.stack.badge.plus"
                             )
                         }
+                        .disabled(!membershipKnown)
                     }
                 }
             } label: {
@@ -135,38 +148,57 @@ struct MultiSelectionPane: View {
             }
             .menuStyle(.button)
             .buttonStyle(.inspectorSoft)
-            .disabled(collectionSummaries.isEmpty)
+            .disabled(collectionSummaries.isEmpty || batchActivity.isBusy)
 
             Button {
                 runExport()
             } label: {
-                Label("导出 \(shots.count) 张…", systemImage: "square.and.arrow.up")
+                Label("导出 \(selectedCount) 张…", systemImage: "square.and.arrow.up")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.inspectorSoft)
+            .disabled(batchActivity.isBusy)
             .help("选一个目录，逐张按文件名模板导出成品（含标注），重名自动加序号")
 
             Button(role: .destructive) {
-                selection.pendingDeleteIDs = shots.compactMap(\.id)
+                selection.pendingDeleteIDs = ids
             } label: {
-                Label("删除 \(shots.count) 张…", systemImage: "trash")
+                Label("删除 \(selectedCount) 张…", systemImage: "trash")
                     .frame(maxWidth: .infinity)
             }
             // 破坏性动作用红字而不是红底：红底在这一列里比主动作还抢眼，
             // 会让「删除」读成推荐动作。
             .buttonStyle(.inspectorSoft(tint: .red))
+            .disabled(batchActivity.isBusy)
+        }
+    }
+
+    private func batchProgress(_ state: GalleryBatchActivity.State) -> some View {
+        VStack(alignment: .leading, spacing: DS.s2) {
+            HStack {
+                Text(state.isCancelling ? "正在取消…" : state.kind.title)
+                    .font(.caption.weight(.medium))
+                Spacer()
+                Text("\(state.processed)/\(state.total)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            ProgressView(value: state.progress)
+            Button("取消") { batchActivity.cancel() }
+                .buttonStyle(.inspectorSoft(tint: .red))
+                .disabled(state.isCancelling)
         }
     }
 
     private func runExport() {
-        let targets = shots
+        let ids = selectedIDs
         Task {
-            let exported = await GalleryBatch.exportAll(targets)
+            let exported = await GalleryBatch.exportAll(ids: ids)
             guard exported > 0 else { return }
             // 结果提示是一个小件的出没，走 micro（§6）：出得快才像「刚刚完成」。
             withAnimation(DS.Motion.micro(reduced: reduceMotion)) {
-                exportSummary = exported < targets.count
-                    ? "已导出 \(exported)/\(targets.count) 张"
+                exportSummary = exported < ids.count
+                    ? "已导出 \(exported)/\(ids.count) 张"
                     : "已导出 \(exported) 张"
             }
             try? await Task.sleep(for: .seconds(4))
@@ -174,9 +206,14 @@ struct MultiSelectionPane: View {
         }
     }
 
-    private func refreshCollections() {
+    private func refreshCollections() async {
+        let generation = selection.generation
+        let ids = selectedIDs
         collectionSummaries = store.collectionSummaries()
-        collectionIDsByShot = store.collectionMemberships(shotIDs: shots.compactMap(\.id))
+        let counts = await store.collectionMembershipCountsInBackground(shotIDs: ids)
+        guard generation == selection.generation else { return }
+        collectionMembershipCounts = counts
+        collectionSnapshotGeneration = generation
     }
 
     private func setMembership(_ ids: [Int64], collectionID: Int64, remove: Bool) {
@@ -189,6 +226,6 @@ struct MultiSelectionPane: View {
                 NSLog("[MacShot] 批量加入收藏集失败: \(error)")
             }
         }
-        refreshCollections()
+        Task { await refreshCollections() }
     }
 }

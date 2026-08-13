@@ -305,6 +305,16 @@ protocol GalleryDestination {
 
 **第七批（2026-08）已完成**：`ValueObservation` 接管库存刷新。`ShotQueryRepository` 在同一数据库快照中读取当前页与收藏集合，显式观察 Shot、属性、附件和收藏集表；写路径不再手工安排 leading/trailing reload。查询切换会取消旧观察并以 generation 拒收迟到回调，异步首帧在观察失败或被替换时也会恢复等待者。普通修订不触发库存观察，只有 `.annotated` 筛选纳入 revision region，保留编辑自动保存不刷新胶片条的性能边界。
 
+**第八批（2026-08）已完成**：网格卡片元数据合并成 `ShotPageMetadataRepository` 的单个后台数据库快照，分类、标注、录屏附件和专题成员关系原子发布，并以 generation 拒收旧页结果。收藏集摘要从 1+N 预览查询改为固定两条窗口查询；图库窗口先显示，再后台建立库存观察。
+
+**第九批（2026-08）已完成**：跨分页批量语义。`GallerySelection` 同时保存全量 ID 集合与稳定展示顺序；复制、导出按 ID 在后台分块解析，收藏和删除直接走单事务 ID 批量写入，不能再从当前已加载的 300 张反推全选结果。SQLite `IN` 查询统一按 500 个参数分块；专题集菜单对大选中集合只保存每个集合的命中计数，不构造逐图成员字典。
+
+**第十批（2026-08）已完成**：批量成品管线。`ShotMetadataRepository` 在同一个后台数据库快照中按稳定顺序批量取得 Shot 与最新修订，复制/导出不再在主线程逐张查询修订；原图解码、图层渲染和 PNG 编码整体在后台运行。`GalleryBatchActivity` 为跨页复制与导出提供全局单飞 token、进度和协作取消，详情栏、右键菜单与快捷键不能重复启动多份像素重活；任务运行期间删除等会改变源文件的动作被禁用，迟到进度也不能污染下一次任务。
+
+**第十一批（2026-08）已完成**：缩略图快速滚动背压。四路 ImageIO 解码限制与同 key 请求合并继续保留，但等待队列改为“FIFO 顺序 + UUID 字典 + tombstone”，取消从数组 O(n) 查删降为 O(1)；大量卡片离屏不会形成 O(n²) 取消风暴。失效 token 改成弱值表，生命周期跟随可见 View，不再按浏览历史永久增长。缩略图重画会递增 generation 并进入独立的 in-flight key，旧文件内容即使迟到完成也无法回填新缓存。
+
+**第十二批（2026-08）已完成**：网格失效范围与分页元数据增量化。`GalleryGrid` 不再观察整个查询 ViewModel，而只订阅会改变卡片集合的语义模式/结果投影，搜索框逐字符输入和搜索 spinner 不再重建几百张卡片；`.task(id:)` 从全量 ID 数组改为常量大小的修订号、数量与首尾 ID。分页到来只查询新增后缀的卡片元数据并与前缀合并，完整库存变更仍强制重读；五份独立 `@State` 收敛为一次快照发布。元数据查询按 500 个 ID 分块但保持在同一数据库 read transaction 内，深度分页不会重复读取前 N 页或撞 SQLite 参数上限。
+
 **拆巨文件（进行中）**：`GalleryView` 已于 2026-07 拆成 9 个文件（壳 171 行，最大的 `GalleryGrid` 548 行），拆分为纯搬家、逐行对账过。
 剩余：`maskSensitiveRegions` 业务逻辑仍留在 `ShotDetailPane` 待下沉；`EditorView`（1194 行）切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。
 

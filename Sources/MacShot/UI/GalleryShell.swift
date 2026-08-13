@@ -239,7 +239,7 @@ struct GalleryInspectorPanel: View {
     @ViewBuilder
     private var content: some View {
         let multi = multiSelectedShots
-        if multi.count > 1 {
+        if selection.isMultiple {
             MultiSelectionPane(shots: multi)
         } else if let shot = selectedShot ?? multi.first {
             ShotDetailPane(shot: shot)

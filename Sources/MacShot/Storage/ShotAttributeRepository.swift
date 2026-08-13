@@ -151,6 +151,40 @@ struct ShotAttributeRepository {
         }
     }
 
+    /// 一次事务设置一批收藏标记。先分块清掉旧值，再按仍存在的 Shot 插入一行，
+    /// 避免 ⌘A 后逐张提交导致 ValueObservation 和 WAL 被成百上千次唤醒。
+    func setFavorite(shotIDs: [Int64], isFavorite: Bool) throws {
+        let ids = Array(Set(shotIDs))
+        guard !ids.isEmpty else { return }
+
+        try database.write { db in
+            for start in stride(from: 0, to: ids.count, by: 500) {
+                let chunk = Array(ids[start..<min(start + 500, ids.count)])
+                try db.execute(sql: """
+                    DELETE FROM shotAttribute
+                    WHERE key = ? AND shotID IN (\(chunk.map { _ in "?" }.joined(separator: ",")))
+                    """, arguments: StatementArguments([AttributeKey.favorite] + chunk))
+            }
+
+            guard isFavorite else { return }
+            let insert = try db.makeStatement(sql: """
+                INSERT INTO shotAttribute (shotID, key, text, payload, createdAt)
+                SELECT ?, ?, NULL, ?, ?
+                WHERE EXISTS (SELECT 1 FROM shot WHERE id = ?)
+                """)
+            let now = Date()
+            for id in ids {
+                try insert.execute(arguments: [
+                    id,
+                    AttributeKey.favorite,
+                    Data([1]),
+                    now,
+                    id,
+                ])
+            }
+        }
+    }
+
     // MARK: - 标签
 
     /// 同一张图重复添加同名标签时幂等。

@@ -78,13 +78,78 @@ final class ShotMetadataRepositoryTests: XCTestCase {
             [firstID, survivorID]
         )
 
-        XCTAssertTrue(try repository.delete([first]).isEmpty, "同 SHA 仍有引用时不能删文件")
+        XCTAssertTrue(try repository.delete(ids: [firstID]).isEmpty, "同 SHA 仍有引用时不能删文件")
         XCTAssertFalse(try repository.exists(id: firstID))
         XCTAssertEqual(try repository.count(), 2)
 
-        XCTAssertEqual(try repository.delete([second]), ["shared-content"])
+        XCTAssertEqual(try repository.delete(ids: [secondID]), ["shared-content"])
         XCTAssertTrue(try repository.exists(id: survivorID))
         XCTAssertEqual(try repository.count(), 1)
+    }
+
+    func testOutputRecordsPreserveOrderUseLatestRevisionAndChunkLargeSelection() async throws {
+        let database = try makeDatabase()
+        let repository = ShotMetadataRepository(database: database)
+        let count = 1_205
+
+        let ids: [Int64] = try await database.write { db in
+            var insertedIDs: [Int64] = []
+            insertedIDs.reserveCapacity(count)
+            for index in 0..<count {
+                var shot = Shot(
+                    id: nil,
+                    sha256: "output-material-\(index)",
+                    capturedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                    pixelWidth: 10,
+                    pixelHeight: 10,
+                    scale: 2,
+                    appName: nil,
+                    appBundleID: nil,
+                    appVersion: nil,
+                    appBuild: nil,
+                    windowTitle: nil,
+                    sourceURL: nil,
+                    displayID: nil,
+                    displayName: nil,
+                    regionX: 0,
+                    regionY: 0,
+                    regionW: 10,
+                    regionH: 10,
+                    ocrText: nil
+                )
+                try shot.insert(db)
+                let shotID = try XCTUnwrap(shot.id)
+                insertedIDs.append(shotID)
+
+                var initial = Revision.make(
+                    shotID: shotID,
+                    parentID: nil,
+                    layers: [],
+                    note: "原始"
+                )
+                try initial.insert(db)
+                var latest = Revision.make(
+                    shotID: shotID,
+                    parentID: initial.id,
+                    layers: [Layer(
+                        kind: .rect,
+                        rect: LRect(x: Double(index), y: 0, w: 1, h: 1)
+                    )],
+                    note: "最新"
+                )
+                try latest.insert(db)
+            }
+            return insertedIDs
+        }
+
+        let requested = Array(ids.reversed()) + [ids[20], 9_999_999]
+        let records = try await repository.outputRecordsInBackground(ids: requested)
+
+        XCTAssertEqual(records.map { $0.shot.id }, ids.reversed())
+        XCTAssertEqual(records.count, count, "重复或已删除 ID 不得制造重复材料")
+        XCTAssertEqual(records.first?.layers.count, 1)
+        XCTAssertEqual(records.first?.layers[0].rect.x, Double(count - 1))
+        XCTAssertEqual(records.last?.layers[0].rect.x, 0)
     }
 
     func testCapturedAppsUseStableIdentityAndBoundedPreviews() throws {

@@ -135,3 +135,47 @@ final class GalleryViewModel: ObservableObject {
         reload()
     }
 }
+
+/// `GalleryGrid` 只关心会改变可见图片集合的语义模式与语义结果。
+///
+/// 网格若直接 `@ObservedObject` 整个 `GalleryViewModel`，搜索框每敲一个字符、搜索中的
+/// spinner 每翻一次状态，都会让几百张卡片整棵重算，尽管精确搜索尚在 debounce。
+/// 这个投影只转发真正改变网格内容的两条信号；顶栏仍观察完整 ViewModel。
+@MainActor
+final class GalleryGridPresentation: ObservableObject {
+    let objectWillChange = ObservableObjectPublisher()
+
+    private(set) var semanticMode: Bool
+    private(set) var semanticResults: [Shot]?
+    private(set) var revision = 0
+    private var cancellables: Set<AnyCancellable> = []
+
+    init(viewModel: GalleryViewModel) {
+        semanticMode = viewModel.semanticMode
+        semanticResults = viewModel.semanticResults
+
+        viewModel.$semanticMode
+            .dropFirst()
+            .sink { [weak self] value in
+                guard let self else { return }
+                self.objectWillChange.send()
+                self.semanticMode = value
+                self.revision &+= 1
+            }
+            .store(in: &cancellables)
+
+        viewModel.$semanticResults
+            .dropFirst()
+            .sink { [weak self] results in
+                guard let self else { return }
+                self.objectWillChange.send()
+                self.semanticResults = results
+                self.revision &+= 1
+            }
+            .store(in: &cancellables)
+    }
+
+    func displayShots(fallback: [Shot]) -> [Shot] {
+        semanticMode ? (semanticResults ?? fallback) : fallback
+    }
+}

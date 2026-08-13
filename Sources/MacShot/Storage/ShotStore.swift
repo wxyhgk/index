@@ -40,6 +40,8 @@ final class ShotStore: ObservableObject {
     private let revisionRepository: ShotRevisionRepository
     /// Shot 本体查询、来源聚合与删除引用计数的非 MainActor 仓库。
     private let metadataRepository: ShotMetadataRepository
+    /// 当前页卡片派生信息的后台一致快照。
+    private let pageMetadataRepository: ShotPageMetadataRepository
 
     /// 当前 `shots` 对应的查询快照。它不是 UI 状态：只用于写入后的自动刷新、
     /// 翻页与无参数兼容入口，确保仓储缓存知道自己装的是什么数据。
@@ -88,6 +90,7 @@ final class ShotStore: ObservableObject {
         attributeRepository = ShotAttributeRepository(database: writer)
         revisionRepository = ShotRevisionRepository(database: writer)
         metadataRepository = ShotMetadataRepository(database: writer)
+        pageMetadataRepository = ShotPageMetadataRepository(database: writer)
 
         reload(query: "", filter: .all)
     }
@@ -290,6 +293,14 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    func setFavorite(shotIDs: [Int64], isFavorite: Bool) {
+        do {
+            try attributeRepository.setFavorite(shotIDs: shotIDs, isFavorite: isFavorite)
+        } catch {
+            NSLog("[MacShot] 批量修改收藏失败: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - 专题收藏集
 
     func collectionSummaries() -> [ShotCollectionSummary] {
@@ -344,6 +355,16 @@ final class ShotStore: ObservableObject {
 
     func collectionMemberships(shotIDs: [Int64]) -> [Int64: Set<Int64>] {
         (try? collectionRepository.memberships(shotIDs: shotIDs)) ?? [:]
+    }
+
+    nonisolated func collectionMembershipCountsInBackground(
+        shotIDs: [Int64]
+    ) async -> [Int64: Int] {
+        (try? await collectionRepository.membershipCountsInBackground(shotIDs: shotIDs)) ?? [:]
+    }
+
+    nonisolated func pageMetadataInBackground(shotIDs: [Int64]) async -> ShotPageMetadata {
+        (try? await pageMetadataRepository.fetchInBackground(shotIDs: shotIDs)) ?? .empty
     }
 
     // MARK: - 标签
@@ -421,9 +442,13 @@ final class ShotStore: ObservableObject {
     /// 只有事务提交后不再被任何剩余记录引用的 sha 才删文件。删行和查剩余引用
     /// 在同一个事务里完成，比旧的跨事务 read-after-write 更严格。
     func delete(_ shotsToDelete: [Shot]) {
-        guard shotsToDelete.contains(where: { $0.id != nil }) else { return }
+        delete(shotIDs: shotsToDelete.compactMap(\.id))
+    }
 
-        let orphaned = (try? metadataRepository.delete(shotsToDelete)) ?? []
+    func delete(shotIDs: [Int64]) {
+        guard !shotIDs.isEmpty else { return }
+
+        let orphaned = (try? metadataRepository.delete(ids: shotIDs)) ?? []
 
         for sha in orphaned {
             try? FileManager.default.removeItem(
@@ -709,6 +734,21 @@ final class ShotStore: ObservableObject {
             query: query,
             filter: filter
         )) ?? []
+    }
+
+    nonisolated func shotsInBackground(ids: [Int64]) async -> [Shot] {
+        (try? await metadataRepository.shotsInBackground(ids: ids)) ?? []
+    }
+
+    nonisolated func outputMaterialsInBackground(ids: [Int64]) async -> [ShotOutputMaterial] {
+        let records = (try? await metadataRepository.outputRecordsInBackground(ids: ids)) ?? []
+        return records.map { record in
+            ShotOutputMaterial(
+                shot: record.shot,
+                originalURL: originalsDirectory.appendingPathComponent(record.shot.originalFileName),
+                layers: record.layers
+            )
+        }
     }
 
     /// 语义搜索的候选范围只看固定筛选，不把自然语言查询误当成精确文本查询。
