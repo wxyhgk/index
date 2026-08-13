@@ -6,6 +6,12 @@
 
 <p align="center">macOS 原生截图、标注与本地优先图片资料库。</p>
 
+<p align="center">
+  <img src="docs/images/index-capture-selection.png" alt="Index 截图冻结与选区界面">
+</p>
+
+<p align="center"><b>冻结屏幕 → 框选 → Tool Palette 标注 → 复制 / 保存 / 钉图 / 上传</b></p>
+
 ## 特色功能
 
 <table>
