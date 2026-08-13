@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to package, for example v0.1.9
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build and publish macOS app
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      CI: "true"
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Validate tag and app version
+        id: metadata
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="$REQUESTED_TAG"
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/$tag^{commit}" >/dev/null
+
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          if [[ "v$version" != "$tag" ]]; then
+            echo "Tag $tag does not match app version $version" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "archive=Index-$tag-macOS.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Run project checks
+        run: ./scripts/check.sh
+
+      - name: Build preview app
+        env:
+          MACSHOT_ALLOW_ADHOC: "1"
+        run: |
+          ./build.sh release
+          codesign --verify --deep --strict build/MacShot.app
+
+          archive="${{ steps.metadata.outputs.archive }}"
+          ditto -c -k --sequesterRsrc --keepParent build/MacShot.app "$archive"
+          shasum -a 256 "$archive" > "$archive.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          ARCHIVE: ${{ steps.metadata.outputs.archive }}
+        run: |
+          cat > release-notes.md <<EOF
+          ## Index $RELEASE_TAG
+
+          此附件由 GitHub Actions 从版本标签自动构建。
+
+          > 当前为未公证预览版。首次运行如被 macOS 拦截，请在 Finder 中右键 App 并选择“打开”。
+
+          下载 $ARCHIVE，解压后运行其中的 MacShot.app。应用显示名称为 Index；bundle 文件名为兼容既有屏幕录制授权而暂时保留。
+          EOF
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "Index $RELEASE_TAG" \
+              --notes-file release-notes.md \
+              --prerelease
+          else
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --title "Index $RELEASE_TAG" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi
+
+          gh release upload "$RELEASE_TAG" \
+            "$ARCHIVE" \
+            "$ARCHIVE.sha256" \
+            --clobber

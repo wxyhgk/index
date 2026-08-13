@@ -58,6 +58,8 @@ open build/MacShot.app
 
 开发检查：`./scripts/check.sh`
 
+版本附件见 [GitHub Releases](https://github.com/wxyhgk/index/releases)；当前 CI 构建为未公证预览版。
+
 当前仍保留 `MacShot.app`、Bundle ID 和 `~/Library/Application Support/MacShot/`，以兼容既有授权与数据。
 
 ## 文档与许可
