@@ -3,11 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>MacShot</string>
+    <string>Index</string>
     <key>CFBundleDisplayName</key>
-    <string>MacShot</string>
+    <string>Index</string>
     <key>CFBundleIdentifier</key>
     <string>com.wxyhgk.macshot</string>
+    <key>CFBundleIconFile</key>
+    <string>Index</string>
     <key>CFBundleExecutable</key>
     <string>MacShot</string>
     <key>CFBundlePackageType</key>
@@ -25,11 +27,11 @@
     <true/>
     <!-- 取浏览器当前标签页地址需要 Apple Events 授权 -->
     <key>NSAppleEventsUsageDescription</key>
-    <string>MacShot 需要询问浏览器当前页面的网址，以便把它记录到截图的元数据里。</string>
+    <string>Index 需要询问浏览器当前页面的网址，以便把它记录到图片的来源信息里。</string>
     <!-- 录屏可选录麦克风（设置里默认关，首次开启触发此弹窗） -->
     <key>NSMicrophoneUsageDescription</key>
-    <string>MacShot 需要使用麦克风，以便在录屏时把你的声音一起录进视频。</string>
-    <!-- URL scheme：快捷指令 / Raycast / 终端 open 都能经 macshot:// 调起，见 App/URLCommandRouter.swift -->
+    <string>Index 需要使用麦克风，以便在录屏时把你的声音一起录进视频。</string>
+    <!-- index:// 是新品牌入口；macshot:// 为既有自动化与 Edge 连接器保留兼容。 -->
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
@@ -37,6 +39,7 @@
             <string>com.wxyhgk.macshot</string>
             <key>CFBundleURLSchemes</key>
             <array>
+                <string>index</string>
                 <string>macshot</string>
             </array>
         </dict>
@@ -55,7 +58,7 @@
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>用 MacShot 截图</string>
+                <string>用 Index 截图</string>
             </dict>
             <key>NSMessage</key>
             <string>captureService</string>

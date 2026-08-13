@@ -25,7 +25,7 @@ final class MoleculeXYZTests: XCTestCase {
         """)
 
         XCTAssertEqual(molecule.atomCount, 2)
-        XCTAssertEqual(molecule.comment, "MacShot clipboard molecule")
+        XCTAssertEqual(molecule.comment, "Index clipboard molecule")
         XCTAssertEqual(molecule.atoms[1].x, 1.09, accuracy: 0.000_001)
         XCTAssertEqual(molecule.canonicalText.components(separatedBy: "\n").count, 5)
     }

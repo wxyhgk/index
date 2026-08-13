@@ -269,7 +269,7 @@ private struct GeneralSettings: View {
             template: settings.exportNameTemplate,
             date: Date(),
             appName: "Safari",
-            windowTitle: "MacShot 使用指南"
+            windowTitle: "Index 使用指南"
         ) + ".png"
     }
 
@@ -299,7 +299,7 @@ private struct LaunchAtLoginRow: View {
     @State private var errorText: String?
 
     var body: some View {
-        Toggle("登录时启动 MacShot", isOn: Binding(
+        Toggle("登录时启动 Index", isOn: Binding(
             get: { status == .enabled || status == .requiresApproval },
             set: { enable in
                 errorText = nil
@@ -315,7 +315,7 @@ private struct LaunchAtLoginRow: View {
 
         if status == .requiresApproval {
             HStack(spacing: 8) {
-                Text("已注册，等待系统放行 —— 在「系统设置 › 通用 › 登录项」里允许 MacShot。")
+                Text("已注册，等待系统放行 —— 在「系统设置 › 通用 › 登录项」里允许 Index。")
                     .font(.caption)
                     .foregroundStyle(.orange)
                 Button("打开系统设置") { LaunchAtLogin.openSystemSettings() }

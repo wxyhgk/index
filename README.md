@@ -1,6 +1,9 @@
-# MacShot
+# Index
 
-macOS 截图工具：**冻结截图 → 就地标注 → 钉图 / 复制 / 保存 / 上传 → 自动入库 → 分类与检索**，全程非破坏性编辑。
+个人视觉资料库：**捕获 / 导入 → 就地标注 → 钉图 / 复制 / 保存 / 上传 → 自动入库 → 分类与检索**，全程非破坏性编辑。
+
+当前用户品牌为 **Index**。为保持屏幕录制授权、图库路径和既有自动化兼容，工程 target、
+`MacShot.app` 固定路径、Bundle ID 与 `~/Library/Application Support/MacShot/` 暂不改名。
 
 核心特性：
 
@@ -14,8 +17,8 @@ macOS 截图工具：**冻结截图 → 就地标注 → 钉图 / 复制 / 保�
 - **3D 分子钉图** —— 复制 XYZ 文本后按 `⌃⌘M`，直接生成置顶的交互式分子窗口；旋转到合适视角后点“定格为图片”，原地进入普通钉图与 Tool Palette，可继续标注 / 复制 / 保存 / 上传。定格图的原始 XYZ 作为独立附件保留，分子图标可复制坐标、用默认应用打开可编辑工作副本或重新进入 3D
 - **非破坏性修订链** —— 原图落盘后永不修改，所有标注（含裁剪）都是 append-only 的结构化图层版本，编辑历史可无限回溯
 - **智能图库** —— 自动分类、自定义标签、收藏、时间分组、多选批量操作、以图搜图、同源时间线对比，还能用自然语言做 CLIP 语义搜索
-- **本地图片导入** —— 图库顶栏选择或直接拖入 PNG / JPEG / HEIC / TIFF；原图复制进 MacShot 后即可沿用收藏、专题、标注、复制与导出
-- **Edge 图片收藏 Demo** —— 网页图片右键「保存图片到 MacShot 图库」，图片内容经本机 Native Messaging 连接器进入同一套导入与收藏链路，并保留来源页面网址
+- **本地图片导入** —— 图库顶栏选择或直接拖入 PNG / JPEG / HEIC / TIFF；原图复制进 Index 后即可沿用收藏、专题、标注、复制与导出
+- **Edge 图片收藏 Demo** —— 网页图片右键「保存图片到 Index 图库」，图片内容经本机 Native Messaging 连接器进入同一套导入与收藏链路，并保留来源页面网址
 - **OCR 全文搜索** —— 截图自动过 Vision OCR，图库里可以直接搜"截图里的字"；FTS5 trigram 分词，中文子串友好
 - **智能脱敏** —— 自动检测邮箱 / 密钥 / 银行卡 / 手机号 / IP / 人脸，图库里一键打码
 - **放大镜取色器** —— 选区时光标旁实时显示像素放大预览、#RRGGBB 色值和坐标，一键复制色值
@@ -37,7 +40,10 @@ open build/MacShot.app
 
 CI 跑的是同一个脚本。流水线与 runner 的搭建见 [docs/ci.md](docs/ci.md)。
 
-首次运行需要在 **系统设置 → 隐私与安全性 → 屏幕录制** 中勾选 MacShot，然后**重启 App**。
+公共 GitHub CI 使用 `macos-15` runner，只执行构建、测试和架构纪律，不触发截图、录屏、
+Release 签名或 TCC 授权。隐私与联网边界见 [PRIVACY.md](PRIVACY.md)。
+
+首次运行需要在 **系统设置 → 隐私与安全性 → 屏幕录制** 中勾选 Index，然后**重启 App**。
 
 ### 关于「每次构建都要重新授权」
 
@@ -84,7 +90,7 @@ macOS 的 TCC 是这样认 App 的：
 - **放大镜取色器**：挑位置阶段光标旁浮出像素放大预览（带网格）、`#RRGGBB` 色值和像素坐标，按 **`C`** 复制色值（`⌘C` 仍是复制图片）。自动避让屏幕边缘；设置里可关
 - **`ESC`** 在编辑/标注后第一次退出整套编辑态、第二次取消截图；中性态下一次退出。**右键**保留更细的逐级退出
 
-**滚动截图**（`⌃⌘S`）：框选区域后**你自己滚动页面**，MacShot 自动拼接 —— 不合成滚动事件，所以不需要辅助功能权限。控制条实时显示已拼接高度，滚太快会提示放慢（宁可暂停不错拼）；固定导航栏只出现一次。完成后长图入库并直接打开编辑器。已知不支持横向滚动，视差/动画背景的页面可能拼不上。
+**滚动截图**（`⌃⌘S`）：框选区域后**你自己滚动页面**，Index 自动拼接 —— 不合成滚动事件，所以不需要辅助功能权限。控制条实时显示已拼接高度，滚太快会提示放慢（宁可暂停不错拼）；固定导航栏只出现一次。完成后长图入库并直接打开编辑器。已知不支持横向滚动，视差/动画背景的页面可能拼不上。
 
 **录屏**（`⌃⌘R`，macOS 15 起）：框选区域回车开始，菜单栏变红点计时，再按一次停止。产物是 mp4（30fps 含光标，无音频），30 秒内的可一键转 GIF。默认同时进入「图库 → 录屏」并显示首帧封面；双击或回车播放，拖出卡片得到原始 mp4。视频文件保存在 `~/Library/Application Support/MacShot/recordings/`，可在设置里关闭自动入库。
 
@@ -158,7 +164,7 @@ uPic 式的自定义 HTTP API 上传，PicGo / SM.MS / Chevereto 类图床都能
 - 拖拽移动，**滚轮**缩放，**⌘+滚轮**调透明度；缩放到多大，笔画在屏幕上都是同样粗细
 - **`⌘T` 鼠标穿透** —— 窗口压暗、边框变虚线，点击直接落到底下的内容上，当参考图不再挡手；穿透后窗口收不到任何事件（`⌘T` 也按不进去了），解除走菜单栏「解除钉图穿透」一键恢复全部
 - **双击**复制，`⌘C` 复制，`⌘S` 保存，`ESC` 关闭（拿着画笔时先放下画笔）
-- XYZ 定格得到的钉图多一个**分子图标**：可复制原始 XYZ、用系统默认应用打开 `.xyz` 工作副本，或重新进入交互式 3D。图标和坐标附件只存在于 MacShot，导出的 PNG 不会携带或烧入这些信息
+- XYZ 定格得到的钉图多一个**分子图标**：可复制原始 XYZ、用系统默认应用打开 `.xyz` 工作副本，或重新进入交互式 3D。图标和坐标附件只存在于 Index，导出的 PNG 不会携带或烧入这些信息
 
 ### 图库与搜索
 
@@ -166,12 +172,12 @@ uPic 式的自定义 HTTP API 上传，PicGo / SM.MS / Chevereto 类图床都能
 
 图库里的名称是可编辑元数据：右键或按 `F2` 重命名，不会改动按 SHA-256 内容寻址的真实原图文件；清空名称即可恢复原文件名或窗口标题。
 
-图库顶栏的「导入」支持一次选择多张 PNG / JPEG / HEIC / TIFF，也可把这些图片直接拖进图库区域。导入时会复制一份不可变原图到 MacShot，之后移动或删除外部文件不影响图库内容。
+图库顶栏的「导入」支持一次选择多张 PNG / JPEG / HEIC / TIFF，也可把这些图片直接拖进图库区域。导入时会复制一份不可变原图到 Index，之后移动或删除外部文件不影响图库内容。
 
 **Microsoft Edge Demo**：运行 `./scripts/install-edge-demo.sh`，然后在 Edge 的
 `edge://extensions` 开启开发人员模式，选择「加载解压缩的扩展」，加载
 `BrowserExtensions/Edge`。之后右键网页中的 PNG / JPEG / HEIC / TIFF 图片即可发送到
-MacShot；详细边界与卸载方法见 [Edge Demo 文档](BrowserExtensions/Edge/README.md)。
+Index；详细边界与卸载方法见 [Edge Demo 文档](BrowserExtensions/Edge/README.md)。
 
 **图库按键**：
 
@@ -212,17 +218,17 @@ MacShot；详细边界与卸载方法见 [Edge Demo 文档](BrowserExtensions/Ed
 
 ### 自动化调用（URL scheme / 服务菜单）
 
-MacShot 注册了 `macshot://` scheme，快捷指令的「打开 URL」、Raycast / Alfred、终端 `open` 都能调起：
+Index 注册了 `index://` scheme，并保留旧 `macshot://` 兼容既有自动化。快捷指令的「打开 URL」、Raycast / Alfred、终端 `open` 都能调起：
 
 ```
-open "macshot://capture"            # 立即截图
-open "macshot://capture?delay=5"    # 延时 5 秒截图（只覆盖这一次）
-open "macshot://gallery?query=终端"  # 打开图库并搜索
-open "macshot://last/copy"          # 复制最近一张截图（含标注）
-open "macshot://last/reveal"        # 在访达中显示最近一张
+open "index://capture"            # 立即截图
+open "index://capture?delay=5"    # 延时 5 秒截图（只覆盖这一次）
+open "index://gallery?query=终端"  # 打开图库并搜索
+open "index://last/copy"          # 复制最近一张截图（含标注）
+open "index://last/reveal"        # 在访达中显示最近一张
 ```
 
-App 未运行时经 URL 打开会自动启动并执行命令。服务菜单里还有「用 MacShot 截图」（任何 App → 应用菜单 → 服务；刚构建后没刷新的话跑一次 `/System/Library/CoreServices/pbs -update` 或重新登录）。
+App 未运行时经 URL 打开会自动启动并执行命令。服务菜单里还有「用 Index 截图」（任何 App → 应用菜单 → 服务；刚构建后没刷新的话跑一次 `/System/Library/CoreServices/pbs -update` 或重新登录）。
 
 局限：`last/*` 取图库当前列表第一张（受筛选影响）；`gallery?query` 只走精确搜索。没做 App Intents —— SwiftPM 手工组包缺少 Xcode 的 metadata 提取阶段，快捷指令发现不了 intent（已实验证实），URL scheme 是等价替代。
 
@@ -278,3 +284,14 @@ shot (原图元数据)
 2. **录屏增强** —— 音频、暂停、可选入库
 3. **图库瀑布布局** —— 卡片按原始宽高比排列的 masonry 网格
 4. **Developer ID 签名 + 公证**
+
+## 公开发布信息
+
+本项目源代码采用 **GNU General Public License v3.0 or later**（SPDX：
+`GPL-3.0-or-later`）发布。你可以使用、研究和修改代码；分发原版或修改版时，需要按照
+GPL 提供对应源码并保留相同的自由。完整条款见 [LICENSE](LICENSE)。
+
+- [隐私说明](PRIVACY.md) —— 本地数据、系统权限、联网功能和删除方式
+- [安全策略](SECURITY.md) —— 私密漏洞报告与敏感材料边界
+- [第三方声明](THIRD_PARTY_NOTICES.md) —— GRDB、3Dmol.js、MobileCLIP 与 tokenizer 来源
+- [CI 文档](docs/ci.md) —— GitHub Actions、本地检查和 Release 签名边界

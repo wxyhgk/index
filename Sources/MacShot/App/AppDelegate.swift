@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 录制中每秒刷一次菜单里的「停止录制（mm:ss）」计时。
     private var recordingTimer: Timer?
 
-    // MARK: - URL scheme（macshot://）
+    // MARK: - URL scheme（index://；兼容 macshot://）
 
     private let urlRouter: URLCommandRouter
 
@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.recordingStateChanged()
         }
 
-        // 服务菜单：「用 MacShot 截图」（Info.plist 里的 NSServices 指到 captureService）。
+        // 服务菜单：「用 Index 截图」（Info.plist 里的 NSServices 指到 captureService）。
         NSApp.servicesProvider = self
 
         // 启动时不触碰屏幕捕获授权链。当前 macOS 15.3.1 现场的 replayd
@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 捕获方式
 
     /// 延时秒数由闭包注入 —— 采集层不引用 AppSettings，配置只在这里交汇。
-    /// `macshot://capture?delay=N` 的一次性覆盖也在这里消费，优先于设置值。
+    /// `index://capture?delay=N` 的一次性覆盖也在这里消费，优先于设置值。
     private func registerCaptureSources() {
         let immediate = ImmediateScreenSource(capturer: MacScreenCapturer.shared)
         CaptureSourceRegistry.shared.register(immediate)
@@ -134,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(
             systemSymbolName: "camera.viewfinder",
-            accessibilityDescription: "MacShot"
+            accessibilityDescription: "Index"
         )
         item.menu = buildMenu()
         statusItem = item
@@ -221,7 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(
-            title: "退出 MacShot",
+            title: "退出 Index",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         ))
@@ -323,7 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var metadata = CaptureMetadata()
         metadata.globalRegion = snapshot.globalRegion
         metadata.scale = snapshot.scale
-        metadata.appName = "MacShot 3D 分子"
+        metadata.appName = "Index 3D 分子"
         metadata.appBundleID = Bundle.main.bundleIdentifier
         metadata.appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         metadata.appBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
@@ -408,7 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             symbolName = "camera.viewfinder"
             tint = nil
         }
-        var image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "MacShot")
+        var image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Index")
         if let tint {
             image = image?.withSymbolConfiguration(.init(paletteColors: [tint]))
             image?.isTemplate = false   // 模板渲染会抹掉颜色
@@ -453,9 +453,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem()
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "关于 MacShot", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "关于 Index", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "退出 MacShot", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: "退出 Index", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
 
         // Edit 菜单：Copy / Select All 走标准 selector，validation 由窗口控制器决定
@@ -551,7 +551,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - 服务菜单
 
-    /// 「用 MacShot 截图」—— 无输入/输出类型，所以出现在所有 App 的「服务」菜单里。
+    /// 「用 Index 截图」—— 无输入/输出类型，所以出现在所有 App 的「服务」菜单里。
     /// 签名是 NSServices 协定的固定形状，pasteboard/userData 用不上但不能省。
     @objc func captureService(
         _ pasteboard: NSPasteboard,

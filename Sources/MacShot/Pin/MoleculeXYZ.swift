@@ -50,7 +50,7 @@ struct MoleculeXYZ: Equatable, Sendable {
 
         let atomLines = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         let atoms = try parseAtoms(atomLines)
-        return MoleculeXYZ(atoms: atoms, comment: "MacShot clipboard molecule")
+        return MoleculeXYZ(atoms: atoms, comment: "Index clipboard molecule")
     }
 
     private static func parseStandard(lines: [String], declaredCount: Int) throws -> MoleculeXYZ {
@@ -64,7 +64,7 @@ struct MoleculeXYZ: Equatable, Sendable {
         let comment: String
         let atomLines: [String]
         if nonEmptyRemainder.count == declaredCount {
-            comment = "MacShot clipboard molecule"
+            comment = "Index clipboard molecule"
             atomLines = nonEmptyRemainder
         } else {
             guard let commentLine = remainder.first else {
@@ -112,7 +112,7 @@ struct MoleculeXYZ: Equatable, Sendable {
 
     private static func sanitizedComment(_ source: String) -> String {
         let value = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? "MacShot clipboard molecule" : String(value.prefix(200))
+        return value.isEmpty ? "Index clipboard molecule" : String(value.prefix(200))
     }
 
     private static func normalizedElement(_ source: String) -> String {

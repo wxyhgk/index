@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://macshot.local/contracts/portable-library-v1.schema.json",
+  "title": "MacShot portable library manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format", "formatVersion", "minimumReaderVersion", "exportedAt", "producer",
+    "shots", "collections"
+  ],
+  "properties": {
+    "format": { "const": "com.macshot.portable-library" },
+    "formatVersion": { "const": 1 },
+    "minimumReaderVersion": { "type": "integer", "minimum": 1 },
+    "exportedAt": { "type": "string", "format": "date-time" },
+    "producer": { "$ref": "#/$defs/producer" },
+    "shots": { "type": "array", "items": { "$ref": "#/$defs/shot" } },
+    "collections": { "type": "array", "items": { "$ref": "#/$defs/collection" } }
+  },
+  "$defs": {
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "platform"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "platform": { "type": "string", "enum": ["macOS", "windows"] }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relativePath", "mediaType"],
+      "properties": {
+        "relativePath": { "type": "string", "pattern": "^(?!/)(?!.*\\.\\./).+$" },
+        "mediaType": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "appIdentifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["bundle-id", "aumid", "executable"] },
+        "value": { "type": "string", "minLength": 1 }
+      }
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height", "coordinateSpace"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "coordinateSpace": { "type": "string", "minLength": 1 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region"],
+      "properties": {
+        "appName": { "type": "string" },
+        "appIdentifier": { "$ref": "#/$defs/appIdentifier" },
+        "appVersion": { "type": "string" },
+        "appBuild": { "type": "string" },
+        "windowTitle": { "type": "string" },
+        "url": { "type": "string" },
+        "displayName": { "type": "string" },
+        "region": { "$ref": "#/$defs/region" }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "createdAt", "layers"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^revision-[0-9]+$" },
+        "parentID": { "type": "string", "pattern": "^revision-[0-9]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "note": { "type": "string" },
+        "layers": {
+          "allOf": [
+            { "$ref": "https://macshot.local/contracts/layers-v1.schema.json" }
+          ]
+        }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "molecule.xyz" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["textContent", "mediaType"],
+            "properties": {
+              "mediaType": { "const": "chemical/x-xyz" },
+              "payload": false
+            }
+          }
+        }
+      ],
+      "required": [
+        "id", "kind", "schemaVersion", "missing", "createdAt", "updatedAt"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^asset-[0-9]+$" },
+        "kind": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "relativePath": { "type": "string", "pattern": "^(?!/)(?!.*\\.\\./).+$" },
+        "textContent": { "type": "string" },
+        "mediaType": { "type": "string", "minLength": 1 },
+        "payload": { "type": "string", "contentEncoding": "base64" },
+        "missing": { "type": "boolean" },
+        "originalFileName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "shot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "contentHash", "original", "capturedAt", "pixelWidth", "pixelHeight",
+        "scale", "source", "favorite", "tags", "revisions", "assets"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^shot-[0-9]+$" },
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "original": { "$ref": "#/$defs/file" },
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "pixelWidth": { "type": "integer", "minimum": 1 },
+        "pixelHeight": { "type": "integer", "minimum": 1 },
+        "scale": { "type": "number", "exclusiveMinimum": 0 },
+        "customTitle": { "type": "string" },
+        "source": { "$ref": "#/$defs/source" },
+        "ocrText": { "type": "string" },
+        "favorite": { "type": "boolean" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "category": { "type": "string" },
+        "revisions": { "type": "array", "items": { "$ref": "#/$defs/revision" } },
+        "assets": { "type": "array", "items": { "$ref": "#/$defs/asset" } }
+      }
+    },
+    "collectionItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shotID", "addedAt", "sortOrder"],
+      "properties": {
+        "shotID": { "type": "string", "pattern": "^shot-[0-9]+$" },
+        "addedAt": { "type": "string", "format": "date-time" },
+        "sortOrder": { "type": "integer" }
+      }
+    },
+    "collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "note", "createdAt", "updatedAt", "sortOrder", "items"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^collection-[0-9]+$" },
+        "name": { "type": "string", "minLength": 1 },
+        "note": { "type": "string" },
+        "coverShotID": { "type": "string", "pattern": "^shot-[0-9]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "sortOrder": { "type": "integer" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/collectionItem" } }
+      }
+    }
+  }
+}

@@ -46,7 +46,7 @@ final class URLCommandRouterBrowserImportTests: XCTestCase {
             showGallery: { didShowGallery = true }
         )
 
-        router.handle(try XCTUnwrap(URL(string: "macshot://import/browser?id=\(id.uuidString)")))
+        router.handle(try XCTUnwrap(URL(string: "index://import/browser?id=\(id.uuidString)")))
         await router.waitForPendingBrowserImport()
 
         XCTAssertEqual(store.totalCount, 1)
@@ -69,6 +69,28 @@ final class URLCommandRouterBrowserImportTests: XCTestCase {
             completion,
             .init(ok: true, fileName: "MR-TADF.png", error: nil)
         )
+    }
+
+    func testAcceptsIndexAndLegacyMacShotSchemes() throws {
+        let database = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(database)
+        let libraryRoot = temporaryDirectory("schemes")
+        defer { try? FileManager.default.removeItem(at: libraryRoot) }
+        let store = ShotStore(rootDirectory: libraryRoot, database: database)
+        var galleryOpenCount = 0
+        let router = URLCommandRouter(
+            shotStore: store,
+            galleryViewModel: GalleryViewModel(store: store),
+            captureCoordinator: .preview,
+            imageImporter: ImageImportCoordinator(store: store),
+            showGallery: { galleryOpenCount += 1 }
+        )
+
+        router.handle(try XCTUnwrap(URL(string: "index://gallery")))
+        router.handle(try XCTUnwrap(URL(string: "macshot://gallery")))
+        router.handle(try XCTUnwrap(URL(string: "unrelated://gallery")))
+
+        XCTAssertEqual(galleryOpenCount, 2)
     }
 
     private func temporaryDirectory(_ suffix: String) -> URL {

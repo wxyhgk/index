@@ -1,16 +1,16 @@
 import AppKit
 
-/// `macshot://` URL scheme 的解析与执行.
+/// `index://` URL scheme 的解析与执行；同时兼容既有 `macshot://` 自动化。
 ///
 /// 这是对外的自动化接口 —— 快捷指令「打开 URL」、Raycast/Alfred、终端 `open` 都走它：
 ///
-///   macshot://capture              立即截图
-///   macshot://capture?delay=5      延时截图（本次覆盖设置里的秒数）
-///   macshot://gallery              打开图库
-///   macshot://gallery?query=xxx    打开图库并执行搜索
-///   macshot://last/copy            复制最近一张截图（含标注，与图库右键「拷贝」同一渲染）
-///   macshot://last/reveal          在访达中显示最近一张截图
-///   macshot://import/browser?id=…  消费 Edge Native Messaging 专用收件箱中的图片
+///   index://capture              立即截图
+///   index://capture?delay=5      延时截图（本次覆盖设置里的秒数）
+///   index://gallery              打开图库
+///   index://gallery?query=xxx    打开图库并执行搜索
+///   index://last/copy            复制最近一张截图（含标注，与图库右键「拷贝」同一渲染）
+///   index://last/reveal          在访达中显示最近一张截图
+///   index://import/browser?id=…  消费 Edge Native Messaging 专用收件箱中的图片
 ///
 /// 未知命令记日志忽略，不弹窗 —— 自动化调用方拿不到弹窗，弹了也没人看。
 @MainActor
@@ -70,10 +70,12 @@ final class URLCommandRouter {
     }
 
     func handle(_ url: URL) {
-        guard url.scheme?.lowercased() == "macshot" else { return }
+        guard let scheme = url.scheme?.lowercased(), ["index", "macshot"].contains(scheme) else {
+            return
+        }
         NSLog("[MacShot] URL 命令: \(url.absoluteString)")
 
-        // macshot://capture → host = "capture"；macshot://last/copy → host = "last"，path = "/copy"
+        // index://capture → host = "capture"；index://last/copy → host = "last"，path = "/copy"
         let host = url.host?.lowercased() ?? ""
         let subpath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
         let query = queryItems(of: url)
@@ -171,7 +173,7 @@ final class URLCommandRouter {
                 .init(
                     ok: succeeded,
                     fileName: succeeded ? item.metadata.fileName : nil,
-                    error: succeeded ? nil : "MacShot 无法导入这张图片。"
+                    error: succeeded ? nil : "Index 无法导入这张图片。"
                 ),
                 id: item.id,
                 rootDirectory: browserInboxRoot

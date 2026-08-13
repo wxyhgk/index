@@ -125,7 +125,7 @@ struct WatermarkSpec: Codable, Equatable {
     /// 设置里没配文案时的兜底 —— 开关必须永远可用。
     /// 唯一的一份：工具条开关、编辑器效果面板、自动水印全部经
     /// 描述符 `EffectRegistry` 的 makeLayer 用到它。
-    static let defaultText = "MacShot"
+    static let defaultText = "Index"
 
     /// 存进 `Layer.text` 的 JSON。键排序固定，同参数编码结果一致（Layer 是 Equatable）。
     var encoded: String {

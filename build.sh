@@ -41,6 +41,7 @@ echo "==> 在旁路目录组装 $STAGED_APP"
 mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 cp "$BIN_PATH" "$STAGED_APP/Contents/MacOS/$APP_NAME"
 cp Resources/Info.plist "$STAGED_APP/Contents/Info.plist"
+cp Resources/Index.icns "$STAGED_APP/Contents/Resources/Index.icns"
 printf 'APPL????' > "$STAGED_APP/Contents/PkgInfo"
 
 # 签名身份优先级：Developer ID > 本地自签的「MacShot Dev」。

@@ -1,8 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "保存到 MacShot（Demo）",
+  "name": "保存到 Index（Demo）",
   "version": "0.1.0",
-  "description": "在 Microsoft Edge 中右键图片，保存到本机 MacShot 图库。",
+  "description": "在 Microsoft Edge 中右键图片，保存到本机 Index 图库。",
+  "icons": {
+    "16": "icons/index-16.png",
+    "32": "icons/index-32.png",
+    "48": "icons/index-48.png",
+    "128": "icons/index-128.png"
+  },
   "permissions": [
     "contextMenus",
     "nativeMessaging",
@@ -16,7 +22,11 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "保存到 MacShot（Demo）"
+    "default_title": "保存到 Index（Demo）",
+    "default_icon": {
+      "16": "icons/index-16.png",
+      "32": "icons/index-32.png"
+    }
   },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxq958pqb+GPtOKDajurYv7Tocu2K8jR5P4MTmLy3UIkgFhsEfmPjEhxRk6a2iT3cX/hmeOoybao4wei+CKKBKJjjdsl3kbz9CorBboLgWTz6oh/1mJaAZRbjNscTdBPxeYhGShTDLo/dXQndxaOdJK9ddkzywX0XQaPnF+hUcg7L2xMJps5Whhx0462zBiO3Ctcn3lRkLihmnBBklVN2zAyFdnShWlIvlh2YsuHIVSQfd/NZR1fBykfMB4k6nLcVyhhauU/HKyLn3BSCXt7GeuEcqV5ie/CZx6lIet4AtTK7txDWDTTrosxCNvaY59Qk/eaN2N8XWogldfT1gSp9RwIDAQAB"
 }

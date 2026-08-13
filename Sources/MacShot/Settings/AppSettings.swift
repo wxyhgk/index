@@ -257,7 +257,7 @@ final class AppSettings: ObservableObject {
     // MARK: - 水印
 
     /// 默认水印文案。空 = 未配置：「导出自动加水印」不生效，
-    /// 手动开关（工具条/编辑器）用 "MacShot" 兜底。
+    /// 手动开关（工具条/编辑器）用 "Index" 兜底。
     @Published var watermarkText: String {
         didSet { defaults.set(watermarkText, forKey: Keys.watermarkText) }
     }

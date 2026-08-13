@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Microsoft Edge Native Messaging host for the MacShot demo.
+"""Microsoft Edge Native Messaging host for the Index demo.
 
 stdout is reserved exclusively for the length-prefixed native-messaging response.
 Diagnostic text must go to stderr, otherwise Edge treats it as protocol corruption.
@@ -151,7 +151,7 @@ def open_macshot(transfer_id: str) -> None:
     if os.environ.get("MACSHOT_BROWSER_SKIP_OPEN") == "1":
         return
     result = subprocess.run(
-        ["/usr/bin/open", "-g", f"macshot://import/browser?id={transfer_id}"],
+        ["/usr/bin/open", "-g", f"index://import/browser?id={transfer_id}"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -159,21 +159,21 @@ def open_macshot(transfer_id: str) -> None:
     )
     if result.returncode != 0:
         shutil.rmtree(inbox_root() / transfer_id, ignore_errors=True)
-        raise RuntimeError("unable to open MacShot")
+        raise RuntimeError("unable to open Index")
 
 
 def open_gallery() -> None:
     if os.environ.get("MACSHOT_BROWSER_SKIP_OPEN") == "1":
         return
     result = subprocess.run(
-        ["/usr/bin/open", "macshot://gallery"],
+        ["/usr/bin/open", "index://gallery"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError("unable to open MacShot gallery")
+        raise RuntimeError("unable to open Index gallery")
 
 
 def wait_for_import(transfer_id: str) -> dict:
@@ -186,12 +186,12 @@ def wait_for_import(transfer_id: str) -> dict:
         try:
             result = json.loads(result_path.read_text(encoding="utf-8"))
             if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
-                raise ValueError("MacShot returned an invalid import result")
+                raise ValueError("Index returned an invalid import result")
             result_path.unlink(missing_ok=True)
             return result
         except FileNotFoundError:
             time.sleep(0.05)
-    raise TimeoutError("MacShot did not confirm the import within 15 seconds")
+    raise TimeoutError("Index did not confirm the import within 15 seconds")
 
 
 def main() -> int:

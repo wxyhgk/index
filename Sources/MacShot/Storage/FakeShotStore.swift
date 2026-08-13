@@ -599,9 +599,9 @@ extension FakeShotStore {
         let now = Date()
         let seeds: [(String, String, String)] = [
             ("Finder", "访达 — 项目文件", "https://example.com/finder"),
-            ("Safari", "MacShot — 截图工具", "https://example.com/macshot"),
-            ("Xcode", "MacShot.xcodeproj", "https://example.com/xcode"),
-            ("Figma", "Design — MacShot 标注", "https://example.com/figma"),
+            ("Safari", "Index — 视觉资料库", "https://example.com/index"),
+            ("Xcode", "Index.xcodeproj", "https://example.com/xcode"),
+            ("Figma", "Design — Index 标注", "https://example.com/figma"),
             ("Slack", "团队频道 #design", "https://example.com/slack"),
             ("Notes", "会议纪要 08-08", "https://example.com/notes"),
         ]

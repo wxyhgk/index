@@ -45,7 +45,7 @@ final class CaptureSourceTests: XCTestCase {
     func testDisplayCaptureFailureDoesNotClaimSystemScreenshotIsBroken() {
         let message = CaptureError.displayCaptureFailed(["LS27D80xU"]).localizedDescription
 
-        XCTAssertTrue(message.contains("MacShot 的显示器捕获失败"))
+        XCTAssertTrue(message.contains("Index 的显示器捕获失败"))
         XCTAssertTrue(message.contains("LS27D80xU"))
         // 两个方向都不声称：macOS 15.3.1 实测系统 CLI 截图同样被代理到 replayd，
         // 「系统截图仍可用」与「系统截图已损坏」在故障会话里都没有依据。

@@ -59,7 +59,7 @@ import sys
 target, host_script, extension_id = sys.argv[1:]
 payload = {
     "name": "com.wxyhgk.macshot.edge",
-    "description": "MacShot Microsoft Edge image import demo",
+    "description": "Index Microsoft Edge image import demo",
     "path": os.path.abspath(host_script),
     "type": "stdio",
     "allowed_origins": [f"chrome-extension://{extension_id}/"],

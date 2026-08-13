@@ -104,7 +104,7 @@ final class RecordingCoordinator {
             _ = MacScreenCapturer.shared.requestPermission()
             presentInfo(
                 "需要「屏幕录制」权限",
-                "请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 MacShot，授权后重新启动。"
+                "请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 Index，授权后重新启动。"
             )
             return
         }

@@ -1,8 +1,7 @@
-# MacShot 的流水线。
+# Index 的 GitLab 兼容流水线。
 #
-# 硬约束，先说清楚：**这个项目只能在 macOS 上构建**。AppKit、ScreenCaptureKit、
-# Vision 在 Linux 上根本不存在，群晖上那台 NAS 跑不了它——GitLab 装在 NAS 上，
-# 但 runner 必须落在一台 Mac 上。注册步骤见 docs/ci.md。
+# 硬约束：项目只能在 macOS 上构建。AppKit、ScreenCaptureKit、Vision 在 Linux 上
+# 不存在，因此 GitLab runner 必须运行在 Mac 上。通用配置说明见 docs/ci.md。
 #
 # 所有 job 都只是调用 scripts/check.sh —— 和本地提交前跑的**是同一个脚本**。
 # 检查逻辑只有一份，不存在「CI 过了本地没过」或者反过来。
@@ -20,13 +19,13 @@ default:
   interruptible: true
 
 variables:
-  # 只要最近的历史，NAS 那边的 IO 不快。
+  # 流水线不依赖完整历史，浅克隆即可。
   GIT_DEPTH: "50"
   # check.sh 认这个变量，CI 上会先 swift package clean ——
   # 增量构建在协议改动之后可能留下错位的见证表，症状是莫名其妙的 SIGSEGV。
   CI: "true"
 
-# 每次推送都跑：构建 + 测试 + 三条架构纪律。
+# 每次推送都跑：构建 + 测试 + 全部架构纪律。
 check:
   stage: check
   script:

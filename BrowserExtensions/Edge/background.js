@@ -13,7 +13,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_ID,
-      title: "保存图片到 MacShot 图库",
+      title: "保存图片到 Index 图库",
       contexts: ["image"],
     });
   });
@@ -28,7 +28,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "open-macshot-gallery") return false;
   void sendNativeMessage({ type: "open-gallery" })
     .then((response) => {
-      if (!response?.ok) throw new Error(response?.error || "MacShot 无法打开图库");
+      if (!response?.ok) throw new Error(response?.error || "Index 无法打开图库");
       sendResponse({ ok: true });
     })
     .catch((error) => {
@@ -41,7 +41,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function importImage(info, tab) {
-  await setStatus("…", "正在发送图片到 MacShot");
+  await setStatus("…", "正在发送图片到 Index");
   try {
     const response = await fetch(info.srcUrl, {
       credentials: "include",
@@ -72,15 +72,15 @@ async function importImage(info, tab) {
     if (!result?.ok) throw new Error(result?.error || "本地连接器拒绝了图片");
 
     const fileName = result.fileName || "图片";
-    await setStatus("✓", `已保存到 MacShot：${fileName}`);
-    await showPageStatus(tab?.id, "success", "已保存到 MacShot", fileName);
+    await setStatus("✓", `已保存到 Index：${fileName}`);
+    await showPageStatus(tab?.id, "success", "已保存到 Index", fileName);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[MacShot Edge Demo]", message);
     await setStatus("!", `保存失败：${message}`);
     await showPageStatus(tab?.id, "failure", "保存失败", message);
   }
-  setTimeout(() => void setStatus("", "保存到 MacShot（Demo）"), 6000);
+  setTimeout(() => void setStatus("", "保存到 Index（Demo）"), 6000);
 }
 
 function sendNativeMessage(message) {
@@ -324,7 +324,7 @@ async function showPageStatus(tabId, kind, title, detail) {
               if (error || !response?.ok) {
                 view.disabled = false;
                 view.textContent = "重试";
-                detailNode.textContent = response?.error || error?.message || "无法打开 MacShot";
+                detailNode.textContent = response?.error || error?.message || "无法打开 Index";
               } else {
                 dismiss();
               }

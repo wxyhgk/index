@@ -315,6 +315,8 @@ protocol GalleryDestination {
 
 **第十二批（2026-08）已完成**：网格失效范围与分页元数据增量化。`GalleryGrid` 不再观察整个查询 ViewModel，而只订阅会改变卡片集合的语义模式/结果投影，搜索框逐字符输入和搜索 spinner 不再重建几百张卡片；`.task(id:)` 从全量 ID 数组改为常量大小的修订号、数量与首尾 ID。分页到来只查询新增后缀的卡片元数据并与前缀合并，完整库存变更仍强制重读；五份独立 `@State` 收敛为一次快照发布。元数据查询按 500 个 ID 分块但保持在同一数据库 read transaction 内，深度分页不会重复读取前 N 页或撞 SQLite 参数上限。
 
+**Windows 迁移第一批（2026-08）已完成**：跨平台边界从“共享 Swift 源码”改为“共享便携数据契约”。`Contracts/` 冻结 v1 manifest 与图层 JSON Schema；`PortableLibraryExporter` 在一个 SQLite read snapshot 中读取 Shot、完整修订链、用户标签/收藏/分类、专题关系和附件，再经旁路目录组装、最后同卷移动为独立包。原图以 SHA-256 去重复制，外置附件丢失时保留类型身份但不泄露绝对路径；原图缺失、图层 JSON 损坏或目标已存在则整体失败。FTS、缩略图、CLIP/Vision 向量属于可重建平台缓存，不进入迁移包。v1 包内整数引用只服务单次导入，不承担双向同步身份；Windows 端不得与 macOS 共同打开运行中的 SQLite/WAL。
+
 **拆巨文件（进行中）**：`GalleryView` 已于 2026-07 拆成 9 个文件（壳 171 行，最大的 `GalleryGrid` 548 行），拆分为纯搬家、逐行对账过。
 剩余：`maskSensitiveRegions` 业务逻辑仍留在 `ShotDetailPane` 待下沉；`EditorView`（1194 行）切 Toolbar / Canvas / EffectsPanel / LayersPanel 四件，用 ObservableObject 包装消灭 26 处 `annotationTick` 手动失效。
 

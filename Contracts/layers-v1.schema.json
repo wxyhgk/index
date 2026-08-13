@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://macshot.local/contracts/layers-v1.schema.json",
+  "title": "MacShot annotation layers v1",
+  "description": "Coordinates use image pixels with the origin at the top-left.",
+  "type": "array",
+  "items": { "$ref": "#/$defs/layer" },
+  "$defs": {
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "w": { "type": "number" },
+        "h": { "type": "number" }
+      }
+    },
+    "color": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["r", "g", "b", "a"],
+      "properties": {
+        "r": { "type": "number" },
+        "g": { "type": "number" },
+        "b": { "type": "number" },
+        "a": { "type": "number" }
+      }
+    },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "rect", "color", "lineWidth", "text", "fontSize"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "rect", "ellipse", "arrow", "line", "text", "highlight", "pixelate",
+            "crop", "counter", "spotlight", "dimension", "backdrop", "watermark",
+            "frame", "captureInfo"
+          ]
+        },
+        "rect": { "$ref": "#/$defs/rect" },
+        "color": { "$ref": "#/$defs/color" },
+        "lineWidth": { "type": "number" },
+        "text": { "type": "string" },
+        "fontSize": { "type": "number" },
+        "blockScale": { "type": "number" },
+        "dim": { "type": "number" }
+      }
+    }
+  }
+}

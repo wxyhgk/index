@@ -48,7 +48,7 @@ enum BugReport {
             )
         }
         screenshot.append("- 图片尺寸：\(pixelWidth) × \(pixelHeight) px")
-        screenshot.append("- 截图已存于 MacShot 图库")
+        screenshot.append("- 截图已存于 Index 图库")
 
         return """
         ### 环境

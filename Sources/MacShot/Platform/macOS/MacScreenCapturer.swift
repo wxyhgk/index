@@ -254,13 +254,13 @@ enum CaptureError: Error, LocalizedError {
         case .displayTopologyChanged:
             return "显示器连接状态在截图过程中发生了变化，请稍候再试。"
         case .screenCaptureTimedOut:
-            return "MacShot 等待 ScreenCaptureKit 响应超过 5 秒。MacShot 已停止等待，但系统请求可能仍在结束中；在它真正结束前不会发送新的捕获请求。"
+            return "Index 等待 ScreenCaptureKit 响应超过 5 秒。Index 已停止等待，但系统请求可能仍在结束中；在它真正结束前不会发送新的捕获请求。"
         case .screenCaptureUnavailable:
-            return "MacShot 未从 ScreenCaptureKit 收到截图结果。"
+            return "Index 未从 ScreenCaptureKit 收到截图结果。"
         case .screenCaptureRequestInFlight:
-            return "MacShot 正在处理上一条屏幕捕获请求，请稍候再试。"
+            return "Index 正在处理上一条屏幕捕获请求，请稍候再试。"
         case .screenCaptureRequestQuarantined:
-            return "上一条 ScreenCaptureKit 请求超时后仍未结束。MacShot 已暂停发送新的捕获请求，避免继续影响系统截图服务；请稍候再试。"
+            return "上一条 ScreenCaptureKit 请求超时后仍未结束。Index 已暂停发送新的捕获请求，避免继续影响系统截图服务；请稍候再试。"
         case .displayCaptureFailed(let names):
             let displayDescription: String
             if names.count == 1 {
@@ -268,7 +268,7 @@ enum CaptureError: Error, LocalizedError {
             } else {
                 displayDescription = "显示器：\(names.joined(separator: "、"))"
             }
-            return "MacShot 的显示器捕获失败（\(displayDescription)）。"
+            return "Index 的显示器捕获失败（\(displayDescription)）。"
         case .windowNotFound:
             return "找不到目标窗口"
         case .cropFailed:

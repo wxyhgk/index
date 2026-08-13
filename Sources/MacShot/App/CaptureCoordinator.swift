@@ -347,8 +347,8 @@ final class CaptureCoordinator {
         let choice = AppAlert.confirm(
             "需要「屏幕录制」权限",
             message: """
-            请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 MacShot。
-            授权后需要重新启动 MacShot 才能生效。
+            请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 Index。
+            授权后需要重新启动 Index 才能生效。
             """,
             buttons: ["打开系统设置", "稍后"]
         )

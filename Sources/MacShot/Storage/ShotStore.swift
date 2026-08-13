@@ -42,6 +42,8 @@ final class ShotStore: ObservableObject {
     private let metadataRepository: ShotMetadataRepository
     /// 当前页卡片派生信息的后台一致快照。
     private let pageMetadataRepository: ShotPageMetadataRepository
+    /// 跨平台便携包只读导出器；不暴露运行中的 SQLite/WAL。
+    private let portableLibraryExporter: PortableLibraryExporter
 
     /// 当前 `shots` 对应的查询快照。它不是 UI 状态：只用于写入后的自动刷新、
     /// 翻页与无参数兼容入口，确保仓储缓存知道自己装的是什么数据。
@@ -91,6 +93,7 @@ final class ShotStore: ObservableObject {
         revisionRepository = ShotRevisionRepository(database: writer)
         metadataRepository = ShotMetadataRepository(database: writer)
         pageMetadataRepository = ShotPageMetadataRepository(database: writer)
+        portableLibraryExporter = PortableLibraryExporter(database: writer, rootDirectory: base)
 
         reload(query: "", filter: .all)
     }
@@ -103,6 +106,21 @@ final class ShotStore: ObservableObject {
 
     func thumbnailURL(for shot: Shot) -> URL {
         thumbnailsDirectory.appendingPathComponent(shot.thumbnailFileName)
+    }
+
+    /// 导出一个可由未来 Windows 客户端导入的独立图库目录。
+    /// 目标必须不存在；当前图库与数据库不会被修改。
+    @discardableResult
+    func exportPortableLibrary(
+        to destination: URL,
+        exportedAt: Date = Date(),
+        producerVersion: String? = nil
+    ) async throws -> PortableLibraryManifest {
+        try await portableLibraryExporter.export(
+            to: destination,
+            exportedAt: exportedAt,
+            producerVersion: producerVersion
+        )
     }
 
     func originalImage(for shot: Shot) -> CGImage? {

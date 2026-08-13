@@ -21,7 +21,7 @@ final class GalleryWindowController: NSWindowController {
         let window = NSWindow(contentViewController: hosting)
         // 标题**藏起来但不清空**：窗口菜单、Mission Control、⌘` 切窗都读它，
         // 编辑模式下还会被换成「标注 — 出处」（见下面那个 sink）。
-        window.title = "MacShot 图库"
+        window.title = "Index 图库"
         window.setContentSize(NSSize(width: 1240, height: 760))
         // 全定制 chrome：内容伸满整窗（含标题栏那一条），标题栏透明、标题不画，
         // 也不挂 NSToolbar —— 窗口上剩下的唯一系统件是红绿灯。
@@ -58,12 +58,12 @@ final class GalleryWindowController: NSWindowController {
             .sink { [weak self] mode in
                 switch mode {
                 case .library:
-                    self?.window?.title = "MacShot 图库"
+                    self?.window?.title = "Index 图库"
                 case .settings:
-                    self?.window?.title = "MacShot 设置"
+                    self?.window?.title = "Index 设置"
                 case .editing(let id):
                     let summary = GalleryWindowMode.resolveShot(id: id)?.sourceSummary
-                    self?.window?.title = summary.map { "标注 — \($0)" } ?? "MacShot 图库"
+                    self?.window?.title = summary.map { "标注 — \($0)" } ?? "Index 图库"
                     QuickLookController.shared.close()
                 }
             }
