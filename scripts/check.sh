@@ -153,6 +153,7 @@ section "纪律七：运行中的 App 不得被原地覆盖"
 unsafe_bundle_replace=$(grep -nF 'rm -rf "$APP_BUNDLE"' build.sh || true)
 if [ -z "$unsafe_bundle_replace" ] \
     && grep -q 'STAGED_APP=' build.sh \
+    && grep -q 'PRODUCT_NAME="Index"' build.sh \
     && grep -q 'running_pids()' build.sh \
     && grep -qF 'mv "$STAGED_APP" "$APP_BUNDLE"' build.sh \
     && grep -q 'MACSHOT_ALLOW_ADHOC' build.sh; then
@@ -182,8 +183,8 @@ fi
 if [ "${1:-}" = "--full" ]; then
     section "组装 .app（release）"
     if ./build.sh release >/tmp/macshot-bundle.log 2>&1; then
-        ok "$(du -h build/MacShot.app/Contents/MacOS/MacShot | cut -f1) 可执行文件已签名"
-        codesign --verify --deep build/MacShot.app 2>/dev/null \
+        ok "$(du -h build/Index.app/Contents/MacOS/MacShot | cut -f1) 可执行文件已签名"
+        codesign --verify --deep build/Index.app 2>/dev/null \
             && ok "签名校验通过" || bad "签名校验失败"
     else
         tail -20 /tmp/macshot-bundle.log | sed 's/^/    /'

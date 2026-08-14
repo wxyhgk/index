@@ -49,7 +49,7 @@
 ```bash
 ./scripts/make-dev-cert.sh   # 首次构建执行一次
 ./build.sh release
-open build/MacShot.app
+open build/Index.app
 ```
 
 首次截图前，在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Index，然后重新打开 App。
@@ -60,7 +60,8 @@ open build/MacShot.app
 
 版本附件见 [GitHub Releases](https://github.com/wxyhgk/index/releases)；当前 CI 构建为未公证预览版。
 
-当前仍保留 `MacShot.app`、Bundle ID 和 `~/Library/Application Support/MacShot/`，以兼容既有授权与数据。
+SwiftPM target、可执行文件、Bundle ID 和 `~/Library/Application Support/MacShot/` 仍保留内部名称，
+以兼容既有授权与数据；用户看到的 App bundle 与显示名称均为 Index。
 
 ## 文档与许可
 

@@ -1,14 +1,19 @@
 #!/bin/bash
-# 构建 MacShot.app —— SwiftPM 只产出可执行文件，这里手工组装成 .app bundle。
+# 构建 Index.app —— SwiftPM target / 可执行文件仍叫 MacShot，公开产品名与 bundle 文件名叫 Index。
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 CONFIG="${1:-release}"
-APP_NAME="MacShot"
+PRODUCT_NAME="Index"
+EXECUTABLE_NAME="MacShot"
 BUILD_DIR="build"
-APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
-APP_EXECUTABLE="$PWD/$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+APP_BUNDLE="$BUILD_DIR/$PRODUCT_NAME.app"
+APP_EXECUTABLE="$PWD/$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
+# 0.1.9 以前的本地固定路径。迁移时必须先识别并退出这里的旧进程，
+# 再把磁盘上的旧 bundle 收掉，不能让同一个 Bundle ID 留下两份 App。
+LEGACY_APP_BUNDLE="$BUILD_DIR/MacShot.app"
+LEGACY_APP_EXECUTABLE="$PWD/$LEGACY_APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 
 # 同一时间只允许一个组装/替换流程。SwiftPM 自己能并发，但两个脚本同时移动
 # .app 会让签名、TCC 路径和正在运行的进程再次错位。
@@ -19,9 +24,10 @@ if ! mkdir "$BUILD_LOCK" 2>/dev/null; then
     exit 1
 fi
 
-STAGE_ROOT="$(mktemp -d "$BUILD_DIR/.MacShot-stage.XXXXXX")"
-STAGED_APP="$STAGE_ROOT/$APP_NAME.app"
-BACKUP_APP="$BUILD_DIR/.MacShot-previous.$$.app"
+STAGE_ROOT="$(mktemp -d "$BUILD_DIR/.Index-stage.XXXXXX")"
+STAGED_APP="$STAGE_ROOT/$PRODUCT_NAME.app"
+BACKUP_APP="$BUILD_DIR/.Index-previous.$$.app"
+LEGACY_BACKUP_APP="$BUILD_DIR/.MacShot-previous.$$.app"
 cleanup() {
     rm -rf -- "$STAGE_ROOT"
     rmdir "$BUILD_LOCK" 2>/dev/null || true
@@ -31,7 +37,7 @@ trap cleanup EXIT
 echo "==> swift build -c $CONFIG"
 swift build -c "$CONFIG"
 
-BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
+BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$EXECUTABLE_NAME"
 if [[ ! -x "$BIN_PATH" ]]; then
     echo "构建产物不存在: $BIN_PATH" >&2
     exit 1
@@ -39,7 +45,7 @@ fi
 
 echo "==> 在旁路目录组装 $STAGED_APP"
 mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
-cp "$BIN_PATH" "$STAGED_APP/Contents/MacOS/$APP_NAME"
+cp "$BIN_PATH" "$STAGED_APP/Contents/MacOS/$EXECUTABLE_NAME"
 cp Resources/Info.plist "$STAGED_APP/Contents/Info.plist"
 cp Resources/Index.icns "$STAGED_APP/Contents/Resources/Index.icns"
 printf 'APPL????' > "$STAGED_APP/Contents/PkgInfo"
@@ -76,8 +82,14 @@ echo "==> 签名身份要求（TCC 就是按这个认 App 的）:"
 NEW_REQUIREMENT="$(codesign -d -r- "$STAGED_APP" 2>&1 | grep '^designated' || true)"
 echo "$NEW_REQUIREMENT"
 
+EXISTING_APP=""
 if [[ -d "$APP_BUNDLE" ]]; then
-    OLD_REQUIREMENT="$(codesign -d -r- "$APP_BUNDLE" 2>&1 | grep '^designated' || true)"
+    EXISTING_APP="$APP_BUNDLE"
+elif [[ -d "$LEGACY_APP_BUNDLE" ]]; then
+    EXISTING_APP="$LEGACY_APP_BUNDLE"
+fi
+if [[ -n "$EXISTING_APP" ]]; then
+    OLD_REQUIREMENT="$(codesign -d -r- "$EXISTING_APP" 2>&1 | grep '^designated' || true)"
     if [[ -n "$OLD_REQUIREMENT" && "$OLD_REQUIREMENT" != "$NEW_REQUIREMENT" ]]; then
         echo "警告：本次签名身份与现有 App 不同，TCC 可能只需重新授权一次。" >&2
         echo "旧: $OLD_REQUIREMENT" >&2
@@ -90,13 +102,15 @@ fi
 # 不一致，表现为“每次构建后必须重启”。先完整退出，再做同卷 rename。
 WAS_RUNNING=0
 running_pids() {
-    ps -axo pid=,command= | awk -v target="$APP_EXECUTABLE" '$2 == target { print $1 }'
+    ps -axo pid=,command= \
+        | awk -v target="$APP_EXECUTABLE" -v legacy="$LEGACY_APP_EXECUTABLE" \
+            '$2 == target || $2 == legacy { print $1 }'
 }
 
 PIDS="$(running_pids)"
 if [[ -n "$PIDS" ]]; then
     WAS_RUNNING=1
-    echo "==> 退出正在运行的旧 MacShot: $PIDS"
+    echo "==> 退出正在运行的旧 Index/MacShot: $PIDS"
     osascript -e 'tell application id "com.wxyhgk.macshot" to quit' >/dev/null 2>&1 || true
     for _ in {1..20}; do
         [[ -z "$(running_pids)" ]] && break
@@ -115,7 +129,7 @@ if [[ -n "$PIDS" ]]; then
     fi
     PIDS="$(running_pids)"
     if [[ -n "$PIDS" ]]; then
-        echo "旧 MacShot 仍在运行，拒绝覆盖 App: $PIDS" >&2
+        echo "旧 Index/MacShot 仍在运行，拒绝覆盖 App: $PIDS" >&2
         exit 1
     fi
 fi
@@ -124,10 +138,16 @@ echo "==> 原子替换 $APP_BUNDLE"
 if [[ -e "$APP_BUNDLE" ]]; then
     mv "$APP_BUNDLE" "$BACKUP_APP"
 fi
+if [[ -e "$LEGACY_APP_BUNDLE" ]]; then
+    echo "==> 迁移旧路径 $LEGACY_APP_BUNDLE → $APP_BUNDLE"
+    mv "$LEGACY_APP_BUNDLE" "$LEGACY_BACKUP_APP"
+fi
 if mv "$STAGED_APP" "$APP_BUNDLE"; then
     rm -rf -- "$BACKUP_APP"
+    rm -rf -- "$LEGACY_BACKUP_APP"
 else
     [[ -e "$BACKUP_APP" ]] && mv "$BACKUP_APP" "$APP_BUNDLE"
+    [[ -e "$LEGACY_BACKUP_APP" ]] && mv "$LEGACY_BACKUP_APP" "$LEGACY_APP_BUNDLE"
     echo "替换失败，已恢复旧 App。" >&2
     exit 1
 fi
@@ -135,7 +155,7 @@ fi
 codesign --verify --deep --strict "$APP_BUNDLE"
 
 if [[ "$WAS_RUNNING" == "1" ]]; then
-    echo "==> 启动新 MacShot"
+    echo "==> 启动新 Index"
     # 旧进程刚退出时 LaunchServices 偶尔仍把 bundle 记成“正在终止”，
     # `open` 会瞬时返回 -600。App 已经原子替换成功，此时有限重试并以新 PID
     # 真正出现为准，不能只信 `open` 的退出码。
@@ -154,7 +174,7 @@ if [[ "$WAS_RUNNING" == "1" ]]; then
         sleep 0.2
     done
     if [[ "$STARTED" != "1" ]]; then
-        echo "新 MacShot 未能自动启动；App 已安全替换，可手动运行: open $APP_BUNDLE" >&2
+        echo "新 Index 未能自动启动；App 已安全替换，可手动运行: open $APP_BUNDLE" >&2
         exit 1
     fi
 fi

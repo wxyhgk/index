@@ -53,7 +53,7 @@ Release App 只能通过以下命令组装：
 ```
 
 脚本会在旁路目录完整组装和签名，校验成功后退出旧进程，再同卷原子替换固定路径下的
-`build/MacShot.app`。不得手工覆盖正在运行的 App；详细原因见
+`build/Index.app`。不得手工覆盖正在运行的 App；详细原因见
 [`docs/errors/2026-08-11-running-app-rebuild-tcc-identity.md`](errors/2026-08-11-running-app-rebuild-tcc-identity.md)。
 
 本地开发可先运行 `./scripts/make-dev-cert.sh` 创建固定的 `MacShot Dev` 身份。该证书只适合

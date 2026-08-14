@@ -19,7 +19,7 @@
   ./build.sh release
   ```
 
-- 绝不能在 MacShot 进程仍运行时直接删除、覆盖或就地修改 `build/MacShot.app`。旧进程的 audit token/code object 与磁盘新签名不一致，会污染 TCC/replayd 会话，表现为“构建后必须重启”。
+- 绝不能在 Index 进程仍运行时直接删除、覆盖或就地修改 `build/Index.app`。旧进程的 audit token/code object 与磁盘新签名不一致，会污染 TCC/replayd 会话，表现为“构建后必须重启”。
 - `build.sh` 必须保持以下顺序：旁路目录完整组装与签名 → 校验签名 → 退出旧进程 → 确认 PID 消失 → 同卷原子替换 → 按原运行状态启动新版本。
 - 签名必须使用 Developer ID 或固定的 `MacShot Dev` 证书。不得静默退回 ad-hoc；只有无 TCC 需求的临时环境可显式设置 `MACSHOT_ALLOW_ADHOC=1`。
 - 新开发机器首次构建前运行：
@@ -28,7 +28,7 @@
   ./scripts/make-dev-cert.sh
   ```
 
-- 不要移动 Release App 的固定路径；路径变化可能被 TCC 当成另一个客户端。
+- Release App 的固定路径现为 `build/Index.app`；不要再次移动，路径变化可能被 TCC 当成另一个客户端。
 
 ## 验证
 

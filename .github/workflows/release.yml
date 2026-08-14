@@ -66,10 +66,24 @@ jobs:
           MACSHOT_ALLOW_ADHOC: "1"
         run: |
           ./build.sh release
-          codesign --verify --deep --strict build/MacShot.app
+
+          if [[ -d build/Index.app ]]; then
+            built_app="build/Index.app"
+          elif [[ -d build/MacShot.app ]]; then
+            # 允许手动重打 0.1.9 及更早的既有标签；旧源码的 build.sh
+            # 仍输出 MacShot.app，但公开附件必须统一展示为 Index.app。
+            built_app="build/MacShot.app"
+          else
+            echo "Release App was not produced" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict "$built_app"
 
           archive="${{ steps.metadata.outputs.archive }}"
-          ditto -c -k --sequesterRsrc --keepParent build/MacShot.app "$archive"
+          package_root="$(mktemp -d)"
+          ditto "$built_app" "$package_root/Index.app"
+          codesign --verify --deep --strict "$package_root/Index.app"
+          ditto -c -k --sequesterRsrc --keepParent "$package_root/Index.app" "$archive"
           shasum -a 256 "$archive" > "$archive.sha256"
 
       - name: Publish GitHub Release
@@ -85,7 +99,7 @@ jobs:
 
           > 当前为未公证预览版。首次运行如被 macOS 拦截，请在 Finder 中右键 App 并选择“打开”。
 
-          下载 $ARCHIVE，解压后运行其中的 MacShot.app。应用显示名称为 Index；bundle 文件名为兼容既有屏幕录制授权而暂时保留。
+          下载 $ARCHIVE，解压后运行其中的 Index.app。
           EOF
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
