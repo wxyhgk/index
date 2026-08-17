@@ -25,7 +25,12 @@ final class GallerySessionLifecycleTests: XCTestCase {
 
         lifecycle.end()
         lifecycle.runReplacing(.gridSnapshot) { lateStarted = true }
-        try await Task.sleep(for: .milliseconds(10))
+        // 等被取消的任务真正观察到取消。不用固定 10ms：负载高的 CI 机器上
+        // MainActor 调度就可能超过它。
+        let deadline = Date().addingTimeInterval(2)
+        while !firstCancelled && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         XCTAssertTrue(firstCancelled)
         XCTAssertFalse(lateStarted)
@@ -47,7 +52,12 @@ final class GallerySessionLifecycleTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(lifecycle.activeTaskCount, 1)
-        try await Task.sleep(for: .milliseconds(40))
+        // 等最新任务完成。不用固定 40ms：20ms sleep + MainActor 调度在负载高的
+        // CI 机器上会超预算（2026-08-17 三个 CI 运行全挂在这）。
+        let deadline = Date().addingTimeInterval(2)
+        while !latestFinished && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         XCTAssertTrue(latestFinished)
         XCTAssertEqual(lifecycle.activeTaskCount, 0)
     }
