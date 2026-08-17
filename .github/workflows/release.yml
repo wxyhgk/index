@@ -105,14 +105,12 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
               --title "Index $RELEASE_TAG" \
-              --notes-file release-notes.md \
-              --prerelease
+              --notes-file release-notes.md
           else
             gh release create "$RELEASE_TAG" \
               --verify-tag \
               --title "Index $RELEASE_TAG" \
-              --notes-file release-notes.md \
-              --prerelease
+              --notes-file release-notes.md
           fi
 
           gh release upload "$RELEASE_TAG" \
