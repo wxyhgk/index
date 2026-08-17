@@ -17,6 +17,22 @@ final class SelectionOverlayController {
     private var windows: [OverlayWindow] = []
     private var views: [OverlayView] = []
     private var completion: ((SelectionResult?) -> Void)?
+    private let selectionAIExecutorFactory: @MainActor () -> SelectionAIExecutor
+    /// 覆盖层视图的设置切片（放大镜 / 回车语义 / 标注样式）。注入式。
+    private let capture: any CapturePreferences
+    private let annotationStyle: any AnnotationStylePreferences
+
+    init(
+        capture: any CapturePreferences,
+        annotationStyle: any AnnotationStylePreferences,
+        selectionAIExecutorFactory: @escaping @MainActor () -> SelectionAIExecutor = {
+            SelectionAIExecutor()
+        }
+    ) {
+        self.capture = capture
+        self.annotationStyle = annotationStyle
+        self.selectionAIExecutorFactory = selectionAIExecutorFactory
+    }
 
     var isActive: Bool { !windows.isEmpty }
 
@@ -58,6 +74,9 @@ final class SelectionOverlayController {
         self.completion = completion
 
         let primaryID = NSScreen.main.flatMap(Geometry.displayID(of:))
+        // 同一次多屏覆盖层共享严格单飞门：即使焦点在屏之间切换，也不能并发
+        // 向同一 Provider 扇出两个选区请求。
+        let selectionAIExecutor = selectionAIExecutorFactory()
 
         for snapshot in snapshots {
             guard let screen = screensByID[snapshot.display.id] else { continue }
@@ -66,7 +85,10 @@ final class SelectionOverlayController {
             let view = OverlayView(
                 model: model,
                 isPrimaryScreen: snapshot.display.id == primaryID,
-                mode: mode
+                mode: mode,
+                capture: capture,
+                annotationStyle: annotationStyle,
+                selectionAIExecution: OverlaySelectionAIExecution(executor: selectionAIExecutor)
             )
             view.finishOnConfirm = finishOnConfirm
             view.onFinish = { [weak self] result in self?.finish(result) }
@@ -104,6 +126,10 @@ final class SelectionOverlayController {
         NSCursor.pop()
         NSCursor.arrow.set()
         views.forEach { $0.clearToolbarToolTips() }
+        views.forEach {
+            $0.teardownSelectionAI()
+            $0.teardownLiveText()
+        }
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
         views.removeAll()

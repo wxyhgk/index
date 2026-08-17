@@ -58,6 +58,35 @@ final class OverlayKeyboardTests: XCTestCase {
         XCTAssertEqual(finishCount, 1)
     }
 
+    func testShiftCOnConfirmedSelectionEmitsCopyText() {
+        let view = makeView()
+        view.model.beginDrag(at: CGPoint(x: 10, y: 10))
+        view.model.updateDrag(to: CGPoint(x: 100, y: 80))
+        XCTAssertTrue(view.model.endDrag())
+
+        var capturedActionID: String?
+        view.onFinish = { result in
+            capturedActionID = result?.actionID
+        }
+
+        let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: .shift,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "C",
+            charactersIgnoringModifiers: "c",
+            isARepeat: false,
+            keyCode: KeyCode.c
+        )
+        guard let event else { return XCTFail("构造 ⇧C 事件失败") }
+        view.keyDown(with: event)
+
+        XCTAssertEqual(capturedActionID, ActionID.copyText)
+    }
+
     private func makeView() -> OverlayView {
         let display = DisplayInfo(
             id: 1,
@@ -77,7 +106,9 @@ final class OverlayKeyboardTests: XCTestCase {
         let snapshot = DisplaySnapshot(display: display, image: context.makeImage()!)
         return OverlayView(
             model: SelectionModel(snapshot: snapshot, windows: []),
-            isPrimaryScreen: true
+            isPrimaryScreen: true,
+            capture: FakeStyleStore(),
+            annotationStyle: FakeStyleStore()
         )
     }
 }

@@ -625,6 +625,7 @@ extension DS {
     static let toolbarSeparator = NSColor.white.withAlphaComponent(0.18)
     static let toolbarSelected = NSColor.controlAccentColor.withAlphaComponent(0.9)
     static let toolbarHover = NSColor.controlAccentColor.withAlphaComponent(0.5)
+    static let toolbarForeground = NSColor.white.withAlphaComponent(0.92)
 }
 
 extension NSAppearance {

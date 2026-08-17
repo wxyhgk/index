@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = shotStore          // 提前建库，避免第一次截图时卡顿
-        CaptureActionRegistry.registerBuiltins(into: .shared)
+        CaptureActionRegistry.registerBuiltins(into: .shared, styleStore: settings)
         CapturePipeline.registerBuiltins(into: pipeline, styleStore: settings)
         ToolbarRegistry.registerBuiltins(into: .shared)
         GalleryDestinationRegistry.registerBuiltins(into: .shared)
@@ -354,17 +354,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let shotID = shot.id {
-            pipeline.run(PostProcessInput(
+            pipeline.run(
                 shotID: shotID,
-                image: snapshot.image,
+                originalURL: shotStore.originalURL(for: shot),
                 appBundleID: metadata.appBundleID
-            ))
+            )
         }
         PinWindowController.pin(
             base: snapshot.image,
             layers: Layers(),
             shot: shot,
             at: snapshot.globalRegion,
+            capture: settings,
+            annotationStyle: settings,
             moleculeSource: source
         )
     }

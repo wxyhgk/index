@@ -1,190 +1,120 @@
 import Combine
 import Foundation
 
-// MARK: - StyleStore
+// MARK: - StyleStore（全量设置接口 = 8 个窄协议的组合）
 //
-// 样式与展示偏好的读侧契约。Gallery / Shelf / Editor 的视图与状态机不再直接读
-// `AppSettings.shared`，改为依赖此协议——前者是 UI 预览与单测可注入的缝：
-//
-//   * 生产：`AppSettings.shared`（已在下方 `extension AppSettings: StyleStore` 声明一致性）
-//   * 预览/测试：`FakeStyleStore`（纯内存，无 UserDefaults，无 I/O）
-//   * 未来：可由 EnvironmentObject 全局提供，进一步收敛 AppSettings 的表面积
-//
-// 为什么叫 StyleStore 而非 SettingsStore：调用方只关心“样式/展示”这一子集
-// （toolStyles、backdrop 比例、水印文案、gallery 展示开关、语义搜索开关、
-// 上传配置），截图/录屏/存储等领域设置不在此合约内，保持最小暴露面。
+// 不再是独立的 ~40 属性宽清单，而是**继承 8 个领域窄协议**（`Preferences.swift`）
+// 的组合。装配根（AppDelegate）持有 `any StyleStore`（全量）；各消费方只依赖它
+// 真正读到的那一窄切片（`any CapturePreferences` 等），`any StyleStore` 可向上
+// 转型成任意窄协议，所以注入点无需改动即可逐步迁移到窄类型。
 @MainActor
-protocol StyleStore: AnyObject, ObservableObject {
-    var galleryScrollDepth: Bool { get }
-    var semanticSearch: Bool { get }
-    var runOCR: Bool { get }
-    var autoClassify: Bool { get }
-    var detectSensitive: Bool { get }
-
-    var uploadEndpoint: String { get }
-    var uploadFieldName: String { get }
-    var uploadHeaders: String { get }
-    var uploadResponsePath: String { get }
-    var uploadLinkFormat: AppSettings.UploadLinkFormat { get }
-
-    var defaultColorIndex: Int { get }
-    var defaultWidthIndex: Int { get }
-    var toolStyles: [String: ToolStyle] { get set }
-
-    var watermarkText: String { get }
-    var trimmedWatermarkText: String { get }
-    var watermarkMode: WatermarkMode { get }
-    var watermarkAlpha: Double { get }
-    var autoWatermark: Bool { get }
-
-    var backdropPaddingRatio: Double { get }
-    var backdropCornerRatio: Double { get }
-    var backdropShadowRatio: Double { get }
-    var backdropShadowAlpha: Double { get }
-    var autoBackdrop: Bool { get }
-
-    var captureDelay: Int { get }
-    var windowCaptureShadow: Bool { get }
-    var copyToClipboard: Bool { get }
-    var showShelfCard: Bool { get }
-    var autoCopyEnabled: Bool { get }
-    var autoCopyDirectory: String { get }
-    var autoCleanupEnabled: Bool { get }
-    var autoCleanupDays: Int { get }
-    var recordingSaveToLibrary: Bool { get }
-    var showMagnifier: Bool { get }
-
-    var captureShortcut: KeyboardShortcut { get }
-    var galleryShortcut: KeyboardShortcut { get }
-    var delayedCaptureShortcut: KeyboardShortcut { get }
-    var recordingShortcut: KeyboardShortcut { get }
-    var scrollCaptureShortcut: KeyboardShortcut { get }
-    var moleculePinShortcut: KeyboardShortcut { get }
-}
+protocol StyleStore: AnyObject, ObservableObject,
+    CapturePreferences, RecordingPreferences, ExportPreferences,
+    LibraryPreferences, AnnotationStylePreferences, IntelligencePreferences,
+    UploadPreferences, ShortcutPreferences {}
 
 extension AppSettings: StyleStore {}
 
 // MARK: - FakeStyleStore (预览 / 单测替身)
 
-/// 纯内存的 StyleStore 实现，零 UserDefaults、零 I/O。
-/// 默认值与 `AppSettings.registerDefaults` 保持一致，预览可直接使用
-/// `FakeStyleStore()` 无需额外配置；单测可按需改写。
+/// 纯内存的设置替身，零 UserDefaults、零 I/O。
+///
+/// 与 `AppSettings` 一样持有 8 个领域偏好值类型，**默认值全部取自
+/// `XxxPrefs.defaults`** —— 不再各抄一份，改默认值只改 `Prefs.swift` 一处。
+/// 单测按领域传值（如 `FakeStyleStore(recording: .init(...))`）覆盖默认。
 @MainActor
-final class FakeStyleStore: ObservableObject, StyleStore {
+final class FakeStyleStore: ObservableObject, StyleStore,
+    CapturePreferences, RecordingPreferences, ExportPreferences,
+    LibraryPreferences, AnnotationStylePreferences, IntelligencePreferences,
+    UploadPreferences, ShortcutPreferences {
 
-    @Published var galleryScrollDepth: Bool = true
-    @Published var semanticSearch: Bool = false
-    @Published var runOCR: Bool = true
-    @Published var autoClassify: Bool = true
-    @Published var detectSensitive: Bool = true
-
-    @Published var uploadEndpoint: String = ""
-    @Published var uploadFieldName: String = "file"
-    @Published var uploadHeaders: String = ""
-    @Published var uploadResponsePath: String = ""
-    @Published var uploadLinkFormat: AppSettings.UploadLinkFormat = .raw
-
-    @Published var defaultColorIndex: Int = 0
-    @Published var defaultWidthIndex: Int = 1
-    @Published var toolStyles: [String: ToolStyle] = [:]
-
-    @Published var watermarkText: String = ""
-    var trimmedWatermarkText: String {
-        watermarkText.trimmingCharacters(in: .whitespaces)
-    }
-    @Published var watermarkMode: WatermarkMode = .corner
-    @Published var watermarkAlpha: Double = 0.35
-    @Published var autoWatermark: Bool = false
-
-    @Published var backdropPaddingRatio: Double = 0.05
-    @Published var backdropCornerRatio: Double = 0.014
-    @Published var backdropShadowRatio: Double = 0.022
-    @Published var backdropShadowAlpha: Double = 0.30
-    @Published var autoBackdrop: Bool = false
-
-    @Published var captureDelay: Int = 3
-    @Published var windowCaptureShadow: Bool = true
-    @Published var copyToClipboard: Bool = true
-    @Published var showShelfCard: Bool = true
-    @Published var autoCopyEnabled: Bool = false
-    @Published var autoCopyDirectory: String = ""
-    @Published var autoCleanupEnabled: Bool = false
-    @Published var autoCleanupDays: Int = 30
-    @Published var recordingSaveToLibrary: Bool = true
-    @Published var showMagnifier: Bool = true
-
-    @Published var captureShortcut: KeyboardShortcut = .captureDefault
-    @Published var galleryShortcut: KeyboardShortcut = .galleryDefault
-    @Published var delayedCaptureShortcut: KeyboardShortcut = .delayedCaptureDefault
-    @Published var recordingShortcut: KeyboardShortcut = .recordingDefault
-    @Published var scrollCaptureShortcut: KeyboardShortcut = .scrollCaptureDefault
-    @Published var moleculePinShortcut: KeyboardShortcut = .moleculePinDefault
+    @Published var capture: CapturePrefs
+    @Published var recording: RecordingPrefs
+    @Published var export: ExportPrefs
+    @Published var library: LibraryPrefs
+    @Published var annotationStyle: AnnotationStylePrefs
+    @Published var intelligence: IntelligencePrefs
+    @Published var upload: UploadPrefs
+    @Published var shortcuts: ShortcutPrefs
 
     init(
-        galleryScrollDepth: Bool = true,
-        semanticSearch: Bool = false,
-        runOCR: Bool = true,
-        autoClassify: Bool = true,
-        detectSensitive: Bool = true,
-        uploadEndpoint: String = "",
-        toolStyles: [String: ToolStyle] = [:],
-        watermarkText: String = "",
-        watermarkMode: WatermarkMode = .corner,
-        watermarkAlpha: Double = 0.35,
-        autoWatermark: Bool = false,
-        backdropPaddingRatio: Double = 0.05,
-        backdropCornerRatio: Double = 0.014,
-        backdropShadowRatio: Double = 0.022,
-        backdropShadowAlpha: Double = 0.30,
-        autoBackdrop: Bool = false,
-        captureDelay: Int = 3,
-        windowCaptureShadow: Bool = true,
-        copyToClipboard: Bool = true,
-        showShelfCard: Bool = true,
-        autoCopyEnabled: Bool = false,
-        autoCopyDirectory: String = "",
-        autoCleanupEnabled: Bool = false,
-        autoCleanupDays: Int = 30,
-        recordingSaveToLibrary: Bool = true,
-        showMagnifier: Bool = true,
-        captureShortcut: KeyboardShortcut = .captureDefault,
-        galleryShortcut: KeyboardShortcut = .galleryDefault,
-        delayedCaptureShortcut: KeyboardShortcut = .delayedCaptureDefault,
-        recordingShortcut: KeyboardShortcut = .recordingDefault,
-        scrollCaptureShortcut: KeyboardShortcut = .scrollCaptureDefault,
-        moleculePinShortcut: KeyboardShortcut = .moleculePinDefault
+        capture: CapturePrefs = .defaults,
+        recording: RecordingPrefs = .defaults,
+        export: ExportPrefs = .defaults,
+        library: LibraryPrefs = .defaults,
+        annotationStyle: AnnotationStylePrefs = .defaults,
+        intelligence: IntelligencePrefs = .defaults,
+        upload: UploadPrefs = .defaults,
+        shortcuts: ShortcutPrefs = .defaults
     ) {
-        self.galleryScrollDepth = galleryScrollDepth
-        self.semanticSearch = semanticSearch
-        self.runOCR = runOCR
-        self.autoClassify = autoClassify
-        self.detectSensitive = detectSensitive
-        self.uploadEndpoint = uploadEndpoint
-        self.toolStyles = toolStyles
-        self.watermarkText = watermarkText
-        self.watermarkMode = watermarkMode
-        self.watermarkAlpha = watermarkAlpha
-        self.autoWatermark = autoWatermark
-        self.backdropPaddingRatio = backdropPaddingRatio
-        self.backdropCornerRatio = backdropCornerRatio
-        self.backdropShadowRatio = backdropShadowRatio
-        self.backdropShadowAlpha = backdropShadowAlpha
-        self.autoBackdrop = autoBackdrop
-        self.captureDelay = captureDelay
-        self.windowCaptureShadow = windowCaptureShadow
-        self.copyToClipboard = copyToClipboard
-        self.showShelfCard = showShelfCard
-        self.autoCopyEnabled = autoCopyEnabled
-        self.autoCopyDirectory = autoCopyDirectory
-        self.autoCleanupEnabled = autoCleanupEnabled
-        self.autoCleanupDays = autoCleanupDays
-        self.recordingSaveToLibrary = recordingSaveToLibrary
-        self.showMagnifier = showMagnifier
-        self.captureShortcut = captureShortcut
-        self.galleryShortcut = galleryShortcut
-        self.delayedCaptureShortcut = delayedCaptureShortcut
-        self.recordingShortcut = recordingShortcut
-        self.scrollCaptureShortcut = scrollCaptureShortcut
-        self.moleculePinShortcut = moleculePinShortcut
+        self.capture = capture
+        self.recording = recording
+        self.export = export
+        self.library = library
+        self.annotationStyle = annotationStyle
+        self.intelligence = intelligence
+        self.upload = upload
+        self.shortcuts = shortcuts
     }
+
+    // 转发到领域值（与 AppSettings 同一套窄协议 + StyleStore 契约）
+    var copyToClipboard: Bool { capture.copyToClipboard }
+    var showShelfCard: Bool { capture.showShelfCard }
+    var enterBehavior: AppSettings.EnterBehavior { capture.enterBehavior }
+    var showMagnifier: Bool { capture.showMagnifier }
+    var windowCaptureShadow: Bool { capture.windowCaptureShadow }
+    var captureDelay: Int { capture.captureDelay }
+    var lastToolID: String? {
+        get { capture.lastToolID }
+        set { capture.lastToolID = newValue }
+    }
+
+    var recordSystemAudio: Bool { recording.recordSystemAudio }
+    var recordMicrophone: Bool { recording.recordMicrophone }
+    var recordingSaveToLibrary: Bool { recording.recordingSaveToLibrary }
+
+    var exportNameTemplate: String { export.exportNameTemplate }
+    var autoCopyEnabled: Bool { export.autoCopyEnabled }
+    var autoCopyDirectory: String { export.autoCopyDirectory }
+
+    var autoCleanupEnabled: Bool { library.autoCleanupEnabled }
+    var autoCleanupDays: Int { library.autoCleanupDays }
+    var galleryScrollDepth: Bool { library.galleryScrollDepth }
+
+    var defaultColorIndex: Int { annotationStyle.defaultColorIndex }
+    var defaultWidthIndex: Int { annotationStyle.defaultWidthIndex }
+    var toolStyles: [String: ToolStyle] {
+        get { annotationStyle.toolStyles }
+        set { annotationStyle.toolStyles = newValue }
+    }
+    var watermarkText: String { annotationStyle.watermarkText }
+    var trimmedWatermarkText: String { annotationStyle.watermarkText.trimmingCharacters(in: .whitespaces) }
+    var watermarkMode: WatermarkMode { annotationStyle.watermarkMode }
+    var watermarkAlpha: Double { annotationStyle.watermarkAlpha }
+    var autoWatermark: Bool { annotationStyle.autoWatermark }
+    var backdropPaddingRatio: Double { annotationStyle.backdropPaddingRatio }
+    var backdropCornerRatio: Double { annotationStyle.backdropCornerRatio }
+    var backdropShadowRatio: Double { annotationStyle.backdropShadowRatio }
+    var backdropShadowAlpha: Double { annotationStyle.backdropShadowAlpha }
+    var autoBackdrop: Bool { annotationStyle.autoBackdrop }
+
+    var runOCR: Bool { intelligence.runOCR }
+    var autoClassify: Bool { intelligence.autoClassify }
+    var detectSensitive: Bool { intelligence.detectSensitive }
+    var semanticSearch: Bool { intelligence.semanticSearch }
+    var selectionAIBaseURL: String { intelligence.selectionAIBaseURL }
+    var selectionAIModel: String { intelligence.selectionAIModel }
+
+    var uploadEndpoint: String { upload.uploadEndpoint }
+    var uploadFieldName: String { upload.uploadFieldName }
+    var uploadHeaders: String { upload.uploadHeaders }
+    var uploadResponsePath: String { upload.uploadResponsePath }
+    var uploadLinkFormat: AppSettings.UploadLinkFormat { upload.uploadLinkFormat }
+
+    var captureShortcut: KeyboardShortcut { shortcuts.captureShortcut }
+    var galleryShortcut: KeyboardShortcut { shortcuts.galleryShortcut }
+    var delayedCaptureShortcut: KeyboardShortcut { shortcuts.delayedCaptureShortcut }
+    var recordingShortcut: KeyboardShortcut { shortcuts.recordingShortcut }
+    var scrollCaptureShortcut: KeyboardShortcut { shortcuts.scrollCaptureShortcut }
+    var moleculePinShortcut: KeyboardShortcut { shortcuts.moleculePinShortcut }
 }

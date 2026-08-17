@@ -23,6 +23,9 @@
 | `BrowserImportInbox.swift` | `BrowserImportInbox` | 校验并消费 Edge Native Messaging 写入的 UUID 专用图片收件箱；拒绝任意路径 |
 | `LaunchAtLogin.swift` | `LaunchAtLogin` | `SMAppService` 开机启动 |
 | `LiveTextAnalyzer.swift` | `LiveTextAnalyzer` | Vision LiveText 预跑分析 |
+| `OpenAICompatibleSelectionAIProvider.swift` | `OpenAICompatibleSelectionAIProvider` | 选区局部 PNG → Responses API 严格结构化结果；不持久化请求 |
+| `SelectionAIImageEncoder.swift` | `SelectionAIImageEncoder` | 按领域任务预算压缩局部选区，限制 PNG 与 Base64 前体积 |
+| `SelectionAIKeychain.swift` | `MacSelectionAIKeychain` | 选区 AI API Key 的唯一持久化位置 |
 | `PanelPlacement.swift` | `PanelPlacement` | 面板摆放（多屏感知） |
 | `KeyCode.swift` | — | `KeyCode` 常量 |
 

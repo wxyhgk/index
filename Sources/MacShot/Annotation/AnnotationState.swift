@@ -8,6 +8,13 @@ import Combine
 /// 和 `LayerRenderer` 的假设一致，所以预览和导出能共用同一份绘制代码。
 ///   · 截图覆盖层：显示器局部、点（不依赖选区原点，选区被拖动也不会让标注错位）
 ///   · 钉图窗口：  图片像素
+///
+/// 文件布局（按职责拆分，其余文件都是本类型的扩展）：
+///   · `AnnotationHistory`          撤销/重做操作栈（纯栈规则，可独立单测）
+///   · `AnnotationState+Effects`    效果层（水印/信息栏/外壳/美化）及其参数读写
+///   · `AnnotationState+Resize`     选中图层的拖角缩放
+///   · `AnnotationState+TextEditing` 文字输入（IME 逐键 / 整段替换）
+/// 本文件保留：状态属性、当前样式、绘制输入、选中与拖动、撤销/重做回放、导出。
 @MainActor
 final class AnnotationState: ObservableObject {
 
@@ -37,7 +44,14 @@ final class AnnotationState: ObservableObject {
     nonisolated static let widths: [Double] = [2, 4, 8]
 
     /// nil 表示指针模式：拖拽是调整选区，而不是画标注。
-    var tool: AnnotationTool? { willSet { publishChange() } }
+    var tool: AnnotationTool? {
+        willSet { publishChange() }
+        didSet { if tool != oldValue { onToolChanged?(tool) } }
+    }
+
+    /// 工具切换通知（含切回 nil）。宿主用它持久化「上次使用的工具」；
+    /// 由装配方设置，状态机自身不依赖任何存储。
+    var onToolChanged: ((AnnotationTool?) -> Void)?
 
     /// 「鼠标（指针）」是否被主动选中。截图覆盖层有一个**中性默认态** ——
     /// 确认选区后 tool == nil 且 pointerEngaged == false：没有任何工具高亮，
@@ -51,8 +65,8 @@ final class AnnotationState: ObservableObject {
     /// 拿箭头选了红色粗线，切到文字就是红色粗体。见 `ToolStyle`。
     private var toolStyles: [String: ToolStyle] = [:] { willSet { publishChange() } }
 
-    /// 样式持久化的落盘通道。注入式：生产用 AppSettings.shared，预览/测试用 FakeStyleStore。
-    private let styleStore: any StyleStore
+    /// 样式持久化的落盘通道。注入式：装配点传全量设置，预览/测试用 FakeStyleStore。
+    private let styleStore: any AnnotationStylePreferences
 
     /// 画布空间相对屏幕点的倍率。笔宽和字号按它换算，
     /// 这样不管画布怎么缩放，画出来的线在屏幕上都是同样粗细。
@@ -69,17 +83,19 @@ final class AnnotationState: ObservableObject {
     /// 覆盖层的选区宽度、窗口归因都以开关瞬间为准。
     var effectContext: () -> EffectContext = { EffectContext() }
 
-    private(set) var layers = Layers<CanvasSpace>() { willSet { publishChange() } }
-    private(set) var editingTextID: UUID? { willSet { publishChange() } }
+    /// 写访问为同类型扩展（+Effects / +Resize / +TextEditing）放开；
+    /// 外部代码读走 `displayLayers`，写一律经状态机方法（会进撤销栈）。
+    var layers = Layers<CanvasSpace>() { willSet { publishChange() } }
+    var editingTextID: UUID? { willSet { publishChange() } }
     /// 输入法合成中的标注文本（marked text），不入撤销栈，仅作预览。
     var markedText: String? { willSet { publishChange() } }
 
     /// 指针模式下选中的图层。选中后可以拖动、删除、改样式。
-    private(set) var selectedID: UUID? { willSet { publishChange() } }
+    var selectedID: UUID? { willSet { publishChange() } }
 
     /// 每个马赛克图层对应一张预先算好的小图。
     /// 绝不在每帧重跑 CoreImage —— 那是上一轮把主线程压垮的同一类错误。
-    private(set) var pixelatePreviews: [UUID: CGImage] = [:] { willSet { publishChange() } }
+    var pixelatePreviews: [UUID: CGImage] = [:] { willSet { publishChange() } }
 
     private var dragStart: CGPoint? { willSet { publishChange() } }
     private var dragCurrent: CGPoint? { willSet { publishChange() } }
@@ -90,50 +106,34 @@ final class AnnotationState: ObservableObject {
     private var moveFromRect: LRect?
     private var moveFromPreview: CGImage?
 
-    /// 拖角缩放的进行时状态。`resizeOriginal` 是 beginResize 时的整层快照 ——
+    /// 拖角缩放的进行时状态（写访问为 +Resize 扩展放开）。
+    /// `resizeOriginal` 是 beginResize 时的整层快照 ——
     /// 每帧都从「快照 + 累计位移」重算，不累积浮点误差；endResize 拿它记撤销。
-    private var resizeID: UUID? { willSet { publishChange() } }
-    private var activeResizeHandle: ResizeHandle?
-    private var resizeOriginal: Layer?
-    private var resizeStartPoint: CGPoint?
-    private var resizeFromPreview: CGImage?
+    var resizeID: UUID? { willSet { publishChange() } }
+    var activeResizeHandle: ResizeHandle?
+    var resizeOriginal: Layer?
+    var resizeStartPoint: CGPoint?
+    var resizeFromPreview: CGImage?
 
-    /// 文字编辑开始时的快照。nil 表示这一层是本次编辑新建的 ——
+    /// 文字编辑开始时的快照（写访问为 +TextEditing 扩展放开）。
+    /// nil 表示这一层是本次编辑新建的 ——
     /// 结束时非空算 add，被丢弃算「add 的取消」，都不需要 style 记录。
-    private var editingTextOriginal: Layer?
+    var editingTextOriginal: Layer?
 
     // MARK: - 操作栈
 
-    /// 一次可逆的改动。撤销/重做只回放这些记录，绝不重新计算 ——
-    /// 马赛克贴片直接存进记录里，撤销时原样恢复，不依赖任何外部像素源的生命周期。
-    private enum Mutation {
-        /// 撤销 = 删掉它（连带贴片）；重做 = 连贴片一起加回来。
-        case add(Layer, preview: CGImage?)
-        /// 撤销 = 按原位插回、恢复贴片。
-        case remove(Layer, index: Int, preview: CGImage?)
-        case move(id: UUID, from: LRect, to: LRect, oldPreview: CGImage?, newPreview: CGImage?)
-        /// 颜色 / 粗细 / 文字内容都算 style：整层快照替换，简单且不会漏字段。
-        case style(id: UUID, before: Layer, after: Layer)
-    }
+    /// 撤销/重做操作栈（栈规则见 `AnnotationHistory`，可独立单测）。
+    /// 栈不是 ObservableObject：栈的每次变化都伴随一次图层变化
+    /// （上面的 willSet 会发 objectWillChange）；undo/redo 里再显式补一次
+    /// publishChange，保证工具条 canUndo/canRedo 的刷新不丢。
+    let history: AnnotationHistory
 
-    private var undoStack: [Mutation] = [] { willSet { publishChange() } }
-    private var redoStack: [Mutation] = [] { willSet { publishChange() } }
+    var canUndo: Bool { history.canUndo }
+    var canRedo: Bool { history.canRedo }
 
-    var canUndo: Bool { !undoStack.isEmpty }
-    var canRedo: Bool { !redoStack.isEmpty }
-
-    /// `setText` 连续针对哪一层在合并撤销记录。任何其它记录入栈都会打断合并。
-    private var coalescingTextID: UUID?
-
-    /// 所有写路径的唯一入口：新动作发生后，之前撤销掉的分支就不可再重做。
-    private func record(_ mutation: Mutation) {
-        coalescingTextID = nil
-        undoStack.append(mutation)
-        redoStack.removeAll()
-    }
-
-    init(styleStore: any StyleStore = AppSettings.shared) {
+    init(styleStore: any AnnotationStylePreferences) {
         self.styleStore = styleStore
+        self.history = AnnotationHistory()
         // 先铺描述符声明的默认样式，再用用户存下来的偏好覆盖。
         // 设置页里那两个全局默认（颜色/粗细）作为**首次使用**的种子，
         // 只作用于还没有单独偏好的工具。
@@ -288,7 +288,7 @@ final class AnnotationState: ObservableObject {
             editingTextID = layer.id
             editingTextOriginal = nil
         } else {
-            record(.add(layer, preview: nil))
+            history.record(.add(layer, preview: nil))
         }
         return true
     }
@@ -321,12 +321,12 @@ final class AnnotationState: ObservableObject {
         if layer.kind == .crop {
             while let index = layers.elements.firstIndex(where: { $0.kind == .crop }) {
                 let old = layers[index]
-                record(.remove(old, index: index, preview: nil))
+                history.record(.remove(old, index: index, preview: nil))
                 layers.remove(id: old.id)
             }
         }
         layers.append(layer)
-        record(.add(layer, preview: pixelatePreviews[layer.id]))
+        history.record(.add(layer, preview: pixelatePreviews[layer.id]))
         return true
     }
 
@@ -347,8 +347,7 @@ final class AnnotationState: ObservableObject {
         resizeFromPreview = nil
         layers.removeAll()
         pixelatePreviews.removeAll()
-        undoStack.removeAll()
-        redoStack.removeAll()
+        history.reset()
     }
 
     /// 载入已有图层继续编辑（图库编辑器专用；覆盖层/钉图都从空白开始，不需要它）。
@@ -386,7 +385,7 @@ final class AnnotationState: ObservableObject {
         guard selectedID != id else { return false }
         selectedID = id
         // 换了选中对象，文字替换的撤销合并就该重新开一条记录。
-        coalescingTextID = nil
+        history.breakCoalescing()
         return true
     }
 
@@ -438,7 +437,7 @@ final class AnnotationState: ObservableObject {
         }
         // 原地点了一下没有位移，不算一次操作。
         if let from = moveFromRect, from != layer.rect {
-            record(.move(
+            history.record(.move(
                 id: moveID,
                 from: from,
                 to: layer.rect,
@@ -449,109 +448,13 @@ final class AnnotationState: ObservableObject {
         return true
     }
 
-    // MARK: - 选中图层的拖角缩放
-
-    /// 命中选中图层的缩放控制点（画布空间）。只对 `selectedID` 生效 ——
-    /// 控制点只画在选中层上，未选中的层点到的是图层本体（走 beginMove）。
-    /// 热区随 `strokeScale` 缩放，屏幕上恒定约 ±8pt。
-    func resizeHandle(at point: CGPoint) -> ResizeHandle? {
-        guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return nil }
-        let layer = layers[index]
-        let radius = 8 * strokeScale
-        for handle in ResizeHandle.handles(for: layer.kind) {
-            let center = handle.location(of: layer)
-            if abs(point.x - center.x) <= radius, abs(point.y - center.y) <= radius {
-                return handle
-            }
-        }
-        return nil
-    }
-
-    func beginResize(handle: ResizeHandle, at point: CGPoint) {
-        guard let selectedID, let index = layers.firstIndex(id: selectedID) else { return }
-        resizeID = selectedID
-        activeResizeHandle = handle
-        resizeOriginal = layers[index]
-        resizeStartPoint = point
-        resizeFromPreview = pixelatePreviews[selectedID]
-    }
-
-    /// 按 kind 的缩放语义，每帧从 beginResize 快照重算：
-    ///   · line / arrow：只动被拖的那一端，负宽高合法（standardize 会把箭头方向弄反）
-    ///   · counter：保持圆形 —— 拖角取 max(w, h)，拖边取被拖的那一维，对侧锚定不动
-    ///   · text：rect 只存锚点，按量出的文字范围缩放，fontSize 随高度比例走
-    ///   · dimension：改完 rect 重烤标签（`prepareDimension`，像素数值按新尺寸重算）
-    ///   · 其余矩形类：直接改 rect
-    @discardableResult
-    func updateResize(to point: CGPoint) -> Bool {
-        guard let resizeID,
-              let handle = activeResizeHandle,
-              let original = resizeOriginal,
-              let start = resizeStartPoint,
-              let index = layers.firstIndex(id: resizeID) else { return false }
-
-        let delta = CGPoint(x: point.x - start.x, y: point.y - start.y)
-        guard let descriptor = ToolRegistry.descriptor(for: original.kind) else { return false }
-        layers[index] = descriptor.resize(
-            original, handle: handle, delta: delta, pixelScale: pixelScale
-        )
-        return true
-    }
-
-    /// 结束缩放。缩没了（小于最小尺寸）整层恢复原样、不入栈；
-    /// 马赛克按新矩形重裁贴片（同 `endMove`）。撤销记录：
-    /// 马赛克走 `.move`（它带贴片快照，style 不带），其余整层快照走 `.style`。
-    /// - Parameter pixelSource: 和 `endDraw` 的同名参数一致。
-    @discardableResult
-    func endResize(pixelSource: (CGRect) -> CGImage?) -> Bool {
-        defer {
-            resizeID = nil
-            activeResizeHandle = nil
-            resizeOriginal = nil
-            resizeStartPoint = nil
-            resizeFromPreview = nil
-        }
-        guard let resizeID,
-              let original = resizeOriginal,
-              let index = layers.firstIndex(id: resizeID) else { return false }
-        let layer = layers[index]
-
-        if !Self.meetsMinimumSize(layer) {
-            layers[index] = original
-            if original.kind == .pixelate { pixelatePreviews[resizeID] = resizeFromPreview }
-            return true
-        }
-        // 原地点了一下没有变化，不算一次操作。
-        guard layer != original else { return true }
-
-        if layer.kind == .pixelate {
-            pixelatePreviews[resizeID] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
-            record(.move(
-                id: resizeID,
-                from: original.rect,
-                to: layer.rect,
-                oldPreview: resizeFromPreview,
-                newPreview: pixelatePreviews[resizeID]
-            ))
-        } else {
-            record(.style(id: resizeID, before: original, after: layer))
-        }
-        return true
-    }
-
-    /// 缩到多小算「缩没了」由各工具自己定（线段看长度、文字看字号、
-    /// 测量允许单维为 0 的吸附形态）。效果层不参与缩放，一律放行。
-    private static func meetsMinimumSize(_ layer: Layer) -> Bool {
-        ToolRegistry.descriptor(for: layer.kind)?.meetsMinimumSize(layer) ?? true
-    }
-
     /// 删除选中的图层，连带清理它的马赛克贴片。
     @discardableResult
     func deleteSelected() -> Bool {
         guard let id = selectedID else { return false }
         selectedID = nil
         guard let index = layers.firstIndex(id: id) else { return false }
-        record(.remove(layers[index], index: index, preview: pixelatePreviews[id]))
+        history.record(.remove(layers[index], index: index, preview: pixelatePreviews[id]))
         layers.remove(id: id)
         pixelatePreviews[id] = nil
         return true
@@ -569,7 +472,7 @@ final class AnnotationState: ObservableObject {
         let before = layers[index]
         layers[index].color = c
         if before != layers[index] {
-            record(.style(id: selectedID, before: before, after: layers[index]))
+            history.record(.style(id: selectedID, before: before, after: layers[index]))
         }
         return true
     }
@@ -589,190 +492,9 @@ final class AnnotationState: ObservableObject {
         let applied = apply(&layers[index], currentStyle, strokeScale)
         guard applied else { return false }
         if before != layers[index] {
-            record(.style(id: selectedID, before: before, after: layers[index]))
+            history.record(.style(id: selectedID, before: before, after: layers[index]))
         }
         return true
-    }
-
-    // MARK: - 效果层（watermark / captureInfo / frame / backdrop）
-
-    /// 某效果当前是否开启。工具条开关 / 效果面板的选中态看它。
-    func hasEffect(_ kind: Layer.Kind) -> Bool {
-        layers.elements.contains { $0.kind == kind }
-    }
-
-    /// 效果开关。效果层不是拖出来的图层，只有加/删两种操作：
-    /// 没有则按描述符（`EffectRegistry`）造一层，参数与元数据在这一刻从
-    /// `effectContext` 烤入；有则全部删掉。都走 `record` 保持可撤销；
-    /// 同时只保留一层 —— 加之前先清干净（正常情况下最多一层）。
-    @discardableResult
-    func toggleEffect(_ kind: Layer.Kind) -> Bool {
-        guard let descriptor = EffectRegistry.descriptor(for: kind) else { return false }
-        endTextEditing()
-        if hasEffect(kind) {
-            while let index = layers.elements.firstIndex(where: { $0.kind == kind }) {
-                let old = layers[index]
-                record(.remove(old, index: index, preview: nil))
-                layers.remove(id: old.id)
-                if selectedID == old.id { selectedID = nil }
-            }
-            return false
-        }
-        var context = effectContext()
-        context.pixelScale = pixelScale   // 渲染标度由状态机补充，宿主不用管。
-        let layer = descriptor.makeLayer(context)
-        layers.append(layer)
-        record(.add(layer, preview: nil))
-        return true
-    }
-
-    /// 某效果层当前的参数串（`Layer.text`）；未开启时 nil。
-    private func effectText(_ kind: Layer.Kind) -> String? {
-        layers.elements.last { $0.kind == kind }?.text
-    }
-
-    /// 替换某效果层的参数串，记一条 style 撤销记录。
-    /// `transform` 拿旧参数串返回新的；返回 nil 表示无变化，不入栈。
-    /// 未开启该效果时不做事。
-    private func updateEffect(_ kind: Layer.Kind, transform: (String) -> String?) -> Bool {
-        guard let index = layers.elements.firstIndex(where: { $0.kind == kind }),
-              let newText = transform(layers[index].text),
-              newText != layers[index].text else { return false }
-        let before = layers[index]
-        layers[index].text = newText
-        record(.style(id: before.id, before: before, after: layers[index]))
-        return true
-    }
-
-    // MARK: 效果参数的类型化读写（都是 effectText / updateEffect 的一行封装）
-
-    /// 当前美化层的背景预设名；未开启时为 nil。
-    var backdropPresetID: String? { effectText(.backdrop).map { BackdropSpec.parse($0).preset } }
-
-    /// 当前水印的摆放模式；未开启时为 nil。
-    var watermarkMode: WatermarkMode? {
-        effectText(.watermark).flatMap { WatermarkSpec.decode($0)?.mode }
-    }
-
-    /// 当前壳的样式；未开启时为 nil。
-    var frameStyle: FrameSpec.Style? {
-        effectText(.frame).map { FrameSpec.parse($0).style }
-    }
-
-    /// 当前勾选要显示的字段；未开启时为 nil。
-    var captureInfoFields: [CaptureInfoSpec.Field]? {
-        effectText(.captureInfo).map { CaptureInfoSpec.parse($0).fields }
-    }
-
-    /// 替换美化层的背景预设。
-    ///
-    /// **只换 preset 一个字段**：`text` 里还装着阴影参数，
-    /// 整条覆盖成预设名会把它们抹掉（旧实现就是这样，那时 text 里只有预设名）。
-    @discardableResult
-    func setBackdropPreset(_ presetID: String) -> Bool {
-        updateEffect(.backdrop) { text in
-            var spec = BackdropSpec.parse(text)
-            guard spec.preset != presetID else { return nil }
-            spec.preset = presetID
-            return spec.json
-        }
-    }
-
-    /// 替换水印的摆放模式。
-    @discardableResult
-    func setWatermarkMode(_ mode: WatermarkMode) -> Bool {
-        updateEffect(.watermark) { text in
-            guard var spec = WatermarkSpec.decode(text), spec.mode != mode else { return nil }
-            spec.mode = mode
-            return spec.encoded
-        }
-    }
-
-    /// 切换壳样式（macOS 窗口 / 浏览器）。
-    @discardableResult
-    func setFrameStyle(_ style: FrameSpec.Style) -> Bool {
-        updateEffect(.frame) { text in
-            var spec = FrameSpec.parse(text)
-            guard spec.style != style else { return nil }
-            spec.style = style
-            return spec.json
-        }
-    }
-
-    /// 替换勾选字段。烤入的元数据值不动，只改显示哪些。
-    @discardableResult
-    func setCaptureInfoFields(_ fields: [CaptureInfoSpec.Field]) -> Bool {
-        updateEffect(.captureInfo) { text in
-            var spec = CaptureInfoSpec.parse(text)
-            guard spec.fields != fields else { return nil }
-            spec.fields = fields
-            return spec.json
-        }
-    }
-
-    // 点到线段的距离已经搬到 `ToolGeometry` —— 用它的只剩线段类工具的命中测试。
-
-    // MARK: - 文字输入
-
-    func insertText(_ text: String) {
-        guard let editingTextID, let index = layers.firstIndex(id: editingTextID) else { return }
-        layers[index].text += text
-    }
-
-    func deleteBackward() {
-        guard let editingTextID,
-              let index = layers.firstIndex(id: editingTextID),
-              !layers[index].text.isEmpty else { return }
-        layers[index].text.removeLast()
-    }
-
-    /// 整段替换某一层的文字。图库编辑器的文本框走这里 ——
-    /// 覆盖层/钉图是逐键输入（`insertText`），编辑器是绑定一个完整字符串。
-    ///
-    /// 针对同一层的连续替换合并成一条 style 记录：撤销一次回到编辑前，
-    /// 而不是逐键回退出几十条历史。
-    func setText(id: UUID, _ text: String) {
-        guard let index = layers.firstIndex(id: id), layers[index].text != text else { return }
-        let before = layers[index]
-        layers[index].text = text
-
-        if coalescingTextID == id,
-           case .style(let sid, let original, _)? = undoStack.last, sid == id {
-            undoStack[undoStack.count - 1] = .style(id: id, before: original, after: layers[index])
-        } else {
-            record(.style(id: id, before: before, after: layers[index]))
-            coalescingTextID = id
-        }
-    }
-
-    /// 结束输入。空文字图层直接丢弃，避免留下看不见的空壳。
-    /// 入栈时机在这里而不是落点时：新建层写出了内容算 add，
-    /// 空着丢弃算「add 的取消」不入栈；已有层内容变了算 style。
-    func endTextEditing() {
-        // 清掉合成态，避免下一次编辑带着上次的拼音残影。
-        markedText = nil
-        guard let id = editingTextID else { return }
-        editingTextID = nil
-        let original = editingTextOriginal
-        editingTextOriginal = nil
-
-        guard let index = layers.firstIndex(id: id) else { return }
-        let layer = layers[index]
-
-        if layer.text.isEmpty {
-            layers.remove(id: id)
-            if let original {
-                record(.remove(original, index: index, preview: nil))
-            }
-            return
-        }
-        if let original {
-            if original != layer {
-                record(.style(id: id, before: original, after: layer))
-            }
-        } else {
-            record(.add(layer, preview: nil))
-        }
     }
 
     // MARK: - 撤销 / 重做
@@ -781,10 +503,10 @@ final class AnnotationState: ObservableObject {
     @discardableResult
     func undo() -> Bool {
         endTextEditing()
-        coalescingTextID = nil
-        guard let mutation = undoStack.popLast() else { return false }
+        guard let mutation = history.popUndo() else { return false }
         revert(mutation)
-        redoStack.append(mutation)
+        history.pushRedo(mutation)
+        publishChange()
         return true
     }
 
@@ -792,15 +514,15 @@ final class AnnotationState: ObservableObject {
     func redo() -> Bool {
         // 不结束文字编辑：endTextEditing 可能入栈新操作并清空 redoStack，
         // 那样这里就会「先毁掉再来重做」。正在输入时直接视为无事可做。
-        guard editingTextID == nil, let mutation = redoStack.popLast() else { return false }
-        coalescingTextID = nil
+        guard editingTextID == nil, let mutation = history.popRedo() else { return false }
         apply(mutation)
-        undoStack.append(mutation)
+        history.pushUndo(mutation)
+        publishChange()
         return true
     }
 
     /// 撤销一条记录：把它对图层与马赛克贴片的影响原样倒回去。
-    private func revert(_ mutation: Mutation) {
+    private func revert(_ mutation: AnnotationHistory.Mutation) {
         switch mutation {
         case .add(let layer, _):
             layers.remove(id: layer.id)
@@ -825,7 +547,7 @@ final class AnnotationState: ObservableObject {
     }
 
     /// 重做一条记录：和首次执行时的效果完全一致。
-    private func apply(_ mutation: Mutation) {
+    private func apply(_ mutation: AnnotationHistory.Mutation) {
         switch mutation {
         case .add(let layer, let preview):
             layers.append(layer)

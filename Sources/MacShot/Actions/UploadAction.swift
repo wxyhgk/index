@@ -17,13 +17,19 @@ struct UploadAction: CaptureAction {
     /// 低频动作，收进截图工具条的「更多」菜单（钉图不折叠）。
     let isPrimaryAction = false
 
+    /// 图床配置。注入式：装配点（registerBuiltins）传窄协议切片。
+    private let upload: any UploadPreferences
+
+    init(upload: any UploadPreferences) {
+        self.upload = upload
+    }
+
     func perform(_ context: CaptureContext) async throws {
-        let settings = AppSettings.shared
         let config = UploadConfig(
-            endpoint: settings.uploadEndpoint,
-            fieldName: settings.uploadFieldName,
-            headersText: settings.uploadHeaders,
-            responsePath: settings.uploadResponsePath
+            endpoint: upload.uploadEndpoint,
+            fieldName: upload.uploadFieldName,
+            headersText: upload.uploadHeaders,
+            responsePath: upload.uploadResponsePath
         )
 
         guard let png = ImageCodec.pngData(from: context.rendered()) else {
@@ -36,7 +42,7 @@ struct UploadAction: CaptureAction {
             config: config
         )
 
-        Clipboard.copy(text: settings.uploadLinkFormat.format(link))
+        Clipboard.copy(text: upload.uploadLinkFormat.format(link))
         NSLog("[MacShot] 上传成功，链接已复制: \(link)")
     }
 

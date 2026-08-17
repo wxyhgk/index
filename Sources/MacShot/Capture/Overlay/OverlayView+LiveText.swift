@@ -11,6 +11,16 @@ final class LiveTextOverlayHost {
     /// 键含选区矩形与马赛克图层，任一变了都要重跑分析。
     var analysis: (rect: CGRect, pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
     var isActive: Bool { overlay != nil }
+
+    /// 覆盖层整套退出时的最终收尾。普通的 `unmount` 只暂时拆系统视图，保留分析缓存
+    /// 供用户再次进入鼠标模式复用；controller dismiss 则必须取消任务并断开所有视图引用。
+    func teardown() {
+        analysis?.task.cancel()
+        analysis = nil
+        container?.removeFromSuperview()
+        container = nil
+        overlay = nil
+    }
 }
 
 /// 鼠标模式下包住系统选字层的命中测试包装。
@@ -87,7 +97,7 @@ extension OverlayView {
         container.passesToHost = { [weak self, weak container] point in
             guard let self, let container else { return false }
             let local = self.convert(point, from: container)
-            if self.slots.contains(where: { $0.control != nil && $0.frame.contains(local) }) {
+            if self.slots.contains(where: { $0.control != nil && $0.hitFrame.contains(local) }) {
                 return true
             }
             let canvas = self.geometry.annotationPoint(fromViewLocal: local)
@@ -108,6 +118,11 @@ extension OverlayView {
         liveTextHost.overlay = nil
         window?.makeFirstResponder(self)
         redraw()
+    }
+
+    /// SelectionOverlayController dismiss 时调用；与临时退出鼠标模式的 unmount 分开。
+    func teardownLiveText() {
+        liveTextHost.teardown()
     }
 
     /// 选区被微调 / 拖动后，把选字层贴回新位置并套用按新选区重跑的分析。

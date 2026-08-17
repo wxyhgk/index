@@ -59,7 +59,7 @@
 
 ## 2. 扩展点契约
 
-系统现有**七个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
+系统现有**八个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
 
 ### 2.1 入口：`CaptureSource` —— 像素怎么进来
 
@@ -123,7 +123,7 @@ protocol CaptureAction {
 
 **几何契约（2026-07 补）**：工具条是**独立的一块**，尺寸只由「此刻有哪些控件可见」决定，宿主只能决定它落在哪。`ToolbarLayout.blockSize` 不接受任何画布尺寸参数，宿主也不许自己排控件。钉图据此把工具条搬进了独立子窗口（`Pin/PinToolbarWindow.swift`）——此前它画在钉图窗口内部并按窗口宽度折行，形成「缩放窗口 → 工具条折行 → 条带变高 → 图片显示倍率变」的反馈回路。
 
-**记录在案的膨胀风险**：Live Text 往 `ToolbarContext` 加了 `isLiveTextActive` / `toggleLiveText` 一对宿主回调 —— 「每个要宿主配合的控件加一对闭包」是注册制的经典逃生门。**第二个**同类控件出现之前，必须把它们收敛成一个 `hostCapabilities` 结构。
+**宿主能力（2026-08 收敛）**：Live Text 原先往 `ToolbarContext` 直接加入 `isLiveTextActive` / `toggleLiveText` 一对回调；在 AI 选区成为第二个临时画布模式时，已收敛为 `ToolbarHostCapabilities`。宿主现在按 `ToolbarHostMode` 登记生命周期回调，工具栏统一处理显隐、选中和模式互斥，不再为每项能力膨胀 Context。
 （`MoreActionsControl` 的折叠策略原先写在注册表的 `.capture` 分支里，**已于 2026-07 收敛**：折叠对所有场景一视同仁，注册表不再认识具体场景。）
 
 ### 2.5 标注工具：`AnnotationToolDescriptor` —— 一个工具是什么（2026-07 新增，2026-08 扩成完整契约）
@@ -225,6 +225,58 @@ protocol GalleryDestination {
 **规范**：新增顶层功能（录屏、暂存、回收站…）= 一个实现 + 注册一行。容器、布局、选中态不动。
 
 立这个扩展点的起因：侧边栏此前把四组筛选行硬编码在一个 500 行的视图里，加一组要改视图 + 加计数 + 加折叠状态 + 改布局，而且列表长度随库里的数据在 4 到 20 行之间浮动。**筛选行是数据的切片，选项是功能的入口**——把后者抽出来之后，导航的**呈现方式**（顶栏分段控件 / 左侧栏）成了容器的实现细节，换过一次只动了十几行，两个内建选项一个字没改。
+
+### 2.8 选区智能：`SelectionAIProvider` —— 局部像素如何得到结构化结果（2026-08 新增）
+
+```swift
+protocol SelectionAIProvider: Sendable {
+    var id: String { get }
+    var isAvailable: Bool { get }
+    var supportedTasks: Set<SelectionAITaskKind> { get }
+    func perform(_ request: SelectionAIRequest) async throws -> SelectionAIResult
+}
+```
+
+领域契约只接收用户明确框选后的 `CGImage`、任务和可选 OCR 文本，不接收整张截图、
+`shotID` 或数据库对象。结果按解释、翻译、LaTeX、表格四种 case 返回，UI 不得从一段
+混合文本反猜结果类型。实现按职责拆在 `Intelligence/SelectionAI/`：任务、请求、结果、
+错误、Provider、安全默认实现和执行器各自独立；宿主无关的选区几何与交互会话也分别独立。
+后续具体模型、Tool Palette 控件和宿主鼠标事件不得回填成聚合文件。
+
+Tool Palette 接入同样拆开：`SelectionAIControl` 只发出模式切换意图，
+`ToolbarHostCapabilities` 只管理临时模式能力与互斥；具体 Overlay、Pin、Editor 的坐标转换和
+鼠标事件仍留在各宿主薄适配中。Capture 首个适配位于 `OverlayView+SelectionAI.swift`：
+会话矩形以裁剪图左上原点像素保存，Chrome 只绘制映回视图的虚线框；Pin 与 Editor 尚未接入。
+宿主尚未提供 `.selectionAI` 时按钮不会出现。
+
+Capture 的 Provider 输入必须走 `OverlaySelectionAIInputBuilder`：从冻结快照直接裁出独立局部
+位图，再把相交的普通可见标注换算到局部坐标并合成。禁止先合成整张 4K 选区后再裁，也禁止
+把马赛克遮挡前的原像素作为旁路字段交给 Provider。裁剪、水印、外壳、美化等不属于当前
+局部画布的成品效果不得改变 AI 选区几何。
+
+`SelectionAIExecutor` 对每个宿主执行严格单飞并传播 Task 取消；Provider 尚未真正结束时
+不得因 UI 超时继续扇出新请求。真实 HTTP、鉴权和 Keychain 实现必须放在 `Platform/`，
+本地模型实现可以留在 `Intelligence/`。未配置时使用不触网的
+`UnavailableSelectionAIProvider`。
+
+生产装配目前使用 `OpenAICompatibleSelectionAIProvider`：默认连接可配置的 HTTPS
+Responses API，并以 `input_image` 发送已裁剪 PNG、用严格 JSON Schema 接收四类结构化结果。
+Base URL 与模型名存入 `AppSettings`，API Key 只进入 macOS 钥匙串；请求固定
+`store=false`，鉴权值不得写入 UserDefaults、日志或请求体。多屏覆盖层共享同一个执行器，
+因此一次截图会话仍只有一个在途 AI 请求。
+
+上传前必须经过 `SelectionAIRequestPolicy + SelectionAIImagePreprocessor`：只缩小、不放大，
+按解释、翻译、公式、表格分别保留递增的像素预算；公式和表格继续使用 PNG，不能为了体积
+静默改成会损伤细线与上下标的有损编码。Provider 还要按最终 PNG 字节预算有限降采样，
+不得把 Retina 原尺寸大选区直接 Base64 后再依赖 HTTP 上限兜底。
+
+Provider 的结构化结果先转换为 `SelectionAIResultDocument`，统一给出阅读预览与完整导出项。
+解释导出 Markdown、翻译导出纯文本、公式导出 LaTeX、表格同时导出 Markdown/CSV；宿主不得
+复制被 UI 截断的预览文本。Capture 用 `OverlaySelectionAIResultPanel` 在原覆盖层内呈现，不创建
+新的 NSPanel，也不改变截图窗口层级。Pin 与 Editor 后续可以用自己的界面复用同一 document。
+
+**规范**：接一种模型服务 = 新增一个 Provider 实现并在 App 装配；Tool Palette、结果
+浮层和存储只认识领域契约，不得直接 import 某家模型 SDK 或拼接供应商请求。
 
 ---
 

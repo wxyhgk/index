@@ -1,12 +1,23 @@
 import AppKit
 import Combine
 
-/// 全部用户设置。`ObservableObject` 让 SwiftUI 直接绑定，
-/// `didSet` 负责落盘和把变更推给需要的子系统（比如重新注册快捷键）。
+/// 用户设置的聚合。
+///
+/// 持有 8 个**领域偏好**（`CapturePrefs` 等值类型，各自持久化），并 conform
+/// 8 个窄读协议（`CapturePreferences` 等）—— 各消费方只依赖它读到的那一领域
+/// 切片，而不是整个设置对象。
+///
+/// 默认值的**单一真相源**在 `Prefs.swift` 的 `XxxPrefs.defaults`：本类的
+/// `register` 块与 `FakeStyleStore` 都从那里取默认值，不再各自抄一份。
+///
+/// 持久化沿用**按属性的 UserDefaults 键**（不引入新 blob 键），升级不丢用户
+/// 已保存的设置；`@Published` 领域值驱动设置 UI 绑定，`didSet` 落盘。
 @MainActor
 final class AppSettings: ObservableObject {
 
     static let shared = AppSettings()
+
+    // MARK: - 枚举（设置形状的一部分，供 UI 选择器与值类型引用）
 
     /// 选区确认后按回车做什么。
     enum EnterBehavior: String, CaseIterable, Identifiable {
@@ -52,324 +63,151 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    // MARK: - UserDefaults 键（沿用旧键名，升级不丢已保存设置）
+
     private enum Keys {
         static let copyToClipboard = "copyToClipboard"
         static let showShelfCard = "showShelfCard"
-        static let runOCR = "runOCR"
-        static let autoClassify = "autoClassify"
-        static let detectSensitive = "detectSensitive"
-        static let semanticSearch = "semanticSearch"
+        static let enterBehavior = "enterBehavior"
         static let showMagnifier = "showMagnifier"
         static let windowCaptureShadow = "windowCaptureShadow"
-        static let enterBehavior = "enterBehavior"
+        static let captureDelay = "captureDelay"
+        static let lastToolID = "lastToolID"
+
+        static let recordSystemAudio = "recordSystemAudio"
+        static let recordMicrophone = "recordMicrophone"
+        static let recordingSaveToLibrary = "recordingSaveToLibrary"
+
+        static let exportNameTemplate = "exportNameTemplate"
+        static let autoCopyEnabled = "autoCopyEnabled"
+        static let autoCopyDirectory = "autoCopyDirectory"
+
+        static let autoCleanupEnabled = "autoCleanupEnabled"
+        static let autoCleanupDays = "autoCleanupDays"
+        static let galleryScrollDepth = "galleryScrollDepth"
+
         static let defaultColorIndex = "defaultColorIndex"
         static let defaultWidthIndex = "defaultWidthIndex"
         static let toolStyles = "toolStyles"
-        static let autoBackdrop = "autoBackdrop"
-        // 存的是**短边百分比**而不是像素，见 `EffectRegistry.backdrop`。
+        static let watermarkText = "watermarkText"
+        static let watermarkMode = "watermarkMode"
+        static let watermarkAlpha = "watermarkAlpha"
+        static let autoWatermark = "autoWatermark"
         static let backdropPaddingRatio = "backdropPaddingRatio"
         static let backdropCornerRatio = "backdropCornerRatio"
         static let backdropShadowRatio = "backdropShadowRatio"
         static let backdropShadowAlpha = "backdropShadowAlpha"
-        static let captureDelay = "captureDelay"
+        static let autoBackdrop = "autoBackdrop"
+
+        static let runOCR = "runOCR"
+        static let autoClassify = "autoClassify"
+        static let detectSensitive = "detectSensitive"
+        static let semanticSearch = "semanticSearch"
+        static let selectionAIBaseURL = "selectionAIBaseURL"
+        static let selectionAIModel = "selectionAIModel"
+
+        static let uploadEndpoint = "uploadEndpoint"
+        static let uploadFieldName = "uploadFieldName"
+        static let uploadHeaders = "uploadHeaders"
+        static let uploadResponsePath = "uploadResponsePath"
+        static let uploadLinkFormat = "uploadLinkFormat"
+
         static let captureShortcut = "captureShortcut"
         static let galleryShortcut = "galleryShortcut"
         static let delayedCaptureShortcut = "delayedCaptureShortcut"
         static let recordingShortcut = "recordingShortcut"
         static let scrollCaptureShortcut = "scrollCaptureShortcut"
         static let moleculePinShortcut = "moleculePinShortcut"
-        static let watermarkText = "watermarkText"
-        static let watermarkMode = "watermarkMode"
-        static let watermarkAlpha = "watermarkAlpha"
-        static let autoWatermark = "autoWatermark"
-        static let uploadEndpoint = "uploadEndpoint"
-        static let uploadFieldName = "uploadFieldName"
-        static let uploadHeaders = "uploadHeaders"
-        static let uploadResponsePath = "uploadResponsePath"
-        static let uploadLinkFormat = "uploadLinkFormat"
-        static let exportNameTemplate = "exportNameTemplate"
-        static let autoCopyEnabled = "autoCopyEnabled"
-        static let autoCopyDirectory = "autoCopyDirectory"
-        static let autoCleanupEnabled = "autoCleanupEnabled"
-        static let autoCleanupDays = "autoCleanupDays"
-        static let recordSystemAudio = "recordSystemAudio"
-        static let recordMicrophone = "recordMicrophone"
-        static let recordingSaveToLibrary = "recordingSaveToLibrary"
-        static let galleryScrollDepth = "galleryScrollDepth"
     }
 
     private let defaults = UserDefaults.standard
 
-    // MARK: - 截图
+    // MARK: - 领域偏好（@Published 驱动 UI 绑定，didSet 落盘）
 
-    @Published var copyToClipboard: Bool {
-        didSet { defaults.set(copyToClipboard, forKey: Keys.copyToClipboard) }
-    }
-
-    /// 截图后在屏幕右下角显示暂存卡片（可直接拖出成文件）。钉图动作不弹。
-    @Published var showShelfCard: Bool {
-        didSet { defaults.set(showShelfCard, forKey: Keys.showShelfCard) }
-    }
-
-    @Published var enterBehavior: EnterBehavior {
-        didSet { defaults.set(enterBehavior.rawValue, forKey: Keys.enterBehavior) }
-    }
-
-    /// 选区时在光标旁显示像素放大镜和取色读数。
-    @Published var showMagnifier: Bool {
-        didSet { defaults.set(showMagnifier, forKey: Keys.showMagnifier) }
-    }
-
-    /// ⌥+单击的整窗截图是否带系统阴影（连同透明外沿一起输出）。
-    @Published var windowCaptureShadow: Bool {
-        didSet { defaults.set(windowCaptureShadow, forKey: Keys.windowCaptureShadow) }
-    }
-
-    /// 「延时截图」等待的秒数。
-    static let captureDelayChoices = [3, 5, 10]
-
-    @Published var captureDelay: Int {
-        didSet { defaults.set(captureDelay, forKey: Keys.captureDelay) }
-    }
-
-    // MARK: - 录屏
-
-    /// 录制系统声音（App 播放的音频，MacShot 自身除外）。默认开。
-    @Published var recordSystemAudio: Bool {
-        didSet { defaults.set(recordSystemAudio, forKey: Keys.recordSystemAudio) }
-    }
-
-    /// 录制麦克风。默认关 —— 首次开启会触发系统麦克风权限弹窗。
-    @Published var recordMicrophone: Bool {
-        didSet { defaults.set(recordMicrophone, forKey: Keys.recordMicrophone) }
-    }
-
-    /// 录屏完成后把首帧截图入库当锚点（视频作为 recording 附件关联到 Shot）。
-    /// 默认关 —— 图库目前是截图库，视频只是借首帧「能被找到」。
-    @Published var recordingSaveToLibrary: Bool {
-        didSet { defaults.set(recordingSaveToLibrary, forKey: Keys.recordingSaveToLibrary) }
-    }
-
-    // MARK: - 导出
-
-    /// 导出文件名模板。变量：{dateCompact}/{timeCompact} 紧凑日期时间、
-    /// {date}/{time} 可读日期时间、{app} 来源 App、{title} 窗口标题、{name} 显示名称。
-    /// 渲染规则在 `ImageExporter.renderName`，这里只存模板本身。
-    @Published var exportNameTemplate: String {
-        didSet { defaults.set(exportNameTemplate, forKey: Keys.exportNameTemplate) }
-    }
-
-    static let defaultExportNameTemplate = "{dateCompact}-{timeCompact}"
-
-    /// 自动保存副本：每张截图入库后往指定目录写一份成品 PNG。
-    /// 面向 Obsidian 等监听文件夹的场景。
-    @Published var autoCopyEnabled: Bool {
-        didSet { defaults.set(autoCopyEnabled, forKey: Keys.autoCopyEnabled) }
-    }
-
-    /// 副本写入的目录路径。空 = 未选择，即使开关开着也不写。
-    @Published var autoCopyDirectory: String {
-        didSet { defaults.set(autoCopyDirectory, forKey: Keys.autoCopyDirectory) }
-    }
-
-    // MARK: - 存储清理
-
-    /// 启动时自动清理旧截图。默认关 —— 删除是不可逆操作，必须用户主动开启。
-    @Published var autoCleanupEnabled: Bool {
-        didSet { defaults.set(autoCleanupEnabled, forKey: Keys.autoCleanupEnabled) }
-    }
-
-    static let autoCleanupChoices = [7, 30, 90]
-
-    /// 保留天数。只有早于这个天数、未收藏且从未标注过的截图才会被清理。
-    @Published var autoCleanupDays: Int {
-        didSet { defaults.set(autoCleanupDays, forKey: Keys.autoCleanupDays) }
-    }
-
-    // MARK: - 图库
-
-    /// 图库网格的逐卡滚动深度（滑近边缘时轻微淡出 + 缩小 + 位移）。默认开。
-    /// 关掉只影响这一层「逐卡」效果，容器级的滚动边缘渐变（成本恒定，与卡片数无关）始终在。
-    /// 给开关的理由是成本：逐卡 scrollTransition 的代价 ∝ 可见卡片数，
-    /// 而 macOS 15 的 SwiftUI 滚动本身已有性能回归（trackpad 滚动时
-    /// `_hitTestForEvent` 吃掉约 85% 执行时间），几千张的库应当把这一层关掉。
-    @Published var galleryScrollDepth: Bool {
-        didSet { defaults.set(galleryScrollDepth, forKey: Keys.galleryScrollDepth) }
-    }
-
-    // MARK: - 标注默认值
-
-    @Published var defaultColorIndex: Int {
-        didSet { defaults.set(defaultColorIndex, forKey: Keys.defaultColorIndex) }
-    }
-
-    @Published var defaultWidthIndex: Int {
-        didSet { defaults.set(defaultWidthIndex, forKey: Keys.defaultWidthIndex) }
-    }
-
-    // MARK: - 自动美化（透明留白 + 圆角 + 投影）
-
-    /// 截图后自动套一层「透明美化」：四周留出透明留白、内容切圆角、投一层柔和阴影。
-    /// 只作用于**拖拽选区**的截图 —— 整窗截图（⌥+单击）走系统窗口阴影，
-    /// 两者叠加会出现双重阴影。
-    @Published var autoBackdrop: Bool {
-        didSet { defaults.set(autoBackdrop, forKey: Keys.autoBackdrop) }
-    }
-
-    // 下面三项都是**图片短边的百分比**，不是绝对像素 ——
-    // 绝对值在小图上会把内容淹掉、在大图上又几乎看不见，
-    // 而且 Retina 与非 Retina 抓同一个窗口像素差一倍。换算与钳位见
-    // `EffectRegistry.backdrop`。
-
-    /// 四周留白占短边的比例。留白要装得下阴影，太小会把阴影切掉。
-    @Published var backdropPaddingRatio: Double {
-        didSet { defaults.set(backdropPaddingRatio, forKey: Keys.backdropPaddingRatio) }
-    }
-
-    /// 内容圆角半径占短边的比例。
-    @Published var backdropCornerRatio: Double {
-        didSet { defaults.set(backdropCornerRatio, forKey: Keys.backdropCornerRatio) }
-    }
-
-    /// 阴影模糊半径占短边的比例。
-    @Published var backdropShadowRatio: Double {
-        didSet { defaults.set(backdropShadowRatio, forKey: Keys.backdropShadowRatio) }
-    }
-
-    /// 阴影浓度 0…1。
-    @Published var backdropShadowAlpha: Double {
-        didSet { defaults.set(backdropShadowAlpha, forKey: Keys.backdropShadowAlpha) }
-    }
-
-    /// 每个工具单独记住的样式（键是 `AnnotationTool.id`）。
-    ///
-    /// 上面那两个全局默认降级为**首次使用的种子**：只作用于还没有单独偏好的工具。
-    /// 存成 JSON 而不是逐项开一个 UserDefaults 键 —— 工具 × 样式轴是二维的，
-    /// 摊平会变成几十个键，加一根轴就要改一次注册表。
-    /// 解不出来（格式变更 / 手工改坏）就退回空字典，让描述符的默认值兜底。
-    @Published var toolStyles: [String: ToolStyle] {
+    @Published var capture: CapturePrefs {
         didSet {
-            guard let data = try? JSONEncoder().encode(toolStyles) else { return }
-            defaults.set(String(data: data, encoding: .utf8), forKey: Keys.toolStyles)
+            defaults.set(capture.copyToClipboard, forKey: Keys.copyToClipboard)
+            defaults.set(capture.showShelfCard, forKey: Keys.showShelfCard)
+            defaults.set(capture.enterBehavior.rawValue, forKey: Keys.enterBehavior)
+            defaults.set(capture.showMagnifier, forKey: Keys.showMagnifier)
+            defaults.set(capture.windowCaptureShadow, forKey: Keys.windowCaptureShadow)
+            defaults.set(capture.captureDelay, forKey: Keys.captureDelay)
+            defaults.set(capture.lastToolID, forKey: Keys.lastToolID)
         }
     }
 
-    // MARK: - 水印
-
-    /// 默认水印文案。空 = 未配置：「导出自动加水印」不生效，
-    /// 手动开关（工具条/编辑器）用 "Index" 兜底。
-    @Published var watermarkText: String {
-        didSet { defaults.set(watermarkText, forKey: Keys.watermarkText) }
-    }
-
-    /// 默认水印位置（右下角 / 居中 / 平铺）。
-    @Published var watermarkMode: WatermarkMode {
-        didSet { defaults.set(watermarkMode.rawValue, forKey: Keys.watermarkMode) }
-    }
-
-    /// 水印透明度（0.1–0.8）。白字 + 细黑描边，深浅底上都可见。
-    @Published var watermarkAlpha: Double {
-        didSet { defaults.set(watermarkAlpha, forKey: Keys.watermarkAlpha) }
-    }
-
-    /// 新截图落库时自动追加一层水印。只作用于截图路径
-    /// （`CaptureCoordinator.handle`），编辑器/钉图的手动开关不受它影响。
-    @Published var autoWatermark: Bool {
-        didSet { defaults.set(autoWatermark, forKey: Keys.autoWatermark) }
-    }
-
-    /// 去掉首尾空白后的水印文案；空串 = 未配置。
-    var trimmedWatermarkText: String {
-        watermarkText.trimmingCharacters(in: .whitespaces)
-    }
-
-    // MARK: - 智能
-
-    @Published var runOCR: Bool {
-        didSet { defaults.set(runOCR, forKey: Keys.runOCR) }
-    }
-
-    /// 自动分类（规则分类 + Vision 场景标签）。
-    @Published var autoClassify: Bool {
-        didSet { defaults.set(autoClassify, forKey: Keys.autoClassify) }
-    }
-
-    /// 检测敏感内容（邮箱、密钥、卡号、手机号、人脸），供一键打码。
-    @Published var detectSensitive: Bool {
-        didSet { defaults.set(detectSensitive, forKey: Keys.detectSensitive) }
-    }
-
-    /// 语义搜索（MobileCLIP 向量）。默认关 —— 需要用户主动下载约 111 MB 模型。
-    @Published var semanticSearch: Bool {
-        didSet { defaults.set(semanticSearch, forKey: Keys.semanticSearch) }
-    }
-
-    // MARK: - 上传图床
-
-    /// 图床上传接口地址。空 = 未配置，「上传」动作会提示先去设置。
-    @Published var uploadEndpoint: String {
-        didSet { defaults.set(uploadEndpoint, forKey: Keys.uploadEndpoint) }
-    }
-
-    /// multipart/form-data 里图片文件的字段名。PicGo / uPic 系图床通常是 "file"。
-    @Published var uploadFieldName: String {
-        didSet { defaults.set(uploadFieldName, forKey: Keys.uploadFieldName) }
-    }
-
-    /// 自定义请求头，每行一条 "Key: Value"。可能含 token，明文存 UserDefaults（与同类工具一致）。
-    @Published var uploadHeaders: String {
-        didSet { defaults.set(uploadHeaders, forKey: Keys.uploadHeaders) }
-    }
-
-    /// 从 JSON 响应里取链接的点分路径（如 "data.url"）。留空 = 整个响应体就是链接。
-    @Published var uploadResponsePath: String {
-        didSet { defaults.set(uploadResponsePath, forKey: Keys.uploadResponsePath) }
-    }
-
-    @Published var uploadLinkFormat: UploadLinkFormat {
-        didSet { defaults.set(uploadLinkFormat.rawValue, forKey: Keys.uploadLinkFormat) }
-    }
-
-    // MARK: - 快捷键
-
-    @Published var captureShortcut: KeyboardShortcut {
+    @Published var recording: RecordingPrefs {
         didSet {
-            store(captureShortcut, forKey: Keys.captureShortcut)
-            onShortcutsChanged?()
+            defaults.set(recording.recordSystemAudio, forKey: Keys.recordSystemAudio)
+            defaults.set(recording.recordMicrophone, forKey: Keys.recordMicrophone)
+            defaults.set(recording.recordingSaveToLibrary, forKey: Keys.recordingSaveToLibrary)
         }
     }
 
-    @Published var galleryShortcut: KeyboardShortcut {
+    @Published var export: ExportPrefs {
         didSet {
-            store(galleryShortcut, forKey: Keys.galleryShortcut)
-            onShortcutsChanged?()
+            defaults.set(export.exportNameTemplate, forKey: Keys.exportNameTemplate)
+            defaults.set(export.autoCopyEnabled, forKey: Keys.autoCopyEnabled)
+            defaults.set(export.autoCopyDirectory, forKey: Keys.autoCopyDirectory)
         }
     }
 
-    @Published var delayedCaptureShortcut: KeyboardShortcut {
+    @Published var library: LibraryPrefs {
         didSet {
-            store(delayedCaptureShortcut, forKey: Keys.delayedCaptureShortcut)
-            onShortcutsChanged?()
+            defaults.set(library.autoCleanupEnabled, forKey: Keys.autoCleanupEnabled)
+            defaults.set(library.autoCleanupDays, forKey: Keys.autoCleanupDays)
+            defaults.set(library.galleryScrollDepth, forKey: Keys.galleryScrollDepth)
         }
     }
 
-    @Published var recordingShortcut: KeyboardShortcut {
+    @Published var annotationStyle: AnnotationStylePrefs {
         didSet {
-            store(recordingShortcut, forKey: Keys.recordingShortcut)
-            onShortcutsChanged?()
+            defaults.set(annotationStyle.defaultColorIndex, forKey: Keys.defaultColorIndex)
+            defaults.set(annotationStyle.defaultWidthIndex, forKey: Keys.defaultWidthIndex)
+            if let data = try? JSONEncoder().encode(annotationStyle.toolStyles) {
+                defaults.set(String(data: data, encoding: .utf8), forKey: Keys.toolStyles)
+            }
+            defaults.set(annotationStyle.watermarkText, forKey: Keys.watermarkText)
+            defaults.set(annotationStyle.watermarkMode.rawValue, forKey: Keys.watermarkMode)
+            defaults.set(annotationStyle.watermarkAlpha, forKey: Keys.watermarkAlpha)
+            defaults.set(annotationStyle.autoWatermark, forKey: Keys.autoWatermark)
+            defaults.set(annotationStyle.backdropPaddingRatio, forKey: Keys.backdropPaddingRatio)
+            defaults.set(annotationStyle.backdropCornerRatio, forKey: Keys.backdropCornerRatio)
+            defaults.set(annotationStyle.backdropShadowRatio, forKey: Keys.backdropShadowRatio)
+            defaults.set(annotationStyle.backdropShadowAlpha, forKey: Keys.backdropShadowAlpha)
+            defaults.set(annotationStyle.autoBackdrop, forKey: Keys.autoBackdrop)
         }
     }
 
-    @Published var scrollCaptureShortcut: KeyboardShortcut {
+    @Published var intelligence: IntelligencePrefs {
         didSet {
-            store(scrollCaptureShortcut, forKey: Keys.scrollCaptureShortcut)
-            onShortcutsChanged?()
+            defaults.set(intelligence.runOCR, forKey: Keys.runOCR)
+            defaults.set(intelligence.autoClassify, forKey: Keys.autoClassify)
+            defaults.set(intelligence.detectSensitive, forKey: Keys.detectSensitive)
+            defaults.set(intelligence.semanticSearch, forKey: Keys.semanticSearch)
+            defaults.set(intelligence.selectionAIBaseURL, forKey: Keys.selectionAIBaseURL)
+            defaults.set(intelligence.selectionAIModel, forKey: Keys.selectionAIModel)
         }
     }
 
-    @Published var moleculePinShortcut: KeyboardShortcut {
+    @Published var upload: UploadPrefs {
         didSet {
-            store(moleculePinShortcut, forKey: Keys.moleculePinShortcut)
+            defaults.set(upload.uploadEndpoint, forKey: Keys.uploadEndpoint)
+            defaults.set(upload.uploadFieldName, forKey: Keys.uploadFieldName)
+            defaults.set(upload.uploadHeaders, forKey: Keys.uploadHeaders)
+            defaults.set(upload.uploadResponsePath, forKey: Keys.uploadResponsePath)
+            defaults.set(upload.uploadLinkFormat.rawValue, forKey: Keys.uploadLinkFormat)
+        }
+    }
+
+    @Published var shortcuts: ShortcutPrefs {
+        didSet {
+            store(shortcuts.captureShortcut, forKey: Keys.captureShortcut)
+            store(shortcuts.galleryShortcut, forKey: Keys.galleryShortcut)
+            store(shortcuts.delayedCaptureShortcut, forKey: Keys.delayedCaptureShortcut)
+            store(shortcuts.recordingShortcut, forKey: Keys.recordingShortcut)
+            store(shortcuts.scrollCaptureShortcut, forKey: Keys.scrollCaptureShortcut)
+            store(shortcuts.moleculePinShortcut, forKey: Keys.moleculePinShortcut)
             onShortcutsChanged?()
         }
     }
@@ -377,110 +215,123 @@ final class AppSettings: ObservableObject {
     /// 由 AppDelegate 装上：快捷键一改就重新注册。
     var onShortcutsChanged: (() -> Void)?
 
-    // MARK: -
+    // MARK: - 装配
 
     private init() {
-        let defaults = UserDefaults.standard
+        // 默认值单一真相源：全部取自 XxxPrefs.defaults。
         defaults.register(defaults: [
-            Keys.copyToClipboard: true,
-            Keys.showShelfCard: true,
-            Keys.runOCR: true,
-            Keys.autoClassify: true,
-            Keys.detectSensitive: true,
-            Keys.semanticSearch: false,
-            Keys.showMagnifier: true,
-            Keys.windowCaptureShadow: true,
-            Keys.captureDelay: 3,
-            Keys.enterBehavior: EnterBehavior.copyAndFinish.rawValue,
-            Keys.defaultColorIndex: 0,
-            Keys.defaultWidthIndex: 1,
-            Keys.autoBackdrop: false,
-            // 短边百分比。1000px 短边的图上约等于：留白 50 / 圆角 14 / 阴影 22 像素，
-            // 与 iShot 那套观感接近；小图大图按同样比例缩放。
-            Keys.backdropPaddingRatio: 0.05,
-            Keys.backdropCornerRatio: 0.014,
-            Keys.backdropShadowRatio: 0.022,
-            Keys.backdropShadowAlpha: 0.30,
-            Keys.watermarkText: "",
-            Keys.watermarkMode: WatermarkMode.corner.rawValue,
-            Keys.watermarkAlpha: 0.35,
-            Keys.autoWatermark: false,
-            Keys.uploadEndpoint: "",
-            Keys.uploadFieldName: "file",
-            Keys.uploadHeaders: "",
-            Keys.uploadResponsePath: "",
-            Keys.uploadLinkFormat: UploadLinkFormat.raw.rawValue,
-            Keys.exportNameTemplate: Self.defaultExportNameTemplate,
-            Keys.autoCopyEnabled: false,
-            Keys.autoCopyDirectory: "",
-            Keys.autoCleanupEnabled: false,
-            Keys.autoCleanupDays: 30,
-            Keys.recordSystemAudio: true,
-            Keys.recordMicrophone: false,
-            Keys.recordingSaveToLibrary: true,
-            Keys.galleryScrollDepth: true
+            Keys.copyToClipboard: CapturePrefs.defaults.copyToClipboard,
+            Keys.showShelfCard: CapturePrefs.defaults.showShelfCard,
+            Keys.enterBehavior: CapturePrefs.defaults.enterBehavior.rawValue,
+            Keys.showMagnifier: CapturePrefs.defaults.showMagnifier,
+            Keys.windowCaptureShadow: CapturePrefs.defaults.windowCaptureShadow,
+            Keys.captureDelay: CapturePrefs.defaults.captureDelay,
+
+            Keys.recordSystemAudio: RecordingPrefs.defaults.recordSystemAudio,
+            Keys.recordMicrophone: RecordingPrefs.defaults.recordMicrophone,
+            Keys.recordingSaveToLibrary: RecordingPrefs.defaults.recordingSaveToLibrary,
+
+            Keys.exportNameTemplate: ExportPrefs.defaults.exportNameTemplate,
+            Keys.autoCopyEnabled: ExportPrefs.defaults.autoCopyEnabled,
+            Keys.autoCopyDirectory: ExportPrefs.defaults.autoCopyDirectory,
+
+            Keys.autoCleanupEnabled: LibraryPrefs.defaults.autoCleanupEnabled,
+            Keys.autoCleanupDays: LibraryPrefs.defaults.autoCleanupDays,
+            Keys.galleryScrollDepth: LibraryPrefs.defaults.galleryScrollDepth,
+
+            Keys.defaultColorIndex: AnnotationStylePrefs.defaults.defaultColorIndex,
+            Keys.defaultWidthIndex: AnnotationStylePrefs.defaults.defaultWidthIndex,
+            Keys.watermarkText: AnnotationStylePrefs.defaults.watermarkText,
+            Keys.watermarkMode: AnnotationStylePrefs.defaults.watermarkMode.rawValue,
+            Keys.watermarkAlpha: AnnotationStylePrefs.defaults.watermarkAlpha,
+            Keys.autoWatermark: AnnotationStylePrefs.defaults.autoWatermark,
+            Keys.backdropPaddingRatio: AnnotationStylePrefs.defaults.backdropPaddingRatio,
+            Keys.backdropCornerRatio: AnnotationStylePrefs.defaults.backdropCornerRatio,
+            Keys.backdropShadowRatio: AnnotationStylePrefs.defaults.backdropShadowRatio,
+            Keys.backdropShadowAlpha: AnnotationStylePrefs.defaults.backdropShadowAlpha,
+            Keys.autoBackdrop: AnnotationStylePrefs.defaults.autoBackdrop,
+
+            Keys.runOCR: IntelligencePrefs.defaults.runOCR,
+            Keys.autoClassify: IntelligencePrefs.defaults.autoClassify,
+            Keys.detectSensitive: IntelligencePrefs.defaults.detectSensitive,
+            Keys.semanticSearch: IntelligencePrefs.defaults.semanticSearch,
+            Keys.selectionAIBaseURL: IntelligencePrefs.defaults.selectionAIBaseURL,
+            Keys.selectionAIModel: IntelligencePrefs.defaults.selectionAIModel,
+
+            Keys.uploadEndpoint: UploadPrefs.defaults.uploadEndpoint,
+            Keys.uploadFieldName: UploadPrefs.defaults.uploadFieldName,
+            Keys.uploadHeaders: UploadPrefs.defaults.uploadHeaders,
+            Keys.uploadResponsePath: UploadPrefs.defaults.uploadResponsePath,
+            Keys.uploadLinkFormat: UploadPrefs.defaults.uploadLinkFormat.rawValue
         ])
 
-        copyToClipboard = defaults.bool(forKey: Keys.copyToClipboard)
-        showShelfCard = defaults.bool(forKey: Keys.showShelfCard)
-        runOCR = defaults.bool(forKey: Keys.runOCR)
-        autoClassify = defaults.bool(forKey: Keys.autoClassify)
-        detectSensitive = defaults.bool(forKey: Keys.detectSensitive)
-        semanticSearch = defaults.bool(forKey: Keys.semanticSearch)
-        showMagnifier = defaults.bool(forKey: Keys.showMagnifier)
-        windowCaptureShadow = defaults.bool(forKey: Keys.windowCaptureShadow)
-        captureDelay = defaults.integer(forKey: Keys.captureDelay)
-        enterBehavior = defaults.string(forKey: Keys.enterBehavior)
-            .flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish
-        defaultColorIndex = defaults.integer(forKey: Keys.defaultColorIndex)
-        defaultWidthIndex = defaults.integer(forKey: Keys.defaultWidthIndex)
-        autoBackdrop = defaults.bool(forKey: Keys.autoBackdrop)
-        backdropPaddingRatio = defaults.double(forKey: Keys.backdropPaddingRatio)
-        backdropCornerRatio = defaults.double(forKey: Keys.backdropCornerRatio)
-        backdropShadowRatio = defaults.double(forKey: Keys.backdropShadowRatio)
-        backdropShadowAlpha = defaults.double(forKey: Keys.backdropShadowAlpha)
-        toolStyles = defaults.string(forKey: Keys.toolStyles)
-            .flatMap { $0.data(using: .utf8) }
-            .flatMap { try? JSONDecoder().decode([String: ToolStyle].self, from: $0) } ?? [:]
-        watermarkText = defaults.string(forKey: Keys.watermarkText) ?? ""
-        watermarkMode = defaults.string(forKey: Keys.watermarkMode)
-            .flatMap(WatermarkMode.init(rawValue:)) ?? .corner
-        watermarkAlpha = defaults.double(forKey: Keys.watermarkAlpha)
-        autoWatermark = defaults.bool(forKey: Keys.autoWatermark)
-        uploadEndpoint = defaults.string(forKey: Keys.uploadEndpoint) ?? ""
-        uploadFieldName = defaults.string(forKey: Keys.uploadFieldName) ?? "file"
-        uploadHeaders = defaults.string(forKey: Keys.uploadHeaders) ?? ""
-        uploadResponsePath = defaults.string(forKey: Keys.uploadResponsePath) ?? ""
-        uploadLinkFormat = defaults.string(forKey: Keys.uploadLinkFormat)
-            .flatMap(UploadLinkFormat.init(rawValue:)) ?? .raw
-        exportNameTemplate = defaults.string(forKey: Keys.exportNameTemplate)
-            ?? Self.defaultExportNameTemplate
-        autoCopyEnabled = defaults.bool(forKey: Keys.autoCopyEnabled)
-        autoCopyDirectory = defaults.string(forKey: Keys.autoCopyDirectory) ?? ""
-        autoCleanupEnabled = defaults.bool(forKey: Keys.autoCleanupEnabled)
-        autoCleanupDays = defaults.integer(forKey: Keys.autoCleanupDays)
-        recordSystemAudio = defaults.bool(forKey: Keys.recordSystemAudio)
-        recordMicrophone = defaults.bool(forKey: Keys.recordMicrophone)
-        recordingSaveToLibrary = defaults.bool(forKey: Keys.recordingSaveToLibrary)
-        galleryScrollDepth = defaults.bool(forKey: Keys.galleryScrollDepth)
-        captureShortcut = Self.load(Keys.captureShortcut, from: defaults) ?? .captureDefault
-        galleryShortcut = Self.load(Keys.galleryShortcut, from: defaults) ?? .galleryDefault
-        delayedCaptureShortcut = Self.load(Keys.delayedCaptureShortcut, from: defaults)
-            ?? .delayedCaptureDefault
-        recordingShortcut = Self.load(Keys.recordingShortcut, from: defaults) ?? .recordingDefault
-        scrollCaptureShortcut = Self.load(Keys.scrollCaptureShortcut, from: defaults)
-            ?? .scrollCaptureDefault
-        moleculePinShortcut = Self.load(Keys.moleculePinShortcut, from: defaults)
-            ?? .moleculePinDefault
+        capture = CapturePrefs(
+            copyToClipboard: defaults.bool(forKey: Keys.copyToClipboard),
+            showShelfCard: defaults.bool(forKey: Keys.showShelfCard),
+            enterBehavior: defaults.string(forKey: Keys.enterBehavior).flatMap(EnterBehavior.init(rawValue:)) ?? .copyAndFinish,
+            showMagnifier: defaults.bool(forKey: Keys.showMagnifier),
+            windowCaptureShadow: defaults.bool(forKey: Keys.windowCaptureShadow),
+            captureDelay: defaults.integer(forKey: Keys.captureDelay),
+            lastToolID: defaults.string(forKey: Keys.lastToolID)
+        )
+        recording = RecordingPrefs(
+            recordSystemAudio: defaults.bool(forKey: Keys.recordSystemAudio),
+            recordMicrophone: defaults.bool(forKey: Keys.recordMicrophone),
+            recordingSaveToLibrary: defaults.bool(forKey: Keys.recordingSaveToLibrary)
+        )
+        export = ExportPrefs(
+            exportNameTemplate: defaults.string(forKey: Keys.exportNameTemplate) ?? ExportPrefs.defaults.exportNameTemplate,
+            autoCopyEnabled: defaults.bool(forKey: Keys.autoCopyEnabled),
+            autoCopyDirectory: defaults.string(forKey: Keys.autoCopyDirectory) ?? ""
+        )
+        library = LibraryPrefs(
+            autoCleanupEnabled: defaults.bool(forKey: Keys.autoCleanupEnabled),
+            autoCleanupDays: defaults.integer(forKey: Keys.autoCleanupDays),
+            galleryScrollDepth: defaults.bool(forKey: Keys.galleryScrollDepth)
+        )
+        annotationStyle = AnnotationStylePrefs(
+            defaultColorIndex: defaults.integer(forKey: Keys.defaultColorIndex),
+            defaultWidthIndex: defaults.integer(forKey: Keys.defaultWidthIndex),
+            toolStyles: defaults.string(forKey: Keys.toolStyles)
+                .flatMap { $0.data(using: .utf8) }
+                .flatMap { try? JSONDecoder().decode([String: ToolStyle].self, from: $0) } ?? [:],
+            watermarkText: defaults.string(forKey: Keys.watermarkText) ?? "",
+            watermarkMode: defaults.string(forKey: Keys.watermarkMode).flatMap(WatermarkMode.init(rawValue:)) ?? .corner,
+            watermarkAlpha: defaults.double(forKey: Keys.watermarkAlpha),
+            autoWatermark: defaults.bool(forKey: Keys.autoWatermark),
+            backdropPaddingRatio: defaults.double(forKey: Keys.backdropPaddingRatio),
+            backdropCornerRatio: defaults.double(forKey: Keys.backdropCornerRatio),
+            backdropShadowRatio: defaults.double(forKey: Keys.backdropShadowRatio),
+            backdropShadowAlpha: defaults.double(forKey: Keys.backdropShadowAlpha),
+            autoBackdrop: defaults.bool(forKey: Keys.autoBackdrop)
+        )
+        intelligence = IntelligencePrefs(
+            runOCR: defaults.bool(forKey: Keys.runOCR),
+            autoClassify: defaults.bool(forKey: Keys.autoClassify),
+            detectSensitive: defaults.bool(forKey: Keys.detectSensitive),
+            semanticSearch: defaults.bool(forKey: Keys.semanticSearch),
+            selectionAIBaseURL: defaults.string(forKey: Keys.selectionAIBaseURL) ?? IntelligencePrefs.defaults.selectionAIBaseURL,
+            selectionAIModel: defaults.string(forKey: Keys.selectionAIModel) ?? IntelligencePrefs.defaults.selectionAIModel
+        )
+        upload = UploadPrefs(
+            uploadEndpoint: defaults.string(forKey: Keys.uploadEndpoint) ?? "",
+            uploadFieldName: defaults.string(forKey: Keys.uploadFieldName) ?? "file",
+            uploadHeaders: defaults.string(forKey: Keys.uploadHeaders) ?? "",
+            uploadResponsePath: defaults.string(forKey: Keys.uploadResponsePath) ?? "",
+            uploadLinkFormat: defaults.string(forKey: Keys.uploadLinkFormat).flatMap(UploadLinkFormat.init(rawValue:)) ?? .raw
+        )
+        shortcuts = ShortcutPrefs(
+            captureShortcut: Self.load(Keys.captureShortcut, from: defaults) ?? .captureDefault,
+            galleryShortcut: Self.load(Keys.galleryShortcut, from: defaults) ?? .galleryDefault,
+            delayedCaptureShortcut: Self.load(Keys.delayedCaptureShortcut, from: defaults) ?? .delayedCaptureDefault,
+            recordingShortcut: Self.load(Keys.recordingShortcut, from: defaults) ?? .recordingDefault,
+            scrollCaptureShortcut: Self.load(Keys.scrollCaptureShortcut, from: defaults) ?? .scrollCaptureDefault,
+            moleculePinShortcut: Self.load(Keys.moleculePinShortcut, from: defaults) ?? .moleculePinDefault
+        )
     }
 
     func resetShortcuts() {
-        captureShortcut = .captureDefault
-        galleryShortcut = .galleryDefault
-        delayedCaptureShortcut = .delayedCaptureDefault
-        recordingShortcut = .recordingDefault
-        scrollCaptureShortcut = .scrollCaptureDefault
-        moleculePinShortcut = .moleculePinDefault
+        shortcuts = ShortcutPrefs.defaults
     }
 
     private func store(_ shortcut: KeyboardShortcut, forKey key: String) {
@@ -492,4 +343,83 @@ final class AppSettings: ObservableObject {
         guard let data = defaults.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(KeyboardShortcut.self, from: data)
     }
+}
+
+// MARK: - 窄读协议 conformance（转发到领域值）
+//
+// 这些只读转发同时满足 8 个窄协议与旧的宽 `StyleStore`（过渡期两者并存，
+// 阶段 4 迁完消费方后删掉 StyleStore 与其转发）。唯一可写的是 toolStyles
+// （AnnotationState 回写逐工具样式）。
+
+extension AppSettings: CapturePreferences, RecordingPreferences, ExportPreferences,
+    LibraryPreferences, AnnotationStylePreferences, IntelligencePreferences,
+    UploadPreferences, ShortcutPreferences {
+
+    // Capture
+    var copyToClipboard: Bool { capture.copyToClipboard }
+    var showShelfCard: Bool { capture.showShelfCard }
+    var enterBehavior: EnterBehavior { capture.enterBehavior }
+    var showMagnifier: Bool { capture.showMagnifier }
+    var windowCaptureShadow: Bool { capture.windowCaptureShadow }
+    var captureDelay: Int { capture.captureDelay }
+    var lastToolID: String? {
+        get { capture.lastToolID }
+        set { capture.lastToolID = newValue }
+    }
+
+    // Recording
+    var recordSystemAudio: Bool { recording.recordSystemAudio }
+    var recordMicrophone: Bool { recording.recordMicrophone }
+    var recordingSaveToLibrary: Bool { recording.recordingSaveToLibrary }
+
+    // Export
+    var exportNameTemplate: String { export.exportNameTemplate }
+    var autoCopyEnabled: Bool { export.autoCopyEnabled }
+    var autoCopyDirectory: String { export.autoCopyDirectory }
+
+    // Library
+    var autoCleanupEnabled: Bool { library.autoCleanupEnabled }
+    var autoCleanupDays: Int { library.autoCleanupDays }
+    var galleryScrollDepth: Bool { library.galleryScrollDepth }
+
+    // AnnotationStyle
+    var defaultColorIndex: Int { annotationStyle.defaultColorIndex }
+    var defaultWidthIndex: Int { annotationStyle.defaultWidthIndex }
+    var toolStyles: [String: ToolStyle] {
+        get { annotationStyle.toolStyles }
+        set { annotationStyle.toolStyles = newValue }
+    }
+    var watermarkText: String { annotationStyle.watermarkText }
+    var trimmedWatermarkText: String { annotationStyle.watermarkText.trimmingCharacters(in: .whitespaces) }
+    var watermarkMode: WatermarkMode { annotationStyle.watermarkMode }
+    var watermarkAlpha: Double { annotationStyle.watermarkAlpha }
+    var autoWatermark: Bool { annotationStyle.autoWatermark }
+    var backdropPaddingRatio: Double { annotationStyle.backdropPaddingRatio }
+    var backdropCornerRatio: Double { annotationStyle.backdropCornerRatio }
+    var backdropShadowRatio: Double { annotationStyle.backdropShadowRatio }
+    var backdropShadowAlpha: Double { annotationStyle.backdropShadowAlpha }
+    var autoBackdrop: Bool { annotationStyle.autoBackdrop }
+
+    // Intelligence
+    var runOCR: Bool { intelligence.runOCR }
+    var autoClassify: Bool { intelligence.autoClassify }
+    var detectSensitive: Bool { intelligence.detectSensitive }
+    var semanticSearch: Bool { intelligence.semanticSearch }
+    var selectionAIBaseURL: String { intelligence.selectionAIBaseURL }
+    var selectionAIModel: String { intelligence.selectionAIModel }
+
+    // Upload
+    var uploadEndpoint: String { upload.uploadEndpoint }
+    var uploadFieldName: String { upload.uploadFieldName }
+    var uploadHeaders: String { upload.uploadHeaders }
+    var uploadResponsePath: String { upload.uploadResponsePath }
+    var uploadLinkFormat: UploadLinkFormat { upload.uploadLinkFormat }
+
+    // Shortcut
+    var captureShortcut: KeyboardShortcut { shortcuts.captureShortcut }
+    var galleryShortcut: KeyboardShortcut { shortcuts.galleryShortcut }
+    var delayedCaptureShortcut: KeyboardShortcut { shortcuts.delayedCaptureShortcut }
+    var recordingShortcut: KeyboardShortcut { shortcuts.recordingShortcut }
+    var scrollCaptureShortcut: KeyboardShortcut { shortcuts.scrollCaptureShortcut }
+    var moleculePinShortcut: KeyboardShortcut { shortcuts.moleculePinShortcut }
 }

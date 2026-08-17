@@ -12,6 +12,9 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
 
     private let base: CGImage
     private let shot: Shot?
+    /// 钉图窗口的设置切片：回车语义（键盘）+ 标注样式持久化（水印/底壳）。
+    private let capture: any CapturePreferences
+    private let annotationStyle: any AnnotationStylePreferences
     /// 钉出来时图片在屏幕上的原始尺寸，缩放的基准。
     private let naturalSize: CGSize
     private var zoom: CGFloat = 1.0
@@ -37,6 +40,8 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         layers: Layers<ImageSpace>,
         shot: Shot?,
         at globalRegion: CGRect,
+        capture: any CapturePreferences,
+        annotationStyle: any AnnotationStylePreferences,
         moleculeSource: MoleculeSourceAttachment? = nil
     ) {
         let anchor: CGRect = (globalRegion.width >= 20 && globalRegion.height >= 20)
@@ -47,6 +52,8 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
             layers: layers,
             shot: shot,
             anchor: anchor,
+            capture: capture,
+            annotationStyle: annotationStyle,
             moleculeSource: moleculeSource
         )
         // 钉图是浮动面板，不算「正经窗口」，不该让 App 跳出 Dock 图标。
@@ -58,11 +65,15 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         layers: Layers<ImageSpace>,
         shot: Shot?,
         anchor: CGRect,
+        capture: any CapturePreferences,
+        annotationStyle: any AnnotationStylePreferences,
         moleculeSource: MoleculeSourceAttachment?
     ) {
         self.base = base
         self.shot = shot
         self.savedLayers = layers
+        self.capture = capture
+        self.annotationStyle = annotationStyle
 
         // 窗口就是图片本身，不再为工具条预留条带。
         let imageFrame = anchor.isEmpty
@@ -88,7 +99,12 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         // 不用 isMovableByWindowBackground：否则点工具条会被当成拖窗口。
         panel.isMovableByWindowBackground = false
 
-        let view = PinImageView(base: base, layers: layers)
+        let view = PinImageView(
+            base: base,
+            layers: layers,
+            capture: capture,
+            annotationStyle: annotationStyle
+        )
         let attachedMolecule = moleculeSource ?? shot.flatMap {
             ShotStore.shared.moleculeSource(for: $0)
         }
@@ -136,8 +152,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         // 钉图画布就是图像像素 —— 水印按底图宽烤字号、壳/信息栏按 shot.scale 缩放。
         // 从图库钉出时元数据已齐；截图直钉时 URL 可能还没回填（同覆盖层）；
         // 没有 shot 时开信息栏只排得出日期（当下）—— 有什么排什么，开关不因此不可用。
-        view.annotation.effectContext = { [base] in
-            let style = AppSettings.shared
+        view.annotation.effectContext = { [base, shot, annotationStyle] in
             var context = EffectContext()
             context.imagePixelWidth = Double(base.width)
             context.imagePixelHeight = Double(base.height)
@@ -148,13 +163,13 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
                 name: shot?.appName, version: shot?.appVersion
             )
             context.capturedAt = shot?.capturedAt
-            context.watermarkText = style.watermarkText
-            context.watermarkMode = style.watermarkMode
-            context.watermarkAlpha = style.watermarkAlpha
-            context.backdropPaddingRatio = style.backdropPaddingRatio
-            context.backdropCornerRatio = style.backdropCornerRatio
-            context.backdropShadowRatio = style.backdropShadowRatio
-            context.backdropShadowAlpha = style.backdropShadowAlpha
+            context.watermarkText = annotationStyle.watermarkText
+            context.watermarkMode = annotationStyle.watermarkMode
+            context.watermarkAlpha = annotationStyle.watermarkAlpha
+            context.backdropPaddingRatio = annotationStyle.backdropPaddingRatio
+            context.backdropCornerRatio = annotationStyle.backdropCornerRatio
+            context.backdropShadowRatio = annotationStyle.backdropShadowRatio
+            context.backdropShadowAlpha = annotationStyle.backdropShadowAlpha
             return context
         }
         panel.contentView = view
@@ -377,6 +392,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
 
     override func close() {
         saveRevisionIfNeeded()
+        imageView?.teardownLiveText()
         PinPassthroughRegistry.shared.unregister(self)
         toolbarPanel.toolbarView.clearToolTips()
         window?.removeChildWindow(toolbarPanel)

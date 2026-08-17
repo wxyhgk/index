@@ -48,9 +48,42 @@ struct CaptureContext {
     let region: CGRect?
     weak var host: CaptureActionHost?
 
+    /// `CaptureContext` 是值类型，但一次截图会被自动副本、剪贴板、动作和 Shelf
+    /// 分别复制。缓存放在引用盒里，让这些副本共享同一张成品，避免带标注的 4K 图
+    /// 在同一轮主流程里被完整合成三四次。
+    private let renderedArtifact = RenderedCaptureArtifact()
+
+    init(
+        base: CGImage,
+        layers: Layers<ImageSpace>,
+        shot: Shot?,
+        region: CGRect?,
+        host: CaptureActionHost?
+    ) {
+        self.base = base
+        self.layers = layers
+        self.shot = shot
+        self.region = region
+        self.host = host
+    }
+
     /// 合成后的画面 —— 面向用户的产物几乎都要用它。
     func rendered() -> CGImage {
-        layers.isEmpty ? base : LayerRenderer.render(base: base, layers: layers)
+        renderedArtifact.resolve(base: base, layers: layers)
+    }
+}
+
+/// 一次捕获会话内的惰性成品缓存。只经由 `@MainActor CaptureContext` 访问，
+/// 不需要额外加锁；上下文销毁后缓存与成品像素一起释放。
+@MainActor
+private final class RenderedCaptureArtifact {
+    private var image: CGImage?
+
+    func resolve(base: CGImage, layers: Layers<ImageSpace>) -> CGImage {
+        if let image { return image }
+        let rendered = layers.isEmpty ? base : LayerRenderer.render(base: base, layers: layers)
+        image = rendered
+        return rendered
     }
 }
 

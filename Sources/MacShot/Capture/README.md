@@ -18,6 +18,7 @@ Metadata/   元数据：MetadataCollector + ScrollStitcher（滚动拼接，成�
   - `OverlayInteractionState`（`+Keyboard`）— `hoveredControlID` / `optionHeld`
   - `OverlayMagnifierState`（`+Magnifier`）— `cursor` / `cursorSample` + `magnifierPayload` / `updateCursor`
   - `LiveTextOverlayHost` + `LiveTextHitTestView`（`+LiveText`）— `container`/`overlay`/`analysis` + 命中测试与预跑分析
+  - `OverlaySelectionAIHost`（`+SelectionAI`）— 裁剪图像素坐标的 `SelectionAISession` + Overlay 坐标薄适配；`OverlaySelectionAIInputBuilder` 先裁局部、再烤入可见标注；任务条、执行状态和内嵌结果面板继续独立拆分
 - 窗口与矢量层：`OverlayWindow` 无边框 `.screenSaver`，`ChromeView` 透明 `render` 闭包、`hitTest` 穿透。
 
 * 新增捕获方式：`Snapshot/` 加 `CaptureSource` 实现 + 注册一行，不动 `CaptureCoordinator`。

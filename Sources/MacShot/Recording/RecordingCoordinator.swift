@@ -14,15 +14,19 @@ final class RecordingCoordinator {
 
     static let shared = RecordingCoordinator()
 
-    private let overlay = SelectionOverlayController()
+    private let overlay: SelectionOverlayController
     private let shotStore: any ShotWriting
     private let styleStore: any StyleStore
     /// 测试缝：生产环境为空时走真实首帧提取；测试只验证入库策略，不启动 AVFoundation。
     private let recordingAnchorSaver: (@MainActor (URL) async -> Void)?
+    /// 测试缝：生产环境为空时走平台弹窗；生命周期测试可只记录错误而不展示 UI。
+    private let runtimeFailurePresenter: (@MainActor (Error) -> Void)?
+    private let recorder: ScreenRecorder
     private var borderPanel: NSPanel?
     private var controlPanel: RecordingControlPanel?
     private var recordingStartDate: Date?
     private var timer: Timer?
+    private var lastHandledTerminationID: UUID?
 
     /// 暂停/继续切换进行中（stopCapture / startCapture 在途）。
     /// 期间丢弃新的暂停与停止请求，避免同一段被并发收尾。
@@ -41,21 +45,38 @@ final class RecordingCoordinator {
     init(
         shotStore: (any ShotWriting)? = nil,
         styleStore: (any StyleStore)? = nil,
-        recordingAnchorSaver: (@MainActor (URL) async -> Void)? = nil
+        recordingAnchorSaver: (@MainActor (URL) async -> Void)? = nil,
+        runtimeFailurePresenter: (@MainActor (Error) -> Void)? = nil,
+        recorder: ScreenRecorder? = nil
     ) {
+        let resolvedStyleStore = styleStore ?? AppSettings.shared
+        self.overlay = SelectionOverlayController(
+            capture: resolvedStyleStore,
+            annotationStyle: resolvedStyleStore
+        )
         self.shotStore = shotStore ?? ShotStore.shared
-        self.styleStore = styleStore ?? AppSettings.shared
+        self.styleStore = resolvedStyleStore
         self.recordingAnchorSaver = recordingAnchorSaver
+        self.runtimeFailurePresenter = runtimeFailurePresenter
+        let resolvedRecorder = recorder ?? .shared
+        self.recorder = resolvedRecorder
+        resolvedRecorder.onTermination = { [weak self] event in
+            self?.handleRecorderTermination(event)
+        }
     }
 
     /// 预览可用 Fake
     static var preview: RecordingCoordinator {
-        RecordingCoordinator(shotStore: FakeShotStore(), styleStore: FakeStyleStore())
+        RecordingCoordinator(
+            shotStore: FakeShotStore(),
+            styleStore: FakeStyleStore(),
+            recorder: ScreenRecorder()
+        )
     }
 
     /// 菜单和快捷键的唯一入口：没在录 = 开始框选，录制中或暂停中 = 停止。
     func toggle() {
-        if ScreenRecorder.shared.isRecording {
+        if recorder.isRecording {
             Task { await stopAndPresent() }
             return
         }
@@ -64,23 +85,25 @@ final class RecordingCoordinator {
 
     /// 暂停 ⇄ 继续。切换在途时的重复触发直接丢弃。
     func pauseOrResume() {
-        guard ScreenRecorder.shared.isRecording, !isTogglingPause else { return }
+        guard recorder.isRecording, !isTogglingPause else { return }
         isTogglingPause = true
         Task {
             defer { isTogglingPause = false }
             do {
-                let willPause = !ScreenRecorder.shared.isPaused
-                if ScreenRecorder.shared.isPaused {
-                    try await ScreenRecorder.shared.resume()
+                let willPause = !recorder.isPaused
+                if recorder.isPaused {
+                    try await recorder.resume()
                 } else {
-                    try await ScreenRecorder.shared.pause()
+                    try await recorder.pause()
                 }
-                setBorderPaused(ScreenRecorder.shared.isPaused)
+                setBorderPaused(recorder.isPaused)
                 // 控制条计时与菜单同步
                 freezeTimer(paused: willPause)
                 onStateChanged?()
             } catch {
                 NSLog("[MacShot] 录屏暂停/继续失败: \(error)")
+                // 运行期终止事件已经负责 UI 与错误提示，避免同一故障再弹一次。
+                guard recorder.isRecording else { return }
                 onStateChanged?()
                 presentError("无法暂停或继续录制", error)
             }
@@ -97,7 +120,7 @@ final class RecordingCoordinator {
             )
             return
         }
-        guard case .idle = ScreenRecorder.shared.state, !overlay.isActive else { return }
+        guard case .idle = recorder.state, !overlay.isActive else { return }
         // 截图流程进行中不叠加录屏，反过来 CaptureCoordinator.begin 也会查我们。
         guard !CaptureCoordinator.shared.isBusy else { return }
         guard MacScreenCapturer.shared.isPermissionGranted else {
@@ -133,13 +156,16 @@ final class RecordingCoordinator {
 
     /// 供截图工具条直接复用已选区域：跳过二次框选，直接开录
     func startDirectly(region: CGRect, display: DisplayInfo) {
-        guard !ScreenRecorder.shared.isRecording, !overlay.isActive else { return }
+        guard !recorder.isRecording, !overlay.isActive else { return }
         Task { await startRecording(region: region, display: display) }
     }
 
     private func startRecording(region: CGRect, display: DisplayInfo) async {
         do {
-            try await ScreenRecorder.shared.start(region: region, display: display)
+            try await recorder.start(region: region, display: display)
+            // 运行期失败可能恰好在 start() 返回与本任务恢复之间到达；终止事件已经收尾，
+            // 此时不能再把红框、控制条和 timer 重新挂回来。
+            guard recorder.isRecording else { return }
             lastRegion = region
             lastDisplay = display
             showBorder(around: region)
@@ -154,12 +180,10 @@ final class RecordingCoordinator {
 
     func stopAndPresent() async {
         // 暂停中按停止 = 正常收尾拼接；暂停/继续切换在途时丢弃（再按一次即可）。
-        guard ScreenRecorder.shared.isRecording, !isTogglingPause else { return }
-        hideBorder()
-        hideControls()
-        stopTimer()
+        guard recorder.isRecording, !isTogglingPause else { return }
+        teardownRecordingUI(clearMetadata: false)
         do {
-            let url = try await ScreenRecorder.shared.stop()
+            let url = try await recorder.stop()
             onStateChanged?()
             // 默认直接入库：首帧当封面，mp4 作为 recording 附件。用户明确
             // 关闭设置时才只保留文件，不能让一个看似有效的开关实际完全不生效。
@@ -169,6 +193,32 @@ final class RecordingCoordinator {
             onStateChanged?()
             NSLog("[MacShot] 录屏收尾失败: \(error)")
             presentError("录屏失败", error)
+        }
+    }
+
+    /// ScreenRecorder 的 stream/output 失败事件最终都走这里。按会话 ID 去重，确保两个
+    /// delegate 回调或迟到事件不会重复关窗、重复通知、重复弹错。
+    func handleRecorderTermination(_ event: RecordingTerminationEvent) {
+        guard lastHandledTerminationID != event.id else { return }
+        lastHandledTerminationID = event.id
+        teardownRecordingUI(clearMetadata: true)
+        onStateChanged?()
+        NSLog("[MacShot] 录屏运行期终止: \(event.error)")
+        if let runtimeFailurePresenter {
+            runtimeFailurePresenter(event.error)
+        } else {
+            presentError("录屏意外终止", event.error)
+        }
+    }
+
+    private func teardownRecordingUI(clearMetadata: Bool) {
+        isTogglingPause = false
+        hideBorder()
+        hideControls()
+        stopTimer()
+        if clearMetadata {
+            lastRegion = nil
+            lastDisplay = nil
         }
     }
 

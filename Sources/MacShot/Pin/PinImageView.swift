@@ -39,7 +39,10 @@ final class PinImageView: NSView {
         }
     }
 
-    let annotation = AnnotationState()
+    let annotation: AnnotationState
+    /// 截图行为偏好（回车语义）。注入式：装配点传窄协议切片。
+    /// PinKeyboard 扩展在别的文件读它，不能 private。
+    let capture: any CapturePreferences
 
     let base: CGImage
     /// 截图时画的标注，只读地叠在底图上。
@@ -54,8 +57,20 @@ final class PinImageView: NSView {
     /// 分析结果按当时的马赛克图层缓存 —— 撤销/重做增删了马赛克就过期。
     private var liveTextAnalysis: (pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
 
-    init(base: CGImage, layers: Layers<ImageSpace>) {
+    /// 仅供窗口生命周期与测试核对：临时退出选字可以保留分析缓存，关闭窗口后则必须全空。
+    var hasLiveTextResources: Bool {
+        liveTextOverlay != nil || liveTextAnalysis != nil
+    }
+
+    init(
+        base: CGImage,
+        layers: Layers<ImageSpace>,
+        capture: any CapturePreferences,
+        annotationStyle: any AnnotationStylePreferences
+    ) {
         self.base = base
+        self.capture = capture
+        self.annotation = AnnotationState(styleStore: annotationStyle)
         self.initialLayers = layers
         let pixelates = layers.filter { $0.kind == .pixelate }
         self.canvasImage = pixelates.isEmpty
@@ -68,6 +83,10 @@ final class PinImageView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        liveTextAnalysis?.task.cancel()
+    }
 
     /// 钉图窗口的画布空间**就是**图片像素，所以投影是恒等变换。
     /// 仍然显式走一遍，是为了让「画布空间」和「图像空间」在类型上始终分明。
@@ -109,11 +128,13 @@ final class PinImageView: NSView {
             annotation: annotation,
             scope: .pinned,
             perform: { [weak self] actionID in self?.onAction?(actionID) },
-            isLiveTextActive: { [weak self] in self?.isLiveTextActive ?? false },
-            // 不支持的机型不传 toggle → 「选字」控件整个不出现。
-            toggleLiveText: LiveTextAnalyzer.isSupported
-                ? { [weak self] in self?.toggleLiveText() }
-                : nil,
+            capabilities: ToolbarHostCapabilities(modes: LiveTextAnalyzer.isSupported ? [
+                .liveText: ToolbarHostModeCapability(
+                    isActive: { [weak self] in self?.isLiveTextActive ?? false },
+                    activate: { [weak self] in self?.enterLiveText() },
+                    deactivate: { [weak self] in self?.exitLiveText() }
+                )
+            ] : [:]),
             isActionExecuting: { [weak self] actionID in
                 self?.isActionExecuting?(actionID) ?? false
             },
@@ -409,10 +430,6 @@ final class PinImageView: NSView {
         }
     }
 
-    private func toggleLiveText() {
-        isLiveTextActive ? exitLiveText() : enterLiveText()
-    }
-
     /// 钉图后自动进入选字（PixPin 行为）：用户无需再点一次「选字」即可拖选文字。
     /// 仅当设备支持且尚未进入时触发，切换工具/穿透等仍会按原逻辑退出。
     override func viewDidMoveToWindow() {
@@ -449,6 +466,15 @@ final class PinImageView: NSView {
         liveTextOverlay = nil
         window?.makeFirstResponder(self)
         needsDisplay = true
+    }
+
+    /// 钉图窗口关闭时的最终收尾；不同于 `exitLiveText()`，缓存任务也必须取消并释放。
+    func teardownLiveText() {
+        isLiveTextActive = false
+        liveTextOverlay?.removeFromSuperview()
+        liveTextOverlay = nil
+        liveTextAnalysis?.task.cancel()
+        liveTextAnalysis = nil
     }
 
     /// 选字模式下的 ⌘C：有选中文字就复制文字（而不是整张图）。返回是否已处理。

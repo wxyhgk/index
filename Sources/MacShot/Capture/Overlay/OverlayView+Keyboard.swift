@@ -9,6 +9,12 @@ final class OverlayInteractionState {
     var focusedControlID: String?
     var widthScroll = ToolbarScrollAccumulator()
     var optionHeld = false
+    var hoveredSelectionAITask: SelectionAITaskKind?
+    var pressedSelectionAITask: SelectionAITaskKind?
+    var hoveredSelectionAIResultAction: OverlaySelectionAIResultAction?
+    var pressedSelectionAIResultAction: OverlaySelectionAIResultAction?
+    var selectionAIResultPanelConsumedMouseDown = false
+    var copiedSelectionAIFormat: SelectionAIExportFormat?
 }
 
 /// 覆盖层的键盘处理。单独成文件是因为它有自己的一套优先级规则，
@@ -90,10 +96,13 @@ extension OverlayView {
             // 「确定」键。是否覆盖剪贴板由设置决定，见 AppSettings.EnterBehavior。
             // 刻意不绑到钉图：回车最容易在「文字输入刚结束又顺手按了一下」时误触发，
             // 而误触发复制最多覆盖剪贴板，误触发钉图却会凭空多出一个窗口。
-            emit(AppSettings.shared.enterBehavior == .copyAndFinish ? ActionID.copy : ActionID.finish)
+            emit(capture.enterBehavior == .copyAndFinish ? ActionID.copy : ActionID.finish)
         case KeyCode.c where cmd:
             // 鼠标模式下选中了文字 → 复制文字；否则照常复制整张图。
             if !copyLiveTextSelection() { emit(ActionID.copy) }
+        case KeyCode.c where event.modifierFlags.contains(.shift):
+            // ⇧C：整块取字，识别选区内全部文字进剪贴板（同工具条「取字」动作）。
+            emit(ActionID.copyText)
         case KeyCode.c:
             copyPickedColor()
         case KeyCode.s where cmd:
@@ -137,6 +146,12 @@ extension OverlayView {
     @discardableResult
     private func exitEditingFromEscape() -> Bool {
         guard mode == .capture else { return false }
+        if stepBackSelectionAI() {
+            focusedControlID = nil
+            pressedControlID = nil
+            redraw()
+            return true
+        }
         let isEditing = annotation.tool != nil
             || annotation.pointerEngaged
             || annotation.isEditingText
@@ -166,6 +181,7 @@ extension OverlayView {
     private func selectTool(_ tool: AnnotationTool?) {
         guard model.phase == .confirmed else { return }
         annotation.endTextEditing()
+        toolbarContext.capabilities.deactivateAll()
         annotation.tool = tool
         // V = 主动进入鼠标模式（选字层跟着挂上）；画笔快捷键 = 离开。
         annotation.pointerEngaged = tool == nil

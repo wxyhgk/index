@@ -28,11 +28,8 @@ struct ToolbarContext {
     let scope: ActionScope
     /// 触发一个出口动作（见 `CaptureAction`）。
     let perform: (String) -> Void
-    /// 选字（Live Text）模式是否激活。
-    let isLiveTextActive: () -> Bool
-    /// 开关选字模式。设备不支持（Intel / 低版本）或宿主没接入时为 nil，
-    /// 「选字」控件据此整个不出现。
-    let toggleLiveText: (() -> Void)?
+    /// Live Text、AI 选区等不产生图层的临时画布能力。
+    let capabilities: ToolbarHostCapabilities
     /// 某个出口动作是否正在当前宿主中执行。
     let isActionExecuting: (String) -> Bool
     /// 普通图片为 nil；由 XYZ 定格得到的钉图提供三个来源动作。
@@ -42,16 +39,14 @@ struct ToolbarContext {
         annotation: AnnotationState,
         scope: ActionScope,
         perform: @escaping (String) -> Void,
-        isLiveTextActive: @escaping () -> Bool = { false },
-        toggleLiveText: (() -> Void)? = nil,
+        capabilities: ToolbarHostCapabilities = .none,
         isActionExecuting: @escaping (String) -> Bool = { _ in false },
         moleculeSourceActions: MoleculeSourceActions? = nil
     ) {
         self.annotation = annotation
         self.scope = scope
         self.perform = perform
-        self.isLiveTextActive = isLiveTextActive
-        self.toggleLiveText = toggleLiveText
+        self.capabilities = capabilities
         self.isActionExecuting = isActionExecuting
         self.moleculeSourceActions = moleculeSourceActions
     }
@@ -150,4 +145,10 @@ struct ToolbarSlot {
     let control: (any ToolbarControl)?
 
     var id: String { control?.id ?? "separator" }
+
+    /// 命中区：绘制 frame 外扩 `hitPadding`（Fitts 定律 —— 热区大于视觉区，
+    /// 小按钮更好点中）。绘制仍用 `frame`，只有命中测试用这个。
+    var hitFrame: CGRect {
+        frame.insetBy(dx: -ToolbarStyle.hitPadding, dy: -ToolbarStyle.hitPadding)
+    }
 }

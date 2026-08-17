@@ -12,92 +12,38 @@ import AppKit
 //      逐条核对见 `body` 上的注释 —— 三条旧理由现在一条都不成立了。
 //   2. **图库首页不再显示重复的底部控制条。** 显示模式已在顶栏，缩略图尺寸收进
 //      更多菜单；其他 destination 暂时保留旧胶囊，避免这一轮越界改动。
-
-enum GalleryGridChrome {
-    case standard
-    case libraryPanel
-
-    var showsFloatingToolbar: Bool { self == .standard }
-}
-
-/// 一个时间段的截图。分组在 shots 变化时算一次，不在 body 里逐帧分组。
-private struct ShotSection: Identifiable {
-    let id: String
-    let title: String
-    let shots: [Shot]
-
-    /// 按拍摄时间分成 今天 / 昨天 / 本周 / 本月 / 更早，空段不出现。
-    /// shots 已按时间降序，段内顺序自然保持。
-    static func group(_ shots: [Shot], calendar: Calendar = .current) -> [ShotSection] {
-        let now = Date()
-        var buckets: [String: [Shot]] = [:]
-        for shot in shots {
-            let date = shot.capturedAt
-            let key: String
-            if calendar.isDateInToday(date) {
-                key = "今天"
-            } else if calendar.isDateInYesterday(date) {
-                key = "昨天"
-            } else if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
-                key = "本周"
-            } else if calendar.isDate(date, equalTo: now, toGranularity: .month) {
-                key = "本月"
-            } else {
-                key = "更早"
-            }
-            buckets[key, default: []].append(shot)
-        }
-        return ["今天", "昨天", "本周", "本月", "更早"].compactMap { title in
-            buckets[title].map { ShotSection(id: title, title: title, shots: $0) }
-        }
-    }
-}
-
-/// `.task(id:)` 的廉价键。库存内容变更另有 `libraryDidChange` 强制刷新；分页只会
-/// 追加，因此数量/尾 ID 足够识别。避免每次选中或悬停导致 body 重算时都重新构造、
-/// 哈希数千个 ID 的数组。
-struct GalleryGridSnapshotKey: Equatable {
-    let presentationRevision: Int
-    let count: Int
-    let firstID: Int64?
-    let lastID: Int64?
-
-    init(presentationRevision: Int, shots: [Shot]) {
-        self.presentationRevision = presentationRevision
-        count = shots.count
-        firstID = shots.first?.id
-        lastID = shots.last?.id
-    }
-}
-
-/// 元数据和它对应的可见顺序必须一起发布，否则 SwiftUI 可能在分页帧里短暂看到
-/// “新卡片 + 旧元数据”。保留 ID 前缀也让下一页只查询新增后缀。
-struct GalleryGridMetadataSnapshot: Equatable {
-    let shotIDs: [Int64]
-    let metadata: ShotPageMetadata
-
-    static let empty = GalleryGridMetadataSnapshot(shotIDs: [], metadata: .empty)
-}
+//
+// 文件布局（按职责拆分，其余文件都是本类型的扩展或子视图）：
+//   · `GalleryGridSupport`        顶层支撑类型（时间分组/快照键/视觉预算，可独立单测）
+//   · `GalleryFloatingToolbar`    底部悬浮工具条（独立子视图）
+//   · `GalleryGrid+Card`          卡片装配、右键菜单、单张动作
+//   · `GalleryGrid+Data`          快照刷新与分页
+// 本文件保留：视图属性、列宽数学、body、网格/瀑布布局、空态、删除确认。
 
 struct GalleryGrid: View {
 
-    @ObservedObject private var store: ShotStore
-    private let viewModel: GalleryViewModel
-    @StateObject private var presentation: GalleryGridPresentation
+    /// 写访问为同类型扩展（+Card / +Data）放开；
+    /// 外部代码不直接持有 GalleryGrid 的这些依赖。
+    @ObservedObject var store: ShotStore
+    @ObservedObject var sessionLifecycle: GallerySessionLifecycle
+    let viewModel: GalleryViewModel
+    @StateObject var presentation: GalleryGridPresentation
     @ObservedObject private var imageImporter: ImageImportCoordinator
-    @ObservedObject private var selection = GallerySelection.shared
-    @ObservedObject private var batchActivity = GalleryBatchActivity.shared
+    @ObservedObject var selection = GallerySelection.shared
+    @ObservedObject var batchActivity = GalleryBatchActivity.shared
     private let scope: GalleryContentScope
     private let chrome: GalleryGridChrome
 
     init(
         store: ShotStore = .shared,
         viewModel: GalleryViewModel? = nil,
+        sessionLifecycle: GallerySessionLifecycle? = nil,
         settings: AppSettings = .shared,
         scope: GalleryContentScope = .library,
         chrome: GalleryGridChrome = .standard
     ) {
         _store = ObservedObject(wrappedValue: store)
+        _sessionLifecycle = ObservedObject(wrappedValue: sessionLifecycle ?? .shared)
         let resolvedViewModel = viewModel
             ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
         self.viewModel = resolvedViewModel
@@ -111,7 +57,8 @@ struct GalleryGrid: View {
     }
     /// 只为一个开关订阅：逐卡滚动深度（`galleryScrollDepth`）。
     /// 设置项的变更频率是「用户偶尔点一下」，用它换「关掉开关立刻生效」是划算的。
-    @ObservedObject private var settings: AppSettings
+    /// 写访问为 +Card 扩展放开（上传配置 / 滚动深度开关）。
+    @ObservedObject var settings: AppSettings
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -127,30 +74,30 @@ struct GalleryGrid: View {
     /// 就会得到「顶栏能切到、网格不认识」的静默错位，这种坑不留。
     @AppStorage("galleryLayout") private var layoutMode = GalleryLayoutKind.grid
 
-    /// 按时间段分好组的结果，随 store.shots 变化重算一次。
-    @State private var sections: [ShotSection] = []
+    /// 按时间段分好组的结果，随 store.shots 变化重算一次（+Data 扩展写它）。
+    @State var sections: [ShotSection] = []
     /// 当前可见集合的派生信息与对应 ID 一次发布。分页只查新增后缀并 merge，避免
     /// 第 N 页到来时重新读取前 N-1 页；五份独立 @State 也收敛为一次视图失效。
-    @State private var metadataSnapshot = GalleryGridMetadataSnapshot.empty
-    private var categoriesByShot: [Int64: String] { metadataSnapshot.metadata.categoriesByShot }
-    private var annotatedIDs: Set<Int64> { metadataSnapshot.metadata.annotatedShotIDs }
-    private var recordingPathsByShot: [Int64: String] { metadataSnapshot.metadata.recordingPathsByShot }
-    private var collectionSummaries: [ShotCollectionSummary] { metadataSnapshot.metadata.collectionSummaries }
-    private var collectionIDsByShot: [Int64: Set<Int64>] { metadataSnapshot.metadata.collectionIDsByShot }
+    @State var metadataSnapshot = GalleryGridMetadataSnapshot.empty
+    var categoriesByShot: [Int64: String] { metadataSnapshot.metadata.categoriesByShot }
+    var annotatedIDs: Set<Int64> { metadataSnapshot.metadata.annotatedShotIDs }
+    var recordingPathsByShot: [Int64: String] { metadataSnapshot.metadata.recordingPathsByShot }
+    var collectionSummaries: [ShotCollectionSummary] { metadataSnapshot.metadata.collectionSummaries }
+    var collectionIDsByShot: [Int64: Set<Int64>] { metadataSnapshot.metadata.collectionIDsByShot }
     /// 全选可能跨越尚未加载的分页；菜单只保存“每个专题集命中多少张”，不为
-    /// 数万张选中项构造逐图成员字典。
-    @State private var selectedCollectionMembershipCounts: [Int64: Int] = [:]
-    @State private var selectedCollectionSnapshotGeneration = -1
-    /// 右键菜单打开的时间线 / 相似 sheet。
-    @State private var timelineShot: Shot?
-    @State private var similarShot: Shot?
-    /// 单张重命名只有这一套输入框：右键和 F2 都汇入这里。
-    @State private var renameTarget: Shot?
-    @State private var renameName = ""
+    /// 数万张选中项构造逐图成员字典（+Card / +Data 扩展读写它）。
+    @State var selectedCollectionMembershipCounts: [Int64: Int] = [:]
+    @State var selectedCollectionSnapshotGeneration = -1
+    /// 右键菜单打开的时间线 / 相似 sheet（+Card 扩展写它）。
+    @State var timelineShot: Shot?
+    @State var similarShot: Shot?
+    /// 单张重命名只有这一套输入框：右键和 F2 都汇入这里（+Card 扩展写它）。
+    @State var renameTarget: Shot?
+    @State var renameName = ""
     /// 仅图库入口接受图片拖放；其它固定范围不能把新图导入后藏在范围外。
     @State private var isImportDropTargeted = false
-    @State private var hasReportedFirstPage = false
-    @State private var metadataGeneration = 0
+    @State var hasReportedFirstPage = false
+    @State var metadataGeneration = 0
 
     // MARK: 宽度派生状态
     //
@@ -177,15 +124,11 @@ struct GalleryGrid: View {
     /// 旧值是 `DS.s4`(16)，那时候图片还缩在卡面里面 4pt，视觉左边界正好对得上。
     private static let contentInset: CGFloat = DS.s2
 
-    /// 悬浮工具条：设计稿 §5 的 540 × 56。宽度是**上限**不是定值 ——
-    /// 窗口收到最小宽（1000）时中栏只剩 350 上下，写死 540 会横向溢出。
-    private static let toolbarWidth: CGFloat = 540
-    private static let toolbarHeight: CGFloat = 56
-
     /// 网格内容底部要让出的高度 = 工具条高 + 它离网格底边的距离 + 一档呼吸位。
     /// 悬浮工具条**不占布局位置**（它压在内容之上），少了这一档最后一行会被盖住。
+    /// 工具条尺寸常量在 `GalleryFloatingToolbar`（同一份，两边不各写一个字面量）。
     private var contentBottomInset: CGFloat {
-        chrome.showsFloatingToolbar ? Self.toolbarHeight + 2 * DS.s3 : DS.s5
+        chrome.showsFloatingToolbar ? GalleryFloatingToolbar.barHeight + 2 * DS.s3 : DS.s5
     }
 
     /// 列数由**外层稳定宽度**显式算出，绝不用 `.adaptive` ——
@@ -247,10 +190,11 @@ struct GalleryGrid: View {
         layoutMode == .waterfall ? 1 : columnCount
     }
 
-    /// destination 的最终可见集合。精确搜索和语义搜索共用同一个 store 数据源；
+    /// destination 的最终可见集合（+Card / +Data 扩展也读它）。
+    /// 精确搜索和语义搜索共用同一个 store 数据源；
     /// `runSemanticSearch` 已按当前固定筛选
     /// 约束候选，所以网格、键盘和批量操作不会各自维护第二份结果。
-    private var visibleShots: [Shot] {
+    var visibleShots: [Shot] {
         presentation.displayShots(fallback: store.shots)
     }
 
@@ -265,7 +209,12 @@ struct GalleryGrid: View {
             }
 
             if chrome.showsFloatingToolbar {
-                floatingToolbar
+                GalleryFloatingToolbar(
+                    viewModel: viewModel,
+                    visibleCount: visibleShots.count,
+                    layoutMode: $layoutMode,
+                    zoom: $zoom
+                )
             }
         }
         // ⚠️ 这里**故意不再铺** L0 画布（原来是一层不透明的 `underPageBackgroundColor`）。
@@ -328,6 +277,7 @@ struct GalleryGrid: View {
             GalleryKeyboard.shared.gridColumnCount = count
         }
         .task(id: GalleryGridSnapshotKey(
+            sessionGeneration: sessionLifecycle.generation,
             presentationRevision: presentation.revision,
             shots: visibleShots
         )) {
@@ -338,7 +288,12 @@ struct GalleryGrid: View {
         }
         .onReceive(store.libraryDidChangePublisher) {
             // 相同 ID 的标题/属性变化不会改变 task identity，由库存完成信号补这一轮。
-            Task { await refreshGridSnapshot(forceFullMetadata: true) }
+            sessionLifecycle.runReplacing(.gridSnapshot) {
+                await refreshGridSnapshot(forceFullMetadata: true)
+            }
+        }
+        .onReceive(sessionLifecycle.$isActive.removeDuplicates()) { isActive in
+            if !isActive { releaseSessionDerivedSnapshots() }
         }
         .onChange(of: selection.pendingRenameID) { _, requestedID in
             guard let requestedID else { return }
@@ -575,175 +530,6 @@ struct GalleryGrid: View {
         chrome == .libraryPanel ? DS.panelFill(.resting) : Color(nsColor: DS.windowBase)
     }
 
-    /// 逐卡滚动深度。规格里它是**次选**（首选是成本恒定的容器级 `scrollEdgeMask`），
-    /// 但那条在本窗口的「工具栏 + 吸顶头」结构下会把分组头本身淡掉（理由见 `grid`），
-    /// 所以这里是当前唯一的滚动边缘表达 —— 也正因如此它才必须配一个开关：
-    /// 代价 ∝ 可见卡片数，几千张的库要能关掉。
-    /// 这一层只用 opacity / scale / offset —— 绝不碰 blur：
-    /// blur 在 scrollTransition 里是「逐帧离屏渲染 × 可见卡片数」，
-    /// SwiftUI 的 .blur 动画实测能吃掉 50% CPU（等价效果走 CALayer 是 0%）。
-    /// 开关关掉时走 else 分支，效果连同 scrollTransition 一起消失（不是设成 identity 空转）。
-    /// 代价是切换开关那一下卡片会因 `_ConditionalContent` 换分支重建一次 —— 一次性的，可接受。
-    /// 无限滚动的触发器：快滚到已加载内容的末尾时，去取下一页。
-    ///
-    /// 用「倒数第几张出现」而不是「最后一张出现」：等最后一张露面才开始查，
-    /// 用户会看见一次空白等待。提前一屏（约 12 张）取，滚动是连续的。
-    ///
-    /// 触发器可以放心地多调 —— `loadNextPage` 自己挡住了「没有下一页 / 正在取」
-    /// 两种情况，所以这里不需要再记状态。
-    private func loadMoreIfNeeded(reaching shot: Shot) {
-        let loaded = store.shots
-        guard loaded.count >= 12,
-              let index = loaded.firstIndex(where: { $0.id == shot.id }),
-              index >= loaded.count - 12 else { return }
-        Task { await viewModel.loadNextPage() }
-    }
-
-    @ViewBuilder
-    private func card(for shot: Shot, height: CGFloat) -> some View {
-        if settings.galleryScrollDepth && visibleShots.count <= ShotStore.pageSize {
-            cardBody(for: shot, height: height).scrollDepth()
-        } else {
-            cardBody(for: shot, height: height)
-        }
-    }
-
-    private func refreshGridSnapshot(forceFullMetadata: Bool = false) async {
-        let shots = visibleShots
-        if presentation.semanticMode, presentation.semanticResults != nil {
-            sections = shots.isEmpty
-                ? []
-                : [ShotSection(id: "语义", title: "按相似度排序", shots: shots)]
-        } else {
-            sections = ShotSection.group(shots)
-        }
-
-        if !hasReportedFirstPage, !shots.isEmpty {
-            hasReportedFirstPage = true
-            GalleryPerformance.firstPagePublished(count: shots.count)
-        }
-
-        let ids = shots.compactMap(\.id)
-        let previous = metadataSnapshot
-        let isPureAppend = !forceFullMetadata
-            && !previous.shotIDs.isEmpty
-            && ids.count > previous.shotIDs.count
-            && ids.starts(with: previous.shotIDs)
-        let requestedIDs = isPureAppend
-            ? Array(ids.dropFirst(previous.shotIDs.count))
-            : ids
-        metadataGeneration &+= 1
-        let generation = metadataGeneration
-        let fetched = await store.pageMetadataInBackground(shotIDs: requestedIDs)
-        guard !Task.isCancelled,
-              generation == metadataGeneration,
-              ids == visibleShots.compactMap(\.id)
-        else { return }
-        let metadata = isPureAppend && metadataSnapshot.shotIDs == previous.shotIDs
-            ? previous.metadata.merging(fetched)
-            : fetched
-        metadataSnapshot = GalleryGridMetadataSnapshot(shotIDs: ids, metadata: metadata)
-    }
-
-    private func cardBody(for shot: Shot, height: CGFloat) -> some View {
-        ShotCard(
-            shot: shot,
-            height: height,
-            isSelected: selection.isSelected(shot.id),
-            isFavorite: shot.id.map(store.isFavorite) ?? false,
-            category: shot.id.flatMap { categoriesByShot[$0] },
-            isAnnotated: shot.id.map(annotatedIDs.contains) ?? false,
-            isRecording: recordingAsset(for: shot).isRecording,
-            onToggleFavorite: { store.toggleFavorite(shot) }
-        )
-        .id(shot.id)
-        .onTapGesture { handleTap(shot) }
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded {
-                // 带修饰键的双击只是两次修饰点击（toggle / 范围），不进编辑器。
-                guard currentModifiers().isEmpty else { return }
-                RecordingAssetActions.performPrimary(recordingAsset(for: shot), shotID: shot.id)
-            }
-        )
-        // 用 `onDrag` 而不是 `.draggable(_:)`，理由是**接收方兼容性**：
-        //
-        // `.draggable` 配 `FileRepresentation` 交出去的是「文件承诺」（promise）。
-        // 访达、邮件认它，但**浏览器的上传控件和多数 Office 应用只收磁盘上
-        // 真实存在的文件 URL**，拿到承诺就当没有，表现为「拖过去没反应」。
-        // 暂存卡片一直能拖进这些地方，正是因为它走 AppKit 的
-        // `NSDraggingItem(pasteboardWriter: url as NSURL)`，天生就是真 URL。
-        //
-        // `onDrag` 的闭包在**拖拽真正开始时**才执行（不是 body 求值时），
-        // 所以「载荷必须廉价」那条红线依然守得住 —— 渲染整张 PNG 一次拖拽只跑一次，
-        // 而不是每张可见卡片每帧跑一次（那是当年拖垮图库滚动的事故）。
-        .onDrag {
-            NSItemProvider(contentsOf: dragFileURL(for: shot)) ?? NSItemProvider()
-        }
-        .contextMenu {
-            // ⚠️ 这个 ViewBuilder 会在**普通渲染时**被 SwiftUI 求值，不是右键才跑 ——
-            // 在这里写任何状态（哪怕 async）都会形成「渲染→改选中→重渲染」的自激振荡
-            // （曾经的尾部卡片 20Hz 闪烁事故，选中乒乓 4 万次/分钟）。只准纯读。
-            // 右键未选中的卡不再抢选中（Finder 的预选行为放弃）：菜单项本就绑定该 shot。
-            if selection.isMultiple && selection.isSelected(shot.id) {
-                batchContextMenu()
-            } else {
-                contextMenu(for: shot)
-            }
-        } preview: {
-            CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
-                .frame(maxWidth: 480, maxHeight: 360)
-        }
-    }
-
-    /// 点击 = 单选；⌘点击 = toggle；⇧点击 = 锚点到落点的全局顺序区间。
-    /// 选中后显式让搜索框等文本输入失焦，使后续 ⌘C 走图片路径而非空文本路径。
-    private func handleTap(_ shot: Shot) {
-        guard let id = shot.id else { return }
-        let flags = currentModifiers()
-        if flags.contains(.command) {
-            selection.toggle(id)
-        } else if flags.contains(.shift) {
-            selection.selectRange(to: id, in: visibleShots.compactMap(\.id))
-        } else {
-            selection.select(only: id)
-        }
-        // SwiftUI TapGesture 不会自动移走 field editor 的 firstResponder，
-        // 若搜索框仍是 firstResponder，后续 ⌘C 会被本应让位的文本路径误判。
-        if GalleryWindowController.shared.window?.firstResponder is NSTextView {
-            GalleryWindowController.shared.window?.makeFirstResponder(nil)
-        }
-    }
-
-    /// SwiftUI 的 TapGesture 不带修饰键信息，从触发点击的 NSEvent 上取。
-    private func currentModifiers() -> NSEvent.ModifierFlags {
-        NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
-    }
-
-    /// 多选右键的批量菜单：标题带张数，动作与多选详情栏共用一套实现。
-    @ViewBuilder
-    private func batchContextMenu() -> some View {
-        let ids = selection.orderedSelectedIDs
-        let count = ids.count
-        Button(GalleryBatch.allFavorited(ids: ids) ? "取消收藏 \(count) 张" : "收藏 \(count) 张") {
-            GalleryBatch.toggleFavorites(ids: ids)
-        }
-        .disabled(batchActivity.isBusy)
-        collectionMenu(for: ids)
-        Button("复制 \(count) 张图片") {
-            Task { _ = await GalleryBatch.copyImages(ids: ids) }
-        }
-        .disabled(batchActivity.isBusy)
-        Button("导出 \(count) 张…") {
-            Task { _ = await GalleryBatch.exportAll(ids: ids) }
-        }
-        .disabled(batchActivity.isBusy)
-        Divider()
-        Button("删除 \(count) 张截图…", role: .destructive) {
-            selection.pendingDeleteIDs = ids
-        }
-        .disabled(batchActivity.isBusy)
-    }
-
     private var emptyState: some View {
         ContentUnavailableView {
             Label(emptyTitle, systemImage: emptyIcon)
@@ -799,358 +585,6 @@ struct GalleryGrid: View {
             return scopedDescription
         }
         return viewModel.searchText.isEmpty ? "按 ⌃⌘A 开始截图" : "换个关键词，或清除侧边栏筛选"
-    }
-
-    // MARK: - 底部悬浮工具条（设计稿 §5）
-
-    /// 居中悬浮的圆角胶囊，不再是贴底通栏。左边显示模式分段控件、右边缩放滑杆，
-    /// 中间留空（只有语义搜索状态会临时占用那段空白，见 `semanticStatus`）。
-    ///
-    /// 三个落地取舍：
-    ///
-    /// 1. **圆角用 `DS.radiusPanel`(14) 而不是设计稿的 16。** DS 的圆角阶梯是
-    ///    6 / 10 / 14 / 18 五档，没有 16 那一档，而 GalleryShell 的 `floatingPanel`
-    ///    文档本来就写着「小面板（图标轨、悬浮胶囊）用 `DS.radiusPanel`(14)」——
-    ///    为了 2pt 新开一档 token 不值得（而且 DesignTokens 这一轮不许改）。
-    ///
-    /// 2. **`level: .overlay`。** 这块是压在内容之上的，不是坐在窗口底色上：
-    ///    底色亮一档、浅色下阴影更重，两者都是「它离用户更近」的线索。
-    ///
-    /// 3. **只有两个图标，不是设计稿画的三个。** 理由见 `layoutPicker`。
-    private var floatingToolbar: some View {
-        HStack(spacing: DS.s3) {
-            layoutPicker
-            Spacer(minLength: DS.s2)
-            semanticStatus
-            Spacer(minLength: DS.s2)
-            zoomSlider
-        }
-        .padding(.horizontal, DS.s4)
-        .frame(height: Self.toolbarHeight)
-        .frame(maxWidth: Self.toolbarWidth)
-        .floatingPanel(radius: DS.radiusPanel, level: .overlay)
-        // 12 + GalleryView 给中栏的 12(`DS.Shell.windowMargin`) = 距窗底 24（设计稿）。
-        .padding(.bottom, DS.s3)
-    }
-
-    /// 显示模式分段控件。
-    ///
-    /// **设计稿画了三个图标（网格 / 分栏 / 列表），这里只有两个** —— 本项目真实存在的
-    /// 布局就是网格与瀑布两种，为了凑数量摆一个点了没反应（或者和网格几乎一样）的
-    /// 第三个图标是欺骗性 UI，比少一个图标糟得多。
-    ///
-    /// 「真的实现一个列表模式」在这一轮也做不成：`GalleryLayoutKind` 定义在
-    /// `GalleryTopBar.swift`，加一个 case 会同时打断那个文件里 `symbol` / `title`
-    /// 两个穷尽 switch，而那个文件本轮不在可改范围内。等它开放时再补，
-    /// 届时顶栏的分段控件会自动多出一格（它是 `ForEach(allCases)` 驱动的）。
-    ///
-    /// 布局切换是「整片内容重排」，用 standard（0.35 / 0.85）：比系统默认的 0.55 利落，
-    /// 又不像 micro 那样快到读不出内容是怎么挪的。动画包在 setter 的事务里而不是给网格
-    /// 挂常驻 `.animation(value:)` —— 后者会让网格里任何一次尺寸变化（比如缩放滑杆）
-    /// 都被顺带动画掉。
-    private var layoutPicker: some View {
-        Picker("显示模式", selection: Binding(
-            get: { layoutMode },
-            set: { newValue in
-                withAnimation(DS.Motion.standard(reduced: reduceMotion)) { layoutMode = newValue }
-            }
-        )) {
-            ForEach(GalleryLayoutKind.allCases, id: \.self) { kind in
-                Image(systemName: kind.symbol).tag(kind)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        .help("网格：整齐等高，超出裁切；瀑布：等宽不裁切，完整显示长图")
-    }
-
-    /// 缩放滑杆：左端小图标、中间滑杆、右端大图标（设计稿 §5）。
-    /// 两个图标是「更多列 / 更少列」的图示，不是按钮 —— 语义上它们是滑杆两端的标尺。
-    private var zoomSlider: some View {
-        HStack(spacing: DS.s2) {
-            Image(systemName: "square.grid.3x3")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            // maxWidth 而不是 width：窗口窄到中栏只剩几百点时，滑杆先让位，
-            // 而不是把分段控件挤出胶囊。
-            Slider(value: $zoom, in: 140...320)
-                .frame(maxWidth: 200)
-                .controlSize(.small)
-                .accessibilityLabel("缩略图大小")
-            Image(systemName: "square.grid.2x2")
-                .font(.system(size: 13))
-                .foregroundStyle(.tertiary)
-        }
-        .help("缩略图大小")
-    }
-
-    /// 语义搜索状态。设计稿的胶囊里没有这一段，但**它是唯一能报告「正在跑语义搜索」
-    /// 的地方**，删不得（设计稿没画的功能不许删）。占的是两组控件之间那段留白 ——
-    /// 平时空着，有话说时才出现，不改变两组控件的位置。
-    ///
-    /// 旧底栏那句「N 张截图」没有搬过来：`GalleryPageHeader` 的「N 个项目」是同一个
-    /// `viewModel.displayShots.count`，同屏两处报同一个数是冗余。
-    @ViewBuilder
-    private var semanticStatus: some View {
-        if viewModel.isSemanticSearching {
-            HStack(spacing: DS.s2) {
-                ProgressView().controlSize(.mini)
-                Text("语义搜索中…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        } else if viewModel.semanticMode, viewModel.semanticResults != nil {
-            Text("语义搜索：最相关的 \(visibleShots.count) 张")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-    }
-
-    @ViewBuilder
-    private func contextMenu(for shot: Shot) -> some View {
-        let recording = recordingAsset(for: shot)
-        if recording.isRecording {
-            Button(recording.availableURL == nil ? "播放录屏（文件缺失）" : "播放录屏") {
-                RecordingAssetActions.play(recording)
-            }
-            Button(recording.availableURL == nil ? "显示录屏位置（文件缺失）" : "在访达中显示录屏") {
-                RecordingAssetActions.reveal(recording)
-            }
-            Divider()
-        }
-        Button(shot.id.map(store.isFavorite) ?? false ? "取消收藏" : "收藏") {
-            store.toggleFavorite(shot)
-        }
-        .disabled(batchActivity.isBusy)
-        Button("重命名…") { beginRename(shot) }
-        if let id = shot.id {
-            collectionMenu(for: [id])
-        }
-        Button("编辑标注") { GalleryWindowMode.shared.openEditor(shotID: shot.id) }
-        Button("钉在桌面") { pin(shot) }
-        Button("复制图片") { copy(shot) }
-            .disabled(batchActivity.isBusy)
-        Divider()
-        Button("相似截图") { similarShot = shot }
-        Button("时间线") { timelineShot = shot }
-        Divider()
-        Button("出处") { openSource(of: shot) }
-            .disabled(shot.sourceURL == nil && shot.appBundleID == nil)
-        Button(recording.isRecording ? "在访达中显示封面" : "在访达中显示") {
-            SystemNavigator.revealInFinder(store.originalURL(for: shot))
-        }
-        Divider()
-        Button(recording.isRecording ? "导出封面…" : "导出…") { export(shot) }
-            .disabled(batchActivity.isBusy)
-        if !settings.uploadEndpoint.isEmpty {
-            Button("上传并复制链接") { upload(shot) }
-        }
-        Button("复制 Bug 报告") {
-            Clipboard.copy(text: BugReport.markdown(
-                shot: shot,
-                pixelWidth: shot.pixelWidth,
-                pixelHeight: shot.pixelHeight
-            ))
-        }
-        Divider()
-        Button("删除…", role: .destructive) {
-            selection.pendingDeleteIDs = shot.id.map { [$0] }
-        }
-        .disabled(batchActivity.isBusy)
-    }
-
-    private func beginRename(_ shot: Shot) {
-        renameName = shot.customTitle ?? ""
-        renameTarget = shot
-    }
-
-    private func commitRename(_ rawName: String?) {
-        guard let target = renameTarget else { return }
-        store.setCustomTitle(rawName, for: target)
-        renameTarget = nil
-    }
-
-    /// 含最新标注的成品图。导出 / 上传 / 拖出共用一个口径 —— 和暂存栏、详情页一致。
-    private func renderedImage(for shot: Shot) -> CGImage? {
-        guard let base = store.originalImage(for: shot) else { return nil }
-        return LayerRenderer.render(
-            base: base,
-            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers()
-        )
-    }
-
-    private func export(_ shot: Shot) {
-        guard let rendered = renderedImage(for: shot) else { return }
-        _ = try? ImageExporter.exportWithPanel(
-            rendered,
-            suggestedName: ImageExporter.suggestedName(for: shot)
-        )
-    }
-
-    /// 上传到自定义图床，链接进剪贴板。配置读「设置 → 上传」，和截图动作同一套。
-    private func upload(_ shot: Shot) {
-        guard let rendered = renderedImage(for: shot),
-              let png = ImageCodec.pngData(from: rendered) else { return }
-        let settings = self.settings
-        let config = UploadConfig(
-            endpoint: settings.uploadEndpoint,
-            fieldName: settings.uploadFieldName,
-            headersText: settings.uploadHeaders,
-            responsePath: settings.uploadResponsePath
-        )
-        let filename = ImageExporter.suggestedName(for: shot)
-        Task {
-            do {
-                let link = try await ImageUploader.upload(png: png, filename: filename, config: config)
-                Clipboard.copy(text: settings.uploadLinkFormat.format(link))
-                NSLog("[MacShot] 图库上传成功，链接已复制: \(link)")
-            } catch {
-                NSLog("[MacShot] 图库上传失败: \(error)")
-            }
-        }
-    }
-
-    /// 拖出卡片的载荷。**必须是廉价构造**：`.draggable` 的载荷在 body 里
-    /// 逐卡片急切求值，任何重活（读原图/渲染/写盘）放在这里都会把主线程打满 ——
-    /// 表现就是「图库滚不动、点击丢失」。渲染推迟到真正拖放时的传输闭包里做。
-    /// 拖拽用的成品 PNG 落到磁盘，返回它的 URL。
-    ///
-    /// **只在拖拽真正开始时调一次**（`onDrag` 的闭包），不是每帧。
-    /// 重活集中在这：读原图 → 合成最新修订 → 编码 → 写临时文件；
-    /// 目录复用暂存栏的拖拽临时目录，下次启动统一清理；渲染失败退回原图路径
-    /// （拖出去的至少还是这张截图，只是没有标注）。
-    private func dragFileURL(for shot: Shot) -> URL? {
-        let recording = recordingAsset(for: shot)
-        if recording.isRecording {
-            // 录屏卡片的拖拽契约是原始 MP4。文件缺失时不能偷偷退化为封面 PNG。
-            return recording.availableURL
-        }
-        let fallback = store.originalURL(for: shot)
-        guard let base = store.originalImage(for: shot) else { return fallback }
-
-        let rendered = LayerRenderer.render(
-            base: base,
-            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers()
-        )
-        guard let png = ImageCodec.pngData(from: rendered) else { return fallback }
-
-        let dir = ShelfController.dragFileDirectory
-            .appendingPathComponent(shot.sha256, isDirectory: true)
-        let url = dir.appendingPathComponent(ImageExporter.suggestedName(for: shot))
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try png.write(to: url, options: .atomic)
-            return url
-        } catch {
-            return fallback
-        }
-    }
-
-    private func recordingPath(for shot: Shot) -> String? {
-        shot.id.flatMap { recordingPathsByShot[$0] }
-    }
-
-    private func recordingAsset(for shot: Shot) -> RecordingAsset {
-        RecordingAsset(path: recordingPath(for: shot))
-    }
-
-    // 这里曾经有个 `draggedIDs`：拖拽时携带「全部选中项的 ID」，
-    // 供侧边栏「拖到标签上打标签」接收。那批投放目标在简化侧边栏时删掉了，
-    // 这条应用内通道随之没有了消费方（连同 `ShotDragFile` / `ShotIDPayload`
-    // 与那个自定义 UTType 一起移除）。将来要恢复拖放打标签，
-    // 从 git 历史里取回即可 —— 那套载荷的廉价纪律有完整注释。
-
-    /// 钉在桌面：走注册表的 pin 动作（界面层不直接建窗口），材料从图库记录重建。
-    private func pin(_ shot: Shot) {
-        guard let base = store.originalImage(for: shot) else { return }
-        let context = CaptureContext(
-            base: base,
-            layers: store.latestRevision(for: shot)?.imageLayers ?? Layers(),
-            shot: shot,
-            region: nil,
-            host: nil
-        )
-        Task { try? await CaptureActionRegistry.shared.action(id: ActionID.pin)?.perform(context) }
-    }
-
-    /// 单张复制走与 ⌘C、批量菜单**同一份**实现（`GalleryBatch.copyImages`）——
-    /// 复制的是成品（原图 + 最新修订的标注），三个入口不该有三种结果。
-    private func copy(_ shot: Shot) {
-        GalleryBatch.copyImages([shot])
-    }
-
-    @ViewBuilder
-    private func collectionMenu(for shotIDs: [Int64]) -> some View {
-        let isCurrentSelection = shotIDs.count == selection.selectedIDs.count
-            && shotIDs.allSatisfy(selection.selectedIDs.contains)
-        Menu {
-            if collectionSummaries.isEmpty {
-                Text("尚无专题集，请先到“收藏”页创建")
-            } else {
-                ForEach(collectionSummaries) { collection in
-                    let membershipKnown = !isCurrentSelection
-                        || selectedCollectionSnapshotGeneration == selection.generation
-                    let isInAll = !shotIDs.isEmpty && (
-                        isCurrentSelection
-                            ? membershipKnown
-                                && selectedCollectionMembershipCounts[collection.id] == shotIDs.count
-                            : shotIDs.allSatisfy {
-                                collectionIDsByShot[$0]?.contains(collection.id) == true
-                            }
-                    )
-                    Button {
-                        setMembership(
-                            shotIDs: shotIDs,
-                            collectionID: collection.id,
-                            remove: isInAll
-                        )
-                    } label: {
-                        Label(
-                            collection.name,
-                            systemImage: isInAll ? "checkmark" : "rectangle.stack.badge.plus"
-                        )
-                    }
-                    .disabled(!membershipKnown)
-                }
-            }
-        } label: {
-            Label("加入专题收藏集", systemImage: "rectangle.stack.badge.plus")
-        }
-        .disabled(collectionSummaries.isEmpty || shotIDs.isEmpty || batchActivity.isBusy)
-    }
-
-    private func setMembership(shotIDs: [Int64], collectionID: Int64, remove: Bool) {
-        if remove {
-            store.removeFromCollection(shotIDs: shotIDs, collectionID: collectionID)
-        } else {
-            do {
-                try store.addToCollection(shotIDs: shotIDs, collectionID: collectionID)
-            } catch {
-                NSLog("[MacShot] 加入收藏集失败: \(error)")
-            }
-        }
-        Task { await refreshSelectedCollectionMemberships() }
-    }
-
-    private func refreshSelectedCollectionMemberships() async {
-        let generation = selection.generation
-        let ids = selection.orderedSelectedIDs
-        let counts = await store.collectionMembershipCountsInBackground(shotIDs: ids)
-        guard !Task.isCancelled, generation == selection.generation else { return }
-        selectedCollectionMembershipCounts = counts
-        selectedCollectionSnapshotGeneration = generation
-    }
-
-    /// 回到出处：优先开网址（默认浏览器），否则激活来源 App。
-    private func openSource(of shot: Shot) {
-        if let source = shot.sourceURL, let url = URL(string: source) {
-            SystemNavigator.open(url: url)
-        } else if let bundleID = shot.appBundleID {
-            SystemNavigator.activateApp(bundleID: bundleID)
-        }
     }
 }
 

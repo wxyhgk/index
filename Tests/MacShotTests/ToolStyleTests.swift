@@ -129,7 +129,7 @@ final class ToolStyleTests: XCTestCase {
 
     @MainActor
     func testEachToolRemembersItsOwnStyle() {
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
 
         state.tool = .arrow
         state.setStyleIndex(2, for: .color)
@@ -147,7 +147,7 @@ final class ToolStyleTests: XCTestCase {
     /// 改文字的字号不该动到矩形的线宽 —— 这正是旧公式绑在一起的那两件事。
     @MainActor
     func testFontSizeChangeDoesNotAffectLineWidth() {
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
 
         state.tool = .rect
         state.setStyleIndex(0, for: .width)
@@ -163,7 +163,7 @@ final class ToolStyleTests: XCTestCase {
     /// 裁剪一根轴都没有：工具条上不该出现任何样式控件。
     @MainActor
     func testCropExposesNoStyleAxes() {
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = .crop
         XCTAssertTrue(state.styleAxes.isEmpty)
     }

@@ -28,6 +28,35 @@ enum RecordingError: Error, LocalizedError {
     }
 }
 
+/// 录制链路在运行期自行终止（例如显示器断开、磁盘写入失败）。同一会话的 stream / output
+/// 可能各回调一次，事件 ID 让上层可以幂等收尾。
+struct RecordingTerminationEvent {
+    let id: UUID
+    let error: Error
+}
+
+/// ScreenCaptureKit 的两个失败 delegate 可能并发到达；只允许第一个穿过。
+final class RecordingTerminationRelay {
+    private let lock = NSLock()
+    private var hasEmitted = false
+    private let handler: (Error) -> Void
+
+    init(handler: @escaping (Error) -> Void) {
+        self.handler = handler
+    }
+
+    func emit(_ error: Error) {
+        lock.lock()
+        guard !hasEmitted else {
+            lock.unlock()
+            return
+        }
+        hasEmitted = true
+        lock.unlock()
+        handler(error)
+    }
+}
+
 /// 选区录屏。SCStream 直接产 mp4 文件（`SCRecordingOutput`，macOS 15+），
 /// 不自建 AVAssetWriter 管线 —— 低版本明确报「需要 macOS 15」。
 ///
@@ -44,6 +73,7 @@ final class ScreenRecorder {
 
     enum State {
         case idle
+        case starting
         case recording(segmentStartedAt: Date)
         case paused
         case finishing
@@ -57,11 +87,15 @@ final class ScreenRecorder {
     /// macOS 15 之前拿不到 `SCRecordingOutput`，存成 AnyObject 绕开
     /// 「存储属性不能按可用性注解」的限制，用的时候在可用性块里转回来。
     private var job: AnyObject?
+    private var activeSessionID: UUID?
+
+    /// 运行期失败的一次性终止事件。RecordingCoordinator 用它立即拆窗口与计时器。
+    var onTermination: ((RecordingTerminationEvent) -> Void)?
 
     /// 录制会话进行中（含暂停）。
     var isRecording: Bool {
         switch state {
-        case .recording, .paused: return true
+        case .starting, .recording, .paused: return true
         case .idle, .finishing: return false
         }
     }
@@ -84,7 +118,13 @@ final class ScreenRecorder {
         return false
     }
 
-    private init() {}
+    /// 音频开关来源。注入式：`.shared` 入口默认走 `AppSettings.shared`，
+    /// RecordingCoordinator 可传自己的设置切片。
+    private let recording: any RecordingPreferences
+
+    init(recording: any RecordingPreferences = AppSettings.shared) {
+        self.recording = recording
+    }
 
     /// 开始录制 `display` 上的 `region`（AppKit 全局坐标，点）。
     /// 音频开关在此刻从设置定格 —— 录制中途改设置不影响本次会话。
@@ -92,16 +132,35 @@ final class ScreenRecorder {
         guard case .idle = state else { throw RecordingError.alreadyRecording }
         guard #available(macOS 15.0, *) else { throw RecordingError.unsupportedOS }
 
-        let settings = AppSettings.shared
+        let sessionID = UUID()
         let job = try RecordingJob(
             region: region,
             display: display,
             outputURL: Self.makeOutputURL(),
-            capturesSystemAudio: settings.recordSystemAudio,
-            capturesMicrophone: settings.recordMicrophone
+            capturesSystemAudio: recording.recordSystemAudio,
+            capturesMicrophone: recording.recordMicrophone,
+            onRuntimeFailure: { [weak self] error in
+                Task { @MainActor [weak self] in
+                    self?.handleRuntimeFailure(error, sessionID: sessionID)
+                }
+            }
         )
-        try await job.startSegment()
         self.job = job
+        activeSessionID = sessionID
+        state = .starting
+        do {
+            try await job.startSegment()
+        } catch {
+            if activeSessionID == sessionID {
+                resetSessionState()
+            }
+            await job.abort()
+            throw error
+        }
+        guard activeSessionID == sessionID, case .starting = state else {
+            await job.abort()
+            throw RecordingError.notRecording
+        }
         accumulated = 0
         state = .recording(segmentStartedAt: Date())
     }
@@ -134,7 +193,7 @@ final class ScreenRecorder {
             accumulated += Date().timeIntervalSince(segmentStartedAt)
         case .paused:
             break
-        case .idle, .finishing:
+        case .idle, .starting, .finishing:
             throw RecordingError.notRecording
         }
         guard #available(macOS 15.0, *), let job = job as? RecordingJob else {
@@ -144,11 +203,37 @@ final class ScreenRecorder {
 
         state = .finishing
         defer {
-            state = .idle
-            self.job = nil
-            accumulated = 0
+            resetSessionState()
         }
         return try await job.finish()
+    }
+
+    private func handleRuntimeFailure(_ error: Error, sessionID: UUID) {
+        guard activeSessionID == sessionID else { return }
+        switch state {
+        case .starting, .recording, .paused:
+            break
+        case .idle, .finishing:
+            return
+        }
+
+        let failedJob = job
+        resetSessionState()
+        onTermination?(RecordingTerminationEvent(id: sessionID, error: error))
+
+        // output 失败时 stream 仍可能活着；状态与 UI 先同步清掉，底层资源随后幂等停止。
+        Task { @MainActor in
+            if #available(macOS 15.0, *) {
+                await (failedJob as? RecordingJob)?.abort()
+            }
+        }
+    }
+
+    private func resetSessionState() {
+        state = .idle
+        job = nil
+        activeSessionID = nil
+        accumulated = 0
     }
 
     // MARK: - 输出位置
@@ -182,6 +267,7 @@ private final class RecordingJob {
     private let display: DisplayInfo
     private let capturesSystemAudio: Bool
     private let capturesMicrophone: Bool
+    private let onRuntimeFailure: (Error) -> Void
     private let partsDirectory: URL
 
     /// 已成功收尾的分段。当前录制中的段不在里面。
@@ -194,13 +280,15 @@ private final class RecordingJob {
         display: DisplayInfo,
         outputURL: URL,
         capturesSystemAudio: Bool,
-        capturesMicrophone: Bool
+        capturesMicrophone: Bool,
+        onRuntimeFailure: @escaping (Error) -> Void
     ) throws {
         self.region = region
         self.display = display
         self.outputURL = outputURL
         self.capturesSystemAudio = capturesSystemAudio
         self.capturesMicrophone = capturesMicrophone
+        self.onRuntimeFailure = onRuntimeFailure
         partsDirectory = outputURL
             .deletingLastPathComponent()
             .appendingPathComponent(".parts", isDirectory: true)
@@ -222,10 +310,21 @@ private final class RecordingJob {
             display: display,
             outputURL: url,
             capturesSystemAudio: capturesSystemAudio,
-            capturesMicrophone: capturesMicrophone
+            capturesMicrophone: capturesMicrophone,
+            onRuntimeFailure: { [weak self] session, error in
+                Task { @MainActor [weak self] in
+                    guard let self, self.current === session else { return }
+                    self.onRuntimeFailure(error)
+                }
+            }
         )
-        try await session.start()
         current = session
+        do {
+            try await session.start()
+        } catch {
+            if current === session { current = nil }
+            throw error
+        }
     }
 
     /// 停掉当前段。收尾失败（比如段极短没写出关键帧）只跳过该段。
@@ -256,6 +355,15 @@ private final class RecordingJob {
         cleanup()
         await Self.logTracks(of: outputURL)
         return outputURL
+    }
+
+    /// 运行期失败后的废弃路径：不产生成品，停止仍存活的 stream，并清掉全部分段。
+    func abort() async {
+        if let session = current {
+            current = nil
+            await session.abort()
+        }
+        cleanup()
     }
 
     private func cleanup() {
@@ -348,23 +456,34 @@ private final class RecordingSession: NSObject, SCStreamDelegate, SCRecordingOut
     private let display: DisplayInfo
     private let capturesSystemAudio: Bool
     private let capturesMicrophone: Bool
+    private let onRuntimeFailure: (RecordingSession, Error) -> Void
     private var stream: SCStream?
     private var recordingOutput: SCRecordingOutput?
     /// 录制中途的失败（磁盘满、显示器断开）。stop 时抛给调用方。
     private var runtimeError: Error?
+    private let failureLock = NSLock()
+    private var isStopping = false
+    private var terminationRelay: RecordingTerminationRelay!
 
     init(
         region: CGRect,
         display: DisplayInfo,
         outputURL: URL,
         capturesSystemAudio: Bool,
-        capturesMicrophone: Bool
+        capturesMicrophone: Bool,
+        onRuntimeFailure: @escaping (RecordingSession, Error) -> Void
     ) {
         self.region = region
         self.display = display
         self.outputURL = outputURL
         self.capturesSystemAudio = capturesSystemAudio
         self.capturesMicrophone = capturesMicrophone
+        self.onRuntimeFailure = onRuntimeFailure
+        super.init()
+        terminationRelay = RecordingTerminationRelay { [weak self] error in
+            guard let self else { return }
+            self.onRuntimeFailure(self, error)
+        }
     }
 
     func start() async throws {
@@ -428,24 +547,53 @@ private final class RecordingSession: NSObject, SCStreamDelegate, SCRecordingOut
     }
 
     func stop() async throws {
+        markStopping()
         guard let stream else {
-            if let runtimeError { throw runtimeError }
+            if let runtimeError = recordedRuntimeError() { throw runtimeError }
             return
         }
         self.stream = nil
         self.recordingOutput = nil
         // stopCapture 会等 SCRecordingOutput 把文件收尾，返回后 mp4 即完整可播。
         try await stream.stopCapture()
-        if let runtimeError { throw runtimeError }
+        if let runtimeError = recordedRuntimeError() { throw runtimeError }
     }
 
-    // MARK: - 失败回调（后台队列进来，只记录，stop 时统一抛出）
+    func abort() async {
+        markStopping()
+        guard let stream else { return }
+        self.stream = nil
+        recordingOutput = nil
+        try? await stream.stopCapture()
+    }
+
+    private func markStopping() {
+        failureLock.lock()
+        isStopping = true
+        failureLock.unlock()
+    }
+
+    private func recordedRuntimeError() -> Error? {
+        failureLock.lock()
+        defer { failureLock.unlock() }
+        return runtimeError
+    }
+
+    private func recordRuntimeFailure(_ error: Error) {
+        failureLock.lock()
+        if runtimeError == nil { runtimeError = error }
+        let shouldEmit = !isStopping
+        failureLock.unlock()
+        if shouldEmit { terminationRelay.emit(error) }
+    }
+
+    // MARK: - 失败回调（后台队列进来，一次性上报并保留错误供 stop 抛出）
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        runtimeError = error
+        recordRuntimeFailure(error)
     }
 
     func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: Error) {
-        runtimeError = error
+        recordRuntimeFailure(error)
     }
 }

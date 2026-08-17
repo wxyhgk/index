@@ -9,14 +9,14 @@ final class ToolbarLayoutTests: XCTestCase {
         super.setUp()
         // 注册表在 App 启动时才装配，测试需手动拉起
         ToolbarRegistry.registerBuiltins(into: .shared)
-        CaptureActionRegistry.registerBuiltins(into: .shared)
+        CaptureActionRegistry.registerBuiltins(into: .shared, styleStore: FakeStyleStore())
     }
 
     private func context(
         tool: AnnotationTool?,
         executingActions: Set<String> = []
     ) -> ToolbarContext {
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = tool
         // 中性态外，确保有工具时 styleAxes 非空才触发双行
         return ToolbarContext(
@@ -29,7 +29,7 @@ final class ToolbarLayoutTests: XCTestCase {
 
     func testSingleRowWhenNoStyle() {
         // 指针中性态：tool == nil 且 pointerEngaged == false → styleAxes == [] → 单行
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = nil
         state.pointerEngaged = false
         let ctx = ToolbarContext(annotation: state, scope: .capture, perform: { _ in })

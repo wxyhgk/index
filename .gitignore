@@ -4,6 +4,8 @@ build/
 Package.resolved
 .DS_Store
 .claude/
+__pycache__/
+*.pyc
 
 # SourceKit-LSP 单文件编译时会把中间产物丢在仓库根目录
 *.o

@@ -55,4 +55,22 @@ enum MetadataCollector {
         // 由 BrowserURLQueue 在截图落库之后异步回填。见 BrowserURLResolver。
         return meta
     }
+
+    /// 捕获信息层的「App 名+版本」：按窗口归因的 pid 查在跑的 App，
+    /// 版本从其 bundle 读；查不到退回 CGWindowList 的 ownerName。
+    /// 都是内存操作，只在开启效果时取一次。
+    ///
+    /// 平台读取（NSRunningApplication/Bundle）统一收在这里，
+    /// 域层其它地方不再直接摸。
+    @MainActor
+    static func appDescription(for window: WindowInfo?) -> String? {
+        guard let window else { return nil }
+        let runningApp = NSRunningApplication(processIdentifier: window.pid)
+        let version = runningApp?.bundleURL
+            .flatMap { Bundle(url: $0)?.infoDictionary?["CFBundleShortVersionString"] as? String }
+        return CaptureInfoSpec.appDescription(
+            name: runningApp?.localizedName ?? window.ownerName,
+            version: version
+        )
+    }
 }

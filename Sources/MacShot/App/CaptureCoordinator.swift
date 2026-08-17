@@ -12,11 +12,11 @@ final class CaptureCoordinator {
 
     static let shared = CaptureCoordinator()
 
-    private let overlay = SelectionOverlayController()
+    private let overlay: SelectionOverlayController
     private let sources: CaptureSourceRegistry
     private let windowListing: WindowListing
     private let screenCapturer: ScreenCapturing
-    private let shotStore: any ShotWriting
+    private let shotStore: any ShotReading & ShotWriting
     private let styleStore: any StyleStore
     private let pipeline: CapturePipeline
     private var isPreparing = false
@@ -34,24 +34,34 @@ final class CaptureCoordinator {
         sources: CaptureSourceRegistry? = nil,
         windowListing: WindowListing? = nil,
         screenCapturer: ScreenCapturing? = nil,
-        shotStore: (any ShotWriting)? = nil,
+        shotStore: (any ShotReading & ShotWriting)? = nil,
         styleStore: (any StyleStore)? = nil,
-        pipeline: CapturePipeline? = nil
+        pipeline: CapturePipeline? = nil,
+        selectionAIExecutorFactory: (@MainActor () -> SelectionAIExecutor)? = nil
     ) {
+        let resolvedStyleStore = styleStore ?? AppSettings.shared
+        self.overlay = SelectionOverlayController(
+            capture: resolvedStyleStore,
+            annotationStyle: resolvedStyleStore,
+            selectionAIExecutorFactory: selectionAIExecutorFactory ?? {
+                SelectionAIAssembly.makeExecutor(intelligence: resolvedStyleStore)
+            }
+        )
         self.sources = sources ?? .shared
         self.windowListing = windowListing ?? MacWindowLister.shared
         self.screenCapturer = screenCapturer ?? MacScreenCapturer.shared
         self.shotStore = shotStore ?? ShotStore.shared
-        self.styleStore = styleStore ?? AppSettings.shared
+        self.styleStore = resolvedStyleStore
         self.pipeline = pipeline ?? CapturePipeline.shared
     }
 
     /// 预览/测试便利：直接注入具体假实现。
     static var preview: CaptureCoordinator {
-        CaptureCoordinator(
-            shotStore: FakeShotStore(),
+        let store = FakeShotStore()
+        return CaptureCoordinator(
+            shotStore: store,
             styleStore: FakeStyleStore(),
-            pipeline: CapturePipeline(writer: ShotStoreAttributeWriter(store: FakeShotStore()))
+            pipeline: CapturePipeline(writer: ShotStoreAttributeWriter(store: store))
         )
     }
 
@@ -250,11 +260,11 @@ final class CaptureCoordinator {
                 // 派生处理全部交给流水线。协调器不知道有几个处理器、各自做什么。
                 // 新增能力不会改动这里 —— 这正是此前 OCR 和浏览器地址各写一份
                 // 「detached → 算 → MainActor.run → updateXXX」拷贝的原因。
-                pipeline.run(PostProcessInput(
+                pipeline.run(
                     shotID: id,
-                    image: image,   // 跑原图，标注可能盖住文字
+                    originalURL: shotStore.originalURL(for: shot),
                     appBundleID: metadata.appBundleID
-                ))
+                )
             }
 
             // 传底图 + 图层而非合成结果 —— 钉图窗口要靠它们继续非破坏性地画。

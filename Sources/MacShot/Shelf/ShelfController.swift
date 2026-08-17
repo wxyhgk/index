@@ -32,7 +32,30 @@ final class ShelfController {
             oldest.close()
         }
 
-        let card = ShelfCardController(image: image, shot: shot)
+        // Shelf 窗口只有 240pt 宽，不需要把 4K/5K 成品在屏幕上强持有 15 秒。
+        // 预览只留一个有界缩略图；真正拖出时再从图库的原图 + 最新修订重建成品。
+        let preview = Self.makePreview(from: image)
+        let fullImageProvider: @MainActor () -> CGImage?
+        if let shot {
+            // 这个分支刻意不捕获 `image`；否则闭包即使永远不走 fallback，
+            // 仍会让全分辨率 backing 跟卡片活满 15 秒。
+            fullImageProvider = {
+                let store = ShotStore.shared
+                guard let base = store.originalImage(for: shot) else { return nil }
+                let layers = Layers<ImageSpace>(
+                    persisted: store.latestRevision(for: shot)?.layers ?? []
+                )
+                return layers.isEmpty ? base : LayerRenderer.render(base: base, layers: layers)
+            }
+        } else {
+            // 尚未入库的临时卡片没有可重建来源，只能保留原图。
+            fullImageProvider = { image }
+        }
+        let card = ShelfCardController(
+            previewImage: preview,
+            shot: shot,
+            fullImageProvider: fullImageProvider
+        )
         cards.insert(card, at: 0)
         observeClose(of: card)
 
@@ -40,6 +63,12 @@ final class ShelfController {
         layout(animated: true)
         WindowRegistry.shared.present(card, dockIcon: false, retain: true)
         card.fadeIn()
+    }
+
+    /// Shelf 最多同时显示三张，按解码像素计也必须是常量级预算。
+    /// 480px 足够覆盖 240pt Retina 卡片；缩放失败才退回原图。
+    static func makePreview(from image: CGImage) -> CGImage {
+        ImageCodec.resized(image, maxDimension: 480) ?? image
     }
 
     private func layout(animated: Bool) {

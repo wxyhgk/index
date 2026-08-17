@@ -31,12 +31,20 @@ struct GalleryView: View {
     /// 存储订阅：编辑中的 shot 被删时退回图库。注入式，默认走 ShotStore.shared。
     @ObservedObject private var store: ShotStore
     private let viewModel: GalleryViewModel
+    /// 编辑器会话的设置切片。窗口装配点（GalleryWindowController）注入，
+    /// 沿 GalleryView → EditorModeView → EditorView → EditorModel 传递。
+    private let styleStore: any AnnotationStylePreferences
 
-    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
+    init(
+        styleStore: any AnnotationStylePreferences,
+        store: ShotStore = .shared,
+        viewModel: GalleryViewModel? = nil
+    ) {
         _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
             ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
         self.viewModel = resolvedViewModel
+        self.styleStore = styleStore
     }
 
     // ⚠️ 这里**没有** store / selection 的订阅，也**没有**任何宽度状态，两条都是有意的。
@@ -67,10 +75,9 @@ struct GalleryView: View {
             if mode.isSettings {
                 settingsMode
             } else if let shot = mode.resolveEditingShot() {
-                EditorView(shot: shot)
-                    // 换图 = 换 editingShotID；靠 identity 变化整个重建编辑器
-                    // （重新走 onAppear → load，清撤销栈，与重开行为一致）。
-                    .id(shot.id)
+                // 编辑会话按 shot ID 重建；Filmstrip 由稳定外壳保留，避免切图时
+                // 同时丢失其数据和横向滚动位置。
+                EditorModeView(shot: shot, styleStore: styleStore)
             } else {
                 gallery
             }

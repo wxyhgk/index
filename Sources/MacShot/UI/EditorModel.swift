@@ -21,7 +21,7 @@ final class EditorModel: ObservableObject {
     let annotation: AnnotationState
 
     private let store: ShotStore
-    private let styleStore: any StyleStore
+    private let styleStore: any AnnotationStylePreferences
 
     // MARK: 图像
 
@@ -59,7 +59,7 @@ final class EditorModel: ObservableObject {
     private var autoSaveTask: Task<Void, Never>?
     private var annotationSubscription: AnyCancellable?
 
-    init(shot: Shot, store: ShotStore = .shared, styleStore: any StyleStore = AppSettings.shared) {
+    init(shot: Shot, store: ShotStore = .shared, styleStore: any AnnotationStylePreferences) {
         self.shot = shot
         self.store = store
         self.styleStore = styleStore
@@ -217,12 +217,6 @@ final class EditorModel: ObservableObject {
     // MARK: - 导航
     //
     // 换图与返回图库都**先落库再走**，不再有「未保存」这个状态。
-
-    func requestSwitch(to target: Shot) {
-        guard target.id != shot.id else { return }
-        flushSave()
-        GalleryWindowMode.shared.openEditor(shotID: target.id)
-    }
 
     func requestReturnToGallery() {
         flushSave()

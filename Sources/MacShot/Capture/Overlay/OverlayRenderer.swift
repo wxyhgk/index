@@ -7,24 +7,58 @@ import AppKit
 /// `hoveredControlID`、放大镜采样等）都由调用方当帧传入；绘制只读，不写回。
 /// 若需缓存，放在调用方或 `MagnifierRenderer`/`AnnotationRenderer` 内部的
 /// 纯函数缓存里，不在 `OverlayRenderer` 自身保留。
+/// 覆盖层一帧的全部输入。宿主（`OverlayView`）每帧装配一份，渲染器只读。
+///
+/// 此前 `draw` 有 19 个平铺参数，调用点读起来像配置清单；聚合成结构体后
+/// 「一帧画什么」变成一个可传递、可断言的值。
+@MainActor
+struct OverlayRenderState {
+    let model: SelectionModel
+    let annotation: AnnotationState
+    let slots: [ToolbarSlot]
+    let toolbarContext: ToolbarContext
+    let hoveredControlID: String?
+    let pressedControlID: String?
+    let focusedControlID: String?
+    let selectionAIIsActive: Bool
+    let selectionAIRect: CGRect?
+    let selectionAITaskSlots: [OverlaySelectionAITaskSlot]
+    let hoveredSelectionAITask: SelectionAITaskKind?
+    let pressedSelectionAITask: SelectionAITaskKind?
+    let selectionAIStatus: OverlaySelectionAIExecutionStatus
+    let selectionAIResult: OverlaySelectionAIResultRenderState?
+    let isPrimaryScreen: Bool
+    let confirmHint: String?
+    let fullWindowHint: Bool
+    let magnifier: (sample: PixelSample, cursor: CGPoint)?
+}
+
 enum OverlayRenderer {
 
     @MainActor
     static func draw(
-        model: SelectionModel,
-        annotation: AnnotationState,
-        slots: [ToolbarSlot],
-        toolbarContext: ToolbarContext,
-        hoveredControlID: String?,
-        pressedControlID: String?,
-        focusedControlID: String?,
-        isPrimaryScreen: Bool,
-        confirmHint: String? = nil,
-        fullWindowHint: Bool = false,
-        magnifier: (sample: PixelSample, cursor: CGPoint)?,
+        state: OverlayRenderState,
         in bounds: CGRect,
         ctx: CGContext
     ) {
+        let model = state.model
+        let annotation = state.annotation
+        let slots = state.slots
+        let toolbarContext = state.toolbarContext
+        let hoveredControlID = state.hoveredControlID
+        let pressedControlID = state.pressedControlID
+        let focusedControlID = state.focusedControlID
+        let selectionAIIsActive = state.selectionAIIsActive
+        let selectionAIRect = state.selectionAIRect
+        let selectionAITaskSlots = state.selectionAITaskSlots
+        let hoveredSelectionAITask = state.hoveredSelectionAITask
+        let pressedSelectionAITask = state.pressedSelectionAITask
+        let selectionAIStatus = state.selectionAIStatus
+        let selectionAIResult = state.selectionAIResult
+        let isPrimaryScreen = state.isPrimaryScreen
+        let confirmHint = state.confirmHint
+        let fullWindowHint = state.fullWindowHint
+        let magnifier = state.magnifier
         // 冻结画面本身由 CALayer 承载，这里**绝不重画位图** ——
         // 拖拽时每帧重采样一张 4K 位图会直接把主线程压垮。
         // 压暗用「整屏 + 选区」的 even-odd 路径一次填充，纯平色，几乎零成本。
@@ -54,6 +88,10 @@ enum OverlayRenderer {
         // 标注画在选区内，用的是和最终导出**同一份**绘制代码，所见即所得。
         drawAnnotations(annotation, clippedTo: local, in: bounds, ctx: ctx)
 
+        if let selectionAIRect {
+            drawSelectionAI(in: selectionAIRect, ctx: ctx)
+        }
+
         let isWindowHint = model.isWindowHint
         // 悬停窗口时按住 ⌥ = 整窗捕获（不含遮挡）：紫框区分于普通的蓝框窗口选择。
         let isFullWindow = isWindowHint && fullWindowHint
@@ -73,7 +111,7 @@ enum OverlayRenderer {
 
         // 有标注工具在手时隐藏控制点，避免和画布上的操作混淆。
         // 中性态和鼠标模式都显示 —— 两种状态下拖空白处仍是调整选区。
-        if model.showsHandles && annotation.tool == nil {
+        if model.showsHandles && annotation.tool == nil && !selectionAIIsActive {
             drawHandles(in: local)
         }
 
@@ -90,6 +128,23 @@ enum OverlayRenderer {
             // plain 模式没有工具条，用一行提示告诉用户怎么确认。
             if let confirmHint {
                 drawConfirmHint(confirmHint, near: local, in: bounds)
+            }
+
+            OverlaySelectionAITaskPalette.draw(
+                slots: selectionAITaskSlots,
+                hovered: hoveredSelectionAITask,
+                pressed: pressedSelectionAITask,
+                status: selectionAIStatus
+            )
+
+            if let selectionAIResult {
+                OverlaySelectionAIResultPanel.draw(
+                    document: selectionAIResult.document,
+                    layout: selectionAIResult.layout,
+                    hovered: selectionAIResult.hovered,
+                    pressed: selectionAIResult.pressed,
+                    copied: selectionAIResult.copied
+                )
             }
         }
 
@@ -145,6 +200,18 @@ enum OverlayRenderer {
     }
 
     // MARK: - 局部元素
+
+    private static func drawSelectionAI(in rect: CGRect, ctx: CGContext) {
+        guard rect.width > 0, rect.height > 0 else { return }
+        ctx.saveGState()
+        ctx.setFillColor(NSColor.systemBlue.withAlphaComponent(0.12).cgColor)
+        ctx.fill(rect)
+        ctx.setStrokeColor(NSColor.systemBlue.cgColor)
+        ctx.setLineWidth(2)
+        ctx.setLineDash(phase: 0, lengths: [6, 4])
+        ctx.stroke(rect.insetBy(dx: 1, dy: 1))
+        ctx.restoreGState()
+    }
 
     private static func drawHint(in bounds: CGRect) {
         let text = "拖拽选区 · 单击窗口 · ⌥ 单击完整窗口 · ESC 取消"

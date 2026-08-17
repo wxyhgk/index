@@ -9,7 +9,7 @@ final class ImageExporterNameTests: XCTestCase {
         let date = try makeDate(year: 2026, month: 8, day: 13, hour: 14, minute: 32, second: 8)
 
         let name = ImageExporter.renderName(
-            template: AppSettings.defaultExportNameTemplate,
+            template: ExportPrefs.defaults.exportNameTemplate,
             date: date,
             appName: "Microsoft Edge",
             windowTitle: "A very long page title"

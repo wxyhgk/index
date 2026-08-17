@@ -15,8 +15,8 @@ final class ScrollCaptureController {
     static let shared = ScrollCaptureController()
 
     /// 与普通截图各用各的覆盖层实例，互不干扰。
-    private let overlay = SelectionOverlayController()
-    private let shotStore: any ShotWriting
+    private let overlay: SelectionOverlayController
+    private let shotStore: any ShotReading & ShotWriting
     private let pipeline: CapturePipeline
     private var session: ScrollCaptureSession?
 
@@ -24,18 +24,25 @@ final class ScrollCaptureController {
     private static let cancelHotKeyName = "cancel-scroll-capture"
 
     init(
-        shotStore: (any ShotWriting)? = nil,
+        styleStore: (any StyleStore)? = nil,
+        shotStore: (any ShotReading & ShotWriting)? = nil,
         pipeline: CapturePipeline? = nil
     ) {
+        let resolvedStyleStore = styleStore ?? AppSettings.shared
+        self.overlay = SelectionOverlayController(
+            capture: resolvedStyleStore,
+            annotationStyle: resolvedStyleStore
+        )
         self.shotStore = shotStore ?? ShotStore.shared
         self.pipeline = pipeline ?? CapturePipeline.shared
     }
 
     /// 预览可用 Fake
     static var preview: ScrollCaptureController {
-        ScrollCaptureController(
-            shotStore: FakeShotStore(),
-            pipeline: CapturePipeline(writer: ShotStoreAttributeWriter(store: FakeShotStore()))
+        let store = FakeShotStore()
+        return ScrollCaptureController(
+            shotStore: store,
+            pipeline: CapturePipeline(writer: ShotStoreAttributeWriter(store: store))
         )
     }
 
@@ -138,11 +145,11 @@ final class ScrollCaptureController {
             let shot = try shotStore.save(image: image, metadata: metadata)
 
             if let id = shot.id {
-                pipeline.run(PostProcessInput(
+                pipeline.run(
                     shotID: id,
-                    image: image,
+                    originalURL: shotStore.originalURL(for: shot),
                     appBundleID: metadata.appBundleID
-                ))
+                )
             }
 
             // 长图直接开编辑器 —— 入库 + 标注比钉一整条长图实用。

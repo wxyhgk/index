@@ -10,13 +10,23 @@ struct PinAction: CaptureAction {
     let title = "钉图"
     let symbolName = "pin.fill"
     let scopes: Set<ActionScope> = [.capture]
+    /// 钉图窗口要读的设置切片（回车语义 / 标注样式持久化）。
+    private let capture: any CapturePreferences
+    private let annotationStyle: any AnnotationStylePreferences
+
+    init(capture: any CapturePreferences, annotationStyle: any AnnotationStylePreferences) {
+        self.capture = capture
+        self.annotationStyle = annotationStyle
+    }
 
     func perform(_ context: CaptureContext) async throws {
         PinWindowController.pin(
             base: context.base,
             layers: context.layers,
             shot: context.shot,
-            at: context.region ?? .zero
+            at: context.region ?? .zero,
+            capture: capture,
+            annotationStyle: annotationStyle
         )
     }
 }
@@ -105,15 +115,19 @@ struct ScrollCaptureAction: CaptureAction {
 
 extension CaptureActionRegistry {
     /// 在这里登记。顺序即工具条上的显示顺序。
-    static func registerBuiltins(into registry: CaptureActionRegistry) {
-        registry.register(PinAction())
+    /// 注入式：装配根（AppDelegate）传全量设置，预览/测试传 `FakeStyleStore`。
+    static func registerBuiltins(
+        into registry: CaptureActionRegistry,
+        styleStore: any StyleStore
+    ) {
+        registry.register(PinAction(capture: styleStore, annotationStyle: styleStore))
         registry.register(RecordAction())
         registry.register(ScrollCaptureAction())
         registry.register(CopyAction())
         registry.register(SaveAction())
         registry.register(CopyTextAction())
         registry.register(BugReportAction())
-        registry.register(UploadAction())
+        registry.register(UploadAction(upload: styleStore))
         registry.register(CloseAction())
         registry.register(FinishAction())
     }

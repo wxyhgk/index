@@ -86,7 +86,7 @@ final class AnnotationIMETests: XCTestCase {
     // MARK: - AnnotationState markedText / displayLayers
 
     func testDisplayLayersAppendsMarkedTextInsteadOfCursor() {
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = .text
         _ = state.beginDraw(at: CGPoint(x: 10, y: 10))
         guard let id = state.editingTextID, let idx = state.layers.firstIndex(id: id) else {
@@ -109,7 +109,7 @@ final class AnnotationIMETests: XCTestCase {
     }
 
     func testMarkedTextEmptyTreatedAsNilCursor() {
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = .text
         _ = state.beginDraw(at: CGPoint(x: 0, y: 0))
         guard let id = state.editingTextID else { XCTFail(); return }
@@ -123,7 +123,7 @@ final class AnnotationIMETests: XCTestCase {
     }
 
     func testEndTextEditingClearsMarkedText() {
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = .text
         _ = state.beginDraw(at: CGPoint(x: 0, y: 0))
         state.markedText = "nihao"
@@ -136,8 +136,8 @@ final class AnnotationIMETests: XCTestCase {
 
     func testToolbarLayoutPureFunctionsCoherence() {
         ToolbarRegistry.registerBuiltins(into: .shared)
-        CaptureActionRegistry.registerBuiltins(into: .shared)
-        let state = AnnotationState()
+        CaptureActionRegistry.registerBuiltins(into: .shared, styleStore: FakeStyleStore())
+        let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = .rect
         let ctx = ToolbarContext(annotation: state, scope: .capture, perform: { _ in })
         let size = ToolbarLayout.blockSize(ctx)

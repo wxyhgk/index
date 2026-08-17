@@ -45,15 +45,15 @@ Services/Platform + Intelligence + Recording 侧挂
 | `Toolbar/` | 工具条注册：`ToolbarControl/Registry/Layout`，尺寸不依赖画布 | `ToolbarLayout` |
 | `Render/` | 唯一绘制：`LayerRenderer` | `LayerRenderer` |
 | `Storage/` | 非破坏修订：`ShotStore` + `ShotReading/Writing` 协议首刀 | `ShotStore/ShotReading` |
-| `Services/Platform` | 副作用收口：`Clipboard/ImageExporter/WindowRegistry` | `Clipboard` |
-| `Services/Intelligence` | OCR/CLIP/分类/敏感 | `VisionOCR/CLIP*` |
+| `Services/Platform` | 副作用收口：剪贴板、导出、窗口、AI HTTP/Keychain | `Clipboard/OpenAICompatibleSelectionAIProvider/SelectionAIKeychain` |
+| `Services/Intelligence` | OCR/CLIP/分类/敏感/选区智能契约 | `VisionOCR/CLIP*/SelectionAI/*` |
 | `Services/Recording` | 录屏 `ScreenRecorder/GIFExporter` | `ScreenRecorder` |
-| `Settings/` | `AppSettings` 单一真相（UserDefaults） | `AppSettings` |
+| `Settings/` | 普通配置由 `AppSettings`（UserDefaults）管理；AI 密钥只经 Keychain | `AppSettings/SelectionAISettings` |
 | `Shelf/` | 暂存卡片真文件拖拽 | `ShelfController` |
 
 ## 扩展点
 
-`CaptureSource` / `PostProcessor` / `CaptureAction` / `ToolbarControl` / `ToolDescriptor` / `EffectLayer` / `GalleryDestination`——新增即“加文件+注册一行”，不改协调器。
+`CaptureSource` / `PostProcessor` / `CaptureAction` / `ToolbarControl` / `ToolDescriptor` / `EffectLayer` / `GalleryDestination` / `SelectionAIProvider`——新增即“加文件+装配或注册一行”，不改协调器。
 
 ## 构建
 

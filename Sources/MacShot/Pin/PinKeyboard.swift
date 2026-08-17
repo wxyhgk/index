@@ -83,7 +83,7 @@ extension PinImageView {
         case KeyCode.returnKey, KeyCode.keypadEnter:
             // 和截图阶段用同一个设置。选了「完成不复制」时这里什么也不做 ——
             // 钉图已经在屏幕上了，没有别的「完成」可言。
-            if AppSettings.shared.enterBehavior == .copyAndFinish {
+            if capture.enterBehavior == .copyAndFinish {
                 onAction?(ActionID.copy)
             }
         case KeyCode.escape:

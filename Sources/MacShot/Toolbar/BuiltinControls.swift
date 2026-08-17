@@ -29,10 +29,10 @@ struct ToolControl: ToolbarControl {
         switch context.scope {
         case .capture:
             // 截图有中性态：tool == nil 且未进入鼠标模式时谁都不高亮。
-            return context.annotation.pointerEngaged
+            return context.annotation.pointerEngaged && !context.capabilities.hasActiveMode
         case .pinned:
-            // 选字模式激活时指针按钮不再高亮（两者都对应 annotation.tool == nil）。
-            return !context.isLiveTextActive()
+            // 临时画布模式激活时指针按钮不再高亮。
+            return !context.capabilities.hasActiveMode
         }
     }
 
@@ -50,6 +50,7 @@ struct ToolControl: ToolbarControl {
 
     func activate(_ context: ToolbarContext) {
         context.annotation.endTextEditing()
+        context.capabilities.deactivateAll()
         context.annotation.tool = tool
         // 点指针 = 主动进入鼠标模式；拿起画笔 = 离开。
         // 钉图/编辑器不读这个标记，行为不变（见 AnnotationState.pointerEngaged）。
@@ -78,7 +79,9 @@ struct LiveTextControl: ToolbarControl {
     /// 已收敛到鼠标模式：钉图现在与截图一致，选字并进「鼠标」不再需要独立按钮。
     /// 保留类型仅作兼容，永不显示（见 PinImageView.viewDidMoveToWindow 自动进入）。
     func isVisible(_ context: ToolbarContext) -> Bool { false }
-    func isSelected(_ context: ToolbarContext) -> Bool { false }
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.capabilities.isActive(.liveText)
+    }
     func accessibilityLabel(_ context: ToolbarContext) -> String { "选字" }
 
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
@@ -86,7 +89,7 @@ struct LiveTextControl: ToolbarControl {
     }
 
     func activate(_ context: ToolbarContext) {
-        context.toggleLiveText?()
+        context.capabilities.toggleExclusive(.liveText)
     }
 }
 
@@ -124,6 +127,7 @@ struct ShapeVariantControl: ToolbarControl {
 
     func activate(_ context: ToolbarContext) {
         context.annotation.endTextEditing()
+        context.capabilities.deactivateAll()
         context.annotation.tool = tool
         context.annotation.pointerEngaged = false
     }
@@ -564,6 +568,7 @@ extension ToolbarRegistry {
         }
 
         registry.register(LiveTextControl())
+        registry.register(SelectionAIControl())
         // PixPin：选中矩形后下行左侧出矩形/圆形两格变体
         registry.register(ShapeVariantControl(tool: .rect))
         registry.register(ShapeVariantControl(tool: .ellipse))

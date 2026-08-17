@@ -7,6 +7,20 @@ struct PostProcessInput {
     /// 未标注的原始像素。
     let image: CGImage
     let appBundleID: String?
+    /// 本次截图内共享的昂贵分析。生命周期不超过这一轮后处理。
+    let analysis: PostProcessAnalysis
+
+    init(
+        shotID: Int64,
+        image: CGImage,
+        appBundleID: String?,
+        analysis: PostProcessAnalysis? = nil
+    ) {
+        self.shotID = shotID
+        self.image = image
+        self.appBundleID = appBundleID
+        self.analysis = analysis ?? PostProcessAnalysis(image: image)
+    }
 }
 
 /// 派生属性的写入通道。

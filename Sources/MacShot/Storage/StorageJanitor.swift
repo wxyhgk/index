@@ -14,7 +14,7 @@ enum StorageJanitor {
 
     @MainActor
     static func runIfNeeded(
-        settings: any StyleStore = AppSettings.shared,
+        settings: any LibraryPreferences,
         store: any ShotReading & ShotWriting = ShotStore.shared
     ) {
         guard settings.autoCleanupEnabled else { return }
@@ -29,11 +29,5 @@ enum StorageJanitor {
         // 单事务批量删除：逐张删会在启动时打出最多 batchLimit 轮全量 reload。
         store.delete(candidates)
         NSLog("[MacShot] 存储清理：删除 \(candidates.count) 张（超过 \(days) 天、未收藏、无标签、未标注）")
-    }
-
-    /// 兼容旧调用点（具体类型）。仍走注入主路径，默认值保持 `shared`。
-    @MainActor
-    static func runIfNeeded(settings: AppSettings) {
-        runIfNeeded(settings: settings as any StyleStore, store: ShotStore.shared)
     }
 }

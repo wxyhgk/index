@@ -136,7 +136,7 @@ final class BackdropSpecTests: XCTestCase {
     /// 旧实现是整条 text 覆盖成预设名，会把它们抹掉。
     @MainActor
     func testChangingPresetKeepsShadowParams() {
-        let state = AnnotationState()
+        let state = AnnotationState(styleStore: FakeStyleStore())
         state.toggleEffect(.backdrop)
 
         // `effectText` 是私有的，从公开的图层数组读，不为测试放宽封装。

@@ -7,6 +7,8 @@
 | 文件 | 职责 |
 |---|---|
 | `ToolbarControl.swift` | `ToolbarControl` 协议（含显隐、禁用、可读标签与激活）及 `ToolbarContext / ToolbarGroup / ToolbarSlot`；`ToolbarFocusNavigator` 统一键盘焦点循环 |
+| `ToolbarHostCapabilities.swift` | Live Text、AI 选区等不产生图层的临时宿主模式；按 mode 登记并保证互斥，不向 `ToolbarContext` 继续追加成对闭包 |
+| `SelectionAIControl.swift` | AI 选区按钮本身；只有宿主提供 `.selectionAI` 能力时才出现，不认识鼠标事件、Provider 或结果面板 |
 | `BuiltinControls.swift` | 唯一登记处：`ToolControl`（标注工具）、`EffectToggleControl`（效果开关，`EffectRegistry` 驱动）、`HistoryControls`、`ActionControls` 等；样式轴侧 `ToolParamControl` 按 `ToolStyleAxisDescriptor` 的 `toolbarDraw` 生成 |
 | `ToolbarRegistry.swift` | `controls(for: scope)` 聚合注册表控件与 `CaptureActionRegistry` 展开的动作控件，按 `group+order` 排序；`MoreActionsControl` 折叠策略对所有 scope 一致 |
 | `ToolbarStyle.swift` | 行高 `rowHeight`、锚点间距 `anchorGap`、分隔线宽度 `separatorWidth` 等定值 |
@@ -32,6 +34,7 @@
 ## 交互约定
 
 - 鼠标按下只显示按压态，松开仍位于同一控件才激活；拖出取消。
+- 临时画布模式由 `ToolbarHostCapabilities` 互斥切换；拿起任一标注工具会先退出当前临时模式。
 - `Tab / Shift-Tab` 进入并循环工具栏焦点；已有焦点时左右键移动，`Space / Return` 激活，`Esc` 先退出工具栏焦点。
 - 无历史时撤销/重做固定占位但禁用，避免后方动作跳位。
 - 录屏、长截图、复制、保存、钉图保持平铺；窄屏只收起文字、保留图标。取字、问题报告、上传等低频出口收进“更多”。

@@ -189,7 +189,7 @@ final class PinToolbarView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let hit = slots.first { $0.control != nil && $0.frame.contains(point) }?.control?.id
+        let hit = slots.first { $0.control != nil && $0.hitFrame.contains(point) }?.control?.id
         if hit != hoveredControlID {
             hoveredControlID = hit
             needsDisplay = true
@@ -204,7 +204,7 @@ final class PinToolbarView: NSView {
         window?.parent?.makeKey()
 
         let point = convert(event.locationInWindow, from: nil)
-        let control = slots.first { $0.control != nil && $0.frame.contains(point) }?.control
+        let control = slots.first { $0.control != nil && $0.hitFrame.contains(point) }?.control
         // 按在控件上就是点控件，之后的拖动不算拖窗口（手滑不该把钉图挪走）。
         dragsWindow = control == nil
         if let control {
@@ -222,7 +222,7 @@ final class PinToolbarView: NSView {
         if let pressedControlID {
             let point = convert(event.locationInWindow, from: nil)
             let stillInside = slots.contains {
-                $0.control?.id == pressedControlID && $0.frame.contains(point)
+                $0.control?.id == pressedControlID && $0.hitFrame.contains(point)
             }
             let nextHover = stillInside ? pressedControlID : nil
             if nextHover != hoveredControlID {
@@ -239,7 +239,7 @@ final class PinToolbarView: NSView {
         if let pressedID = pressedControlID {
             let point = convert(event.locationInWindow, from: nil)
             let control = slots.first {
-                $0.control?.id == pressedID && $0.frame.contains(point)
+                $0.control?.id == pressedID && $0.hitFrame.contains(point)
             }?.control
             pressedControlID = nil
             hoveredControlID = control?.id

@@ -11,8 +11,10 @@ final class ShelfCardController: NSWindowController {
     private static let cardWidth: CGFloat = 240
     private static let autoCloseDelay: TimeInterval = 15
 
-    private let image: CGImage
+    private let previewImage: CGImage
     private let shot: Shot?
+    /// 仅在用户真的开始文件拖拽时解析全尺寸成品。普通的 15 秒展示期只持有缩略图。
+    private let fullImageProvider: @MainActor () -> CGImage?
     private var autoCloseTimer: Timer?
     private var isHovering = false
     private var isDragging = false
@@ -20,12 +22,17 @@ final class ShelfCardController: NSWindowController {
     /// 已写出的拖拽临时文件。同一张卡多次拖出复用同一份。
     private var dragFileURL: URL?
 
-    init(image: CGImage, shot: Shot?) {
-        self.image = image
+    init(
+        previewImage: CGImage,
+        shot: Shot?,
+        fullImageProvider: @escaping @MainActor () -> CGImage?
+    ) {
+        self.previewImage = previewImage
         self.shot = shot
+        self.fullImageProvider = fullImageProvider
 
         // 卡片宽度固定，缩略图高度按图片比例走，过宽/过高的截图夹在合理区间里。
-        let aspect = CGFloat(image.height) / CGFloat(max(image.width, 1))
+        let aspect = CGFloat(previewImage.height) / CGFloat(max(previewImage.width, 1))
         let thumbHeight = min(170, max(60, (Self.cardWidth * aspect).rounded()))
         let size = CGSize(width: Self.cardWidth, height: thumbHeight + ShelfCardView.barHeight)
 
@@ -46,7 +53,7 @@ final class ShelfCardController: NSWindowController {
         // 淡入前先全透明，避免 orderFront 的一瞬闪现。
         panel.alphaValue = 0
 
-        let view = ShelfCardView(image: image, caption: Self.caption(for: shot))
+        let view = ShelfCardView(image: previewImage, caption: Self.caption(for: shot))
         view.onClose = { [weak self] in self?.fadeOutAndClose() }
         view.onDoubleClick = { [weak self] in self?.openInGallery() }
         view.onHoverChanged = { [weak self] hovering in
@@ -142,7 +149,8 @@ final class ShelfCardController: NSWindowController {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            guard let data = ImageCodec.pngData(from: image) else { return nil }
+            guard let fullImage = fullImageProvider(),
+                  let data = ImageCodec.pngData(from: fullImage) else { return nil }
             let url = dir.appendingPathComponent(ImageExporter.suggestedName(for: shot))
             try data.write(to: url)
             dragFileURL = url

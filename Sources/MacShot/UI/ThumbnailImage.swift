@@ -108,9 +108,37 @@ private actor ThumbnailDecodeLimiter {
 
 /// 后台加载管线：同一个缓存键只解码一次，并把全局并发限制在四个任务。
 actor ThumbnailLoadPipeline {
-    private struct InFlight {
+    private final class InFlight: @unchecked Sendable {
         let task: Task<DecodedThumbnail?, Never>
-        var waiters: Set<UUID>
+        private let lock = NSLock()
+        private var waiters: Set<UUID>
+
+        init(task: Task<DecodedThumbnail?, Never>, waiterID: UUID) {
+            self.task = task
+            waiters = [waiterID]
+        }
+
+        func addWaiter(_ id: UUID) {
+            _ = lock.withLock { waiters.insert(id) }
+        }
+
+        @discardableResult
+        func removeWaiter(_ id: UUID) -> Bool {
+            let becameEmpty = lock.withLock {
+                waiters.remove(id)
+                return waiters.isEmpty
+            }
+            if becameEmpty {
+                // 必须在调用方 Task 的取消处理器内同步传播。若先异步跳回 actor，
+                // 排队任务可能抢到刚释放的名额，并在取消到达前开始不可中断解码。
+                task.cancel()
+            }
+            return becameEmpty
+        }
+
+        var isEmpty: Bool {
+            lock.withLock { waiters.isEmpty }
+        }
     }
 
     private let decoder: any ThumbnailDecoding
@@ -125,15 +153,14 @@ actor ThumbnailLoadPipeline {
     func load(url: URL, key: String) async -> DecodedThumbnail? {
         guard !Task.isCancelled else { return nil }
         let waiterID = UUID()
-        let task: Task<DecodedThumbnail?, Never>
-        if var existing = inFlight[key] {
-            existing.waiters.insert(waiterID)
-            inFlight[key] = existing
-            task = existing.task
+        let request: InFlight
+        if let existing = inFlight[key] {
+            existing.addWaiter(waiterID)
+            request = existing
         } else {
             let decoder = self.decoder
             let limiter = self.limiter
-            task = Task.detached(priority: .userInitiated) {
+            let task = Task<DecodedThumbnail?, Never>.detached(priority: .userInitiated) {
                 guard await limiter.acquire() else { return nil }
                 guard !Task.isCancelled else {
                     await limiter.release()
@@ -143,15 +170,18 @@ actor ThumbnailLoadPipeline {
                 await limiter.release()
                 return Task.isCancelled ? nil : result
             }
-            inFlight[key] = InFlight(task: task, waiters: [waiterID])
+            request = InFlight(task: task, waiterID: waiterID)
+            inFlight[key] = request
         }
 
         return await withTaskCancellationHandler {
-            let result = await task.value
-            finishWaiter(waiterID, key: key)
+            let result = await request.task.value
+            finishWaiter(waiterID, request: request, key: key)
             return Task.isCancelled ? nil : result
         } onCancel: {
-            Task { await self.cancelWaiter(waiterID, key: key) }
+            let becameEmpty = request.removeWaiter(waiterID)
+            guard becameEmpty else { return }
+            Task { await self.removeIfEmpty(request, key: key) }
         }
     }
 
@@ -160,24 +190,14 @@ actor ThumbnailLoadPipeline {
         inFlight.removeAll()
     }
 
-    private func finishWaiter(_ waiterID: UUID, key: String) {
-        guard var request = inFlight[key] else { return }
-        request.waiters.remove(waiterID)
-        if request.waiters.isEmpty {
-            inFlight.removeValue(forKey: key)
-        } else {
-            inFlight[key] = request
-        }
+    private func finishWaiter(_ waiterID: UUID, request: InFlight, key: String) {
+        request.removeWaiter(waiterID)
+        removeIfEmpty(request, key: key)
     }
 
-    private func cancelWaiter(_ waiterID: UUID, key: String) {
-        guard var request = inFlight[key] else { return }
-        request.waiters.remove(waiterID)
-        if request.waiters.isEmpty {
-            request.task.cancel()
+    private func removeIfEmpty(_ request: InFlight, key: String) {
+        if inFlight[key] === request, request.isEmpty {
             inFlight.removeValue(forKey: key)
-        } else {
-            inFlight[key] = request
         }
     }
 }
@@ -196,7 +216,10 @@ final class ThumbnailInvalidationToken: ObservableObject {
 @MainActor
 final class ThumbnailCache {
     static let shared = ThumbnailCache()
-    nonisolated static let totalCostLimit = 96 * 1024 * 1024
+    /// 约容纳两屏 Retina 缩略图。可见卡片自己还会短暂持有 NSImage，缓存预算不能
+    /// 再按整页 300 张估算，否则图库窗口与 SwiftUI 图层会同时放大峰值。
+    nonisolated static let totalCostLimit = 48 * 1024 * 1024
+    nonisolated static let countLimit = 160
 
     private let cache = NSCache<NSString, NSImage>()
     /// View 自己强持有正在显示的 token；缓存只弱引用。离屏后 token 可释放，浏览过
@@ -208,7 +231,7 @@ final class ThumbnailCache {
     private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     init(observesMemoryPressure: Bool = true) {
-        cache.countLimit = 500
+        cache.countLimit = Self.countLimit
         cache.totalCostLimit = Self.totalCostLimit
         guard observesMemoryPressure else { return }
 

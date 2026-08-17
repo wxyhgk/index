@@ -20,9 +20,31 @@ struct SensitiveRegion: Codable, Equatable {
 struct SensitiveContentDetector {
 
     func detect(in image: CGImage) async -> [SensitiveRegion] {
-        let text = await detectText(in: image)
-        let faces = await detectFaces(in: image)
-        return text + faces
+        async let recognizedText = VisionTextRecognition().recognize(in: image)
+        async let faces = detectFaces(in: image)
+        let text = sensitiveRegions(in: await recognizedText)
+        return await text + faces
+    }
+
+    func detect(in image: CGImage, recognizedText: [VisionTextLine]) async -> [SensitiveRegion] {
+        async let faces = detectFaces(in: image)
+        let text = sensitiveRegions(in: recognizedText)
+        return await text + faces
+    }
+
+    func sensitiveRegions(in lines: [VisionTextLine]) -> [SensitiveRegion] {
+        var regions: [SensitiveRegion] = []
+        for line in lines {
+            var seen: Set<String> = []
+            for candidate in line.candidates {
+                for (kind, preview) in Self.matches(in: candidate) {
+                    let identity = "\(kind)\u{0}\(preview)"
+                    guard seen.insert(identity).inserted else { continue }
+                    regions.append(SensitiveRegion(rect: line.rect, kind: kind, preview: preview))
+                }
+            }
+        }
+        return regions
     }
 
     // MARK: - 文本规则
@@ -84,55 +106,6 @@ struct SensitiveContentDetector {
             }
         )
     ]
-
-    private func detectText(in image: CGImage) async -> [SensitiveRegion] {
-        let width = CGFloat(image.width)
-        let height = CGFloat(image.height)
-
-        return await withCheckedContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, error in
-                guard error == nil,
-                      let observations = request.results as? [VNRecognizedTextObservation] else {
-                    continuation.resume(returning: [])
-                    return
-                }
-
-                var regions: [SensitiveRegion] = []
-                for observation in observations {
-                    guard let text = observation.topCandidates(1).first?.string else { continue }
-                    let matched = Self.matches(in: text)
-                    guard !matched.isEmpty else { continue }
-
-                    // Vision 的 boundingBox 是归一化坐标、左下原点、Y 朝上；
-                    // 换算成图像像素、左上原点：x/w 直接乘宽高，y 用 (1 - maxY) 翻转。
-                    let bb = observation.boundingBox
-                    let rect = CGRect(
-                        x: bb.minX * width,
-                        y: (1 - bb.maxY) * height,
-                        width: bb.width * width,
-                        height: bb.height * height
-                    )
-                    for (kind, preview) in matched {
-                        regions.append(SensitiveRegion(rect: rect, kind: kind, preview: preview))
-                    }
-                }
-                continuation.resume(returning: regions)
-            }
-
-            request.recognitionLevel = .accurate
-            // 密钥 / 卡号是字符级内容，语言纠错反而会「修正」它们。
-            request.usesLanguageCorrection = false
-            request.recognitionLanguages = ["zh-Hans", "en-US"]
-
-            let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                NSLog("[MacShot] 敏感内容文字检测失败: \(error)")
-                continuation.resume(returning: [])
-            }
-        }
-    }
 
     /// 对一段识别文本跑全部规则，返回命中的 (种类, 脱敏摘要)。
     /// 同一段文字里同种类的重复命中只记一次 —— 框是整个 observation，重复没有意义。

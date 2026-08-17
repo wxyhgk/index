@@ -2,7 +2,7 @@ import AppKit
 
 /// OCR 取字：框一块屏幕 → 里面的文字直接进剪贴板，一步完成。
 ///
-/// 只在截图工具条上出现 —— 钉图窗口里同一张图早已入库，
+/// 只在截图工具条上出现（快捷键 ⇧C）—— 钉图窗口里同一张图早已入库，
 /// 后台 OCR 的结果在图库详情栏里可以整段选中复制。
 struct CopyTextAction: CaptureAction {
     let id = ActionID.copyText

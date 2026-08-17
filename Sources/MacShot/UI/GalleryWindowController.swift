@@ -11,12 +11,14 @@ final class GalleryWindowController: NSWindowController {
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
     private var closeObserver: NSObjectProtocol?
-    private var reloadTask: Task<Void, Never>?
+    private var closeFinalizationTask: Task<Void, Never>?
 
     private init() {
         // 没有 `sceneBridgingOptions = [.toolbars]` 了：窗口不再有工具栏，
         // 顶栏（logo / 搜索 / 控件组）整条由 SwiftUI 自绘，见 GalleryTopBar。
-        let hosting = NSHostingController(rootView: GalleryView())
+        let hosting = NSHostingController(
+            rootView: GalleryView(styleStore: AppSettings.shared)
+        )
 
         let window = NSWindow(contentViewController: hosting)
         // 标题**藏起来但不清空**：窗口菜单、Mission Control、⌘` 切窗都读它，
@@ -74,8 +76,20 @@ final class GalleryWindowController: NSWindowController {
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
-                GalleryWindowController.shared.reloadTask?.cancel()
-                ThumbnailLoader.shared.suspendAndClear()
+                let controller = GalleryWindowController.shared
+                controller.closeFinalizationTask?.cancel()
+                controller.closeFinalizationTask = GallerySessionLifecycle.shared.closeAfterExitingView(
+                    exitView: {
+                        // 编辑器的正常退出路径会在 onDisappear 立即 flushSave。
+                        // 不先切回图库就 suspend 缩略图，会把资源回收抢在落库前面。
+                        if GalleryWindowMode.shared.isEditing {
+                            GalleryWindowMode.shared.returnToGallery()
+                        }
+                    },
+                    releaseThumbnails: {
+                        ThumbnailLoader.shared.suspendAndClear()
+                    }
+                )
             }
         }
     }
@@ -155,6 +169,9 @@ final class GalleryWindowController: NSWindowController {
 
     func show(selecting shot: Shot? = nil) {
         GalleryPerformance.galleryOpen()
+        closeFinalizationTask?.cancel()
+        closeFinalizationTask = nil
+        GallerySessionLifecycle.shared.begin()
         ThumbnailLoader.shared.resume()
         if let shot {
             // 定位类场景：清空多选后单选目标。
@@ -163,8 +180,7 @@ final class GalleryWindowController: NSWindowController {
         WindowRegistry.shared.present(self, dockIcon: true)
         // 窗口先响应用户，再在 DatabasePool 的读连接上建立当前查询观察。
         // 多次 show 时取消旧等待；ShotStore 自己的 generation 会丢弃迟到快照。
-        reloadTask?.cancel()
-        reloadTask = Task {
+        GallerySessionLifecycle.shared.runReplacing(.initialReload) {
             await GalleryViewModel.shared.reloadInBackground()
         }
     }

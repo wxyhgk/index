@@ -1,6 +1,65 @@
 import SwiftUI
 import AppKit
 
+/// 稳定外壳与当前编辑会话之间唯一的一条命令通道。
+///
+/// Filmstrip 已经移到会话 `.id` 之外，但切图仍必须保持原来的“先落库再换图”顺序。
+/// relay 只暂存当前会话的 flush 闭包；shot ID 校验防止旧会话的 onDisappear 清掉
+/// 刚安装的新会话。
+@MainActor
+final class EditorSessionRelay: ObservableObject {
+    private var shotID: Int64?
+    private var flushAction: (() -> Void)?
+
+    func install(shotID: Int64?, flush: @escaping () -> Void) {
+        self.shotID = shotID
+        flushAction = flush
+    }
+
+    func flush(shotID: Int64?) {
+        guard self.shotID == shotID else { return }
+        flushAction?()
+    }
+
+    func remove(shotID: Int64?) {
+        guard self.shotID == shotID else { return }
+        self.shotID = nil
+        flushAction = nil
+    }
+}
+
+/// 编辑模式的稳定外壳。
+///
+/// 只有真正依赖 `shot` 的编辑会话按 ID 重建；Filmstrip 留在外面保持自己的
+/// 横向滚动位置。此前 `.id(shot.id)` 套在整个 `EditorView` 上，点一张缩略图会把
+/// Filmstrip 一起销毁，再从空数组加载并把当前项强制居中，看起来就像其它图片消失。
+struct EditorModeView: View {
+    let shot: Shot
+    let styleStore: any AnnotationStylePreferences
+    @StateObject private var sessionRelay = EditorSessionRelay()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            EditorView(shot: shot, sessionRelay: sessionRelay, styleStore: styleStore)
+                .id(shot.id)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            EditorFilmstrip(
+                currentShotID: shot.id,
+                onSelect: switchEditor
+            )
+            .equatable()
+        }
+        .frame(minWidth: 900, minHeight: 620)
+    }
+
+    private func switchEditor(to target: Shot) {
+        guard target.id != shot.id else { return }
+        sessionRelay.flush(shotID: shot.id)
+        GalleryWindowMode.shared.openEditor(shotID: target.id)
+    }
+}
+
 /// 非破坏性标注编辑器。
 /// 画布上的一切都是图层；保存时只是往 revision 表追加一条记录，原图字节永远不变。
 ///
@@ -23,13 +82,15 @@ struct EditorView: View {
     /// 编辑器的共享状态：底图、缩放、修订链、自动保存 —— 各块子视图都要看到的那部分。
     /// 只属于某一块的（画布的拖拽阶段、平移位置、面板的 tab）不放进去。
     @StateObject private var model: EditorModel
+    private let sessionRelay: EditorSessionRelay?
 
     /// 标注状态机。真正的持有者是 model，这里只是个转发，省得满篇 `model.annotation`。
     private var annotation: AnnotationState { model.annotation }
 
-    init(shot: Shot) {
+    init(shot: Shot, sessionRelay: EditorSessionRelay? = nil, styleStore: any AnnotationStylePreferences) {
         self.shot = shot
-        _model = StateObject(wrappedValue: EditorModel(shot: shot))
+        self.sessionRelay = sessionRelay
+        _model = StateObject(wrappedValue: EditorModel(shot: shot, styleStore: styleStore))
     }
 
     /// 一次画布拖拽在做什么。`idle` 表示这次按下不产生后续（点空处取消选中等）。
@@ -74,23 +135,19 @@ struct EditorView: View {
             }
             Divider()
             bottomBar
-            // `.equatable()`：胶片条只在**换了编辑对象**时才重算。
-            // 没有它的话，闭包参数会让 SwiftUI 认定「可能变了」，
-            // 于是画一笔的每一帧都连带重算整条胶片条（见 EditorFilmstrip 的注释）。
-            EditorFilmstrip(currentShotID: shot.id, onSelect: requestSwitch)
-                .equatable()
         }
-        .frame(minWidth: 900, minHeight: 620)
         .background(hiddenShortcuts)
         .onAppear {
             model.load()
             spaceMonitor.install()
+            sessionRelay?.install(shotID: shot.id) { model.flushSave() }
         }
         .onDisappear {
             spaceMonitor.remove()
             // 视图消失（换图重建、窗口关闭、切到别的顶层选项）时**立即**落库，
             // 不等节流 —— 节流任务会随视图一起没掉，等不到它自己触发。
             model.flushSave()
+            sessionRelay?.remove(shotID: shot.id)
         }
         .onChange(of: model.zoomLevel) { _, newValue in
             // 适应窗口态没有可平移空间，抓手模式随之退场（按钮也已置灰）。
@@ -579,14 +636,6 @@ struct EditorView: View {
 
     // 自动保存（节流、立即冲、内容比对）整段搬进了 `EditorModel` ——
     // 它是数据生命周期，不是视图。
-
-    /// 胶片条点击换图。先把当前画布落库，再换 `editingShotID` ——
-    /// 宿主（GalleryView）挂了 `.id(shot.id)`，identity 变化即重建本视图完成切换。
-    private func requestSwitch(to target: Shot) {
-        guard target.id != shot.id else { return }
-        model.flushSave()
-        GalleryWindowMode.shared.openEditor(shotID: target.id)
-    }
 
     /// 左上「‹ 图库」/ 底部「返回图库」/ Esc：落库后整窗切回图库模式。
     private func requestReturnToGallery() {

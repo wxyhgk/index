@@ -7,7 +7,8 @@ final class ThumbnailLoadingTests: XCTestCase {
     func testDecodedCostUsesPixelMemoryInsteadOfCompressedByteCount() {
         XCTAssertEqual(ThumbnailCache.decodedCost(width: 640, height: 360), 921_600)
         XCTAssertEqual(ThumbnailCache.decodedCost(width: 0, height: 360), 0)
-        XCTAssertEqual(ThumbnailCache.totalCostLimit, 96 * 1024 * 1024)
+        XCTAssertEqual(ThumbnailCache.totalCostLimit, 48 * 1024 * 1024)
+        XCTAssertEqual(ThumbnailCache.countLimit, 160)
     }
 
     @MainActor

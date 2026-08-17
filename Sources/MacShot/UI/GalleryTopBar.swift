@@ -495,14 +495,14 @@ private struct DestinationTab: View {
     // GalleryTopBar 预览：用 FakeStyleStore 验证 StyleStore 注入在 Preview 下可用
     let style: FakeStyleStore = {
         let s = FakeStyleStore()
-        s.semanticSearch = true
-        s.uploadEndpoint = "https://example.com/upload"
+        s.intelligence.semanticSearch = true
+        s.upload.uploadEndpoint = "https://example.com/upload"
         return s
     }()
     VStack(spacing: 12) {
         Text("GalleryTopBar · StyleStore").font(.headline)
-        Text("upload: \(style.uploadEndpoint)").font(.caption).foregroundStyle(.secondary)
-        Text("semantic: \(style.semanticSearch ? "开" : "关")").font(.caption)
+        Text("upload: \(style.upload.uploadEndpoint)").font(.caption).foregroundStyle(.secondary)
+        Text("semantic: \(style.intelligence.semanticSearch ? "开" : "关")").font(.caption)
     }
     .padding()
     .frame(width: 400)

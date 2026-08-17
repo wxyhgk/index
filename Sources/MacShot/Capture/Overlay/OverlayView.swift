@@ -19,9 +19,14 @@ final class OverlayView: NSView {
     var finishOnConfirm = false
 
     let model: SelectionModel
-    let annotation = AnnotationState()
+    let annotation: AnnotationState
     /// plain 模式（录屏选区）：无工具条、无标注，回车 / 双击选区返回。
     let mode: SelectionMode
+    /// 截图行为偏好（放大镜 / 回车语义）。注入式：装配点传窄协议切片。
+    /// 键盘/放大镜扩展在别的文件读它，不能 private。
+    let capture: any CapturePreferences
+    /// 标注样式持久化通道（水印 / 底壳 / 工具样式）。
+    private let annotationStyle: any AnnotationStylePreferences
 
     private let isPrimaryScreen: Bool
     private let imageLayer = CALayer()
@@ -39,6 +44,10 @@ final class OverlayView: NSView {
     let magnifierState = OverlayMagnifierState()
     /// 选字层宿主：容器视图、系统覆盖层与预跑分析任务。
     let liveTextHost = LiveTextOverlayHost()
+    /// AI 选区宿主：共享状态机 + Capture 坐标薄适配。
+    let selectionAIHost = OverlaySelectionAIHost()
+    /// AI 请求状态独立持有，不塞进几何会话。
+    let selectionAIExecution: OverlaySelectionAIExecution
 
     // 兼容访问：外部仍可读事件路由关心的派生状态，存储已下沉至对应小组件。
     var isLiveTextActive: Bool { liveTextHost.isActive }
@@ -55,21 +64,32 @@ final class OverlayView: NSView {
     var optionHeld: Bool { get { interactionState.optionHeld } set { interactionState.optionHeld = newValue } }
 
     /// 整窗捕获只在正式截图模式下开放 —— 录屏选区和滚动截图只要一个矩形。
-    private var allowsFullWindowCapture: Bool {
+    /// gesture target 经 `OverlayGestureHost` 读它，不能 private。
+    var allowsFullWindowCapture: Bool {
         mode == .capture && !finishOnConfirm
     }
+
+    /// 事件路由器：鼠标五事件的全部优先级逻辑在这里（见 `OverlayInteractionRouter`）。
+    let router = OverlayInteractionRouter(targets: OverlayInteractionRouter.defaultTargets())
 
     var geometry: OverlayGeometry {
         OverlayGeometry(bounds: bounds, displayOrigin: model.bounds.origin)
     }
 
     var toolbarContext: ToolbarContext {
-        // 截图工具条没有独立「选字」控件（选字并进了鼠标模式），
-        // 不需要传 isLiveTextActive / toggleLiveText。
         ToolbarContext(
             annotation: annotation,
             scope: .capture,
-            perform: { [weak self] actionID in self?.emit(actionID) }
+            perform: { [weak self] actionID in self?.emit(actionID) },
+            capabilities: mode == .capture && !finishOnConfirm
+                ? ToolbarHostCapabilities(modes: [
+                    .selectionAI: ToolbarHostModeCapability(
+                        isActive: { [weak self] in self?.selectionAIHost.isActive ?? false },
+                        activate: { [weak self] in self?.activateSelectionAI() },
+                        deactivate: { [weak self] in self?.deactivateSelectionAI() }
+                    )
+                ])
+                : .none
         )
     }
 
@@ -88,10 +108,46 @@ final class OverlayView: NSView {
         )
     }
 
-    init(model: SelectionModel, isPrimaryScreen: Bool, mode: SelectionMode = .capture) {
+    /// 一帧的全部绘制输入。`chrome.render` 与任何想「看当前画面状态」的
+    /// 调用方都从这里取，不再各自拼 19 个参数。
+    var renderState: OverlayRenderState {
+        OverlayRenderState(
+            model: model,
+            annotation: annotation,
+            slots: slots,
+            toolbarContext: toolbarContext,
+            hoveredControlID: hoveredControlID,
+            pressedControlID: pressedControlID,
+            focusedControlID: focusedControlID,
+            selectionAIIsActive: selectionAIHost.isActive,
+            selectionAIRect: selectionAIViewRect,
+            selectionAITaskSlots: selectionAITaskSlots,
+            hoveredSelectionAITask: interactionState.hoveredSelectionAITask,
+            pressedSelectionAITask: interactionState.pressedSelectionAITask,
+            selectionAIStatus: selectionAIExecution.status,
+            selectionAIResult: selectionAIResultRenderState,
+            isPrimaryScreen: isPrimaryScreen,
+            confirmHint: mode == .plain ? "⏎ 开始录制 · 双击选区 · ⎋ 取消" : nil,
+            fullWindowHint: optionHeld && allowsFullWindowCapture,
+            magnifier: magnifierPayload
+        )
+    }
+
+    init(
+        model: SelectionModel,
+        isPrimaryScreen: Bool,
+        mode: SelectionMode = .capture,
+        capture: any CapturePreferences,
+        annotationStyle: any AnnotationStylePreferences,
+        selectionAIExecution: OverlaySelectionAIExecution? = nil
+    ) {
         self.model = model
         self.isPrimaryScreen = isPrimaryScreen
         self.mode = mode
+        self.capture = capture
+        self.annotationStyle = annotationStyle
+        self.annotation = AnnotationState(styleStore: annotationStyle)
+        self.selectionAIExecution = selectionAIExecution ?? OverlaySelectionAIExecution()
         super.init(frame: .zero)
 
         // 覆盖层画布是显示器的点；测量标注要报图像像素，倍率从冻结快照取。
@@ -99,12 +155,17 @@ final class OverlayView: NSView {
         // 截图从中性态开始：确认选区后没有任何工具高亮，拖拽只调整选区；
         // 点「鼠标」按钮（或按 V）才进入指针模式（图层可选 + 选字）。
         annotation.pointerEngaged = false
+        // 记住上次使用的工具：键盘与工具条两条选工具路径都改 `annotation.tool`，
+        // 经这个回调落盘；确认选区后由 `restoreLastTool()` 恢复。指针（nil）不记。
+        annotation.onToolChanged = { [weak self] tool in
+            guard let tool else { return }
+            self?.capture.lastToolID = tool.id
+        }
         // 效果层的注入上下文（覆盖层这一处，与钉图/编辑器同一契约）。
         // 闭包按开关那一刻取值：成品宽 = 选区宽（点）× 缩放倍率；
         // 元数据从确认选区时的窗口归因取（浏览器 URL 是落库后异步回填的，
         // 此刻还没有 → 留空）；捕获时刻不注入 —— 截图那一刻就是当下。
-        annotation.effectContext = { [model] in
-            let style = AppSettings.shared
+        annotation.effectContext = { [model, annotationStyle] in
             var context = EffectContext()
             context.imagePixelWidth =
                 Double((model.confirmedRect?.width ?? 0) * model.snapshot.scale)
@@ -112,13 +173,13 @@ final class OverlayView: NSView {
                 Double((model.confirmedRect?.height ?? 0) * model.snapshot.scale)
             context.windowTitle = model.confirmedWindow?.title
             context.appDescription = Self.captureInfoApp(for: model.confirmedWindow)
-            context.watermarkText = style.watermarkText
-            context.watermarkMode = style.watermarkMode
-            context.watermarkAlpha = style.watermarkAlpha
-            context.backdropPaddingRatio = style.backdropPaddingRatio
-            context.backdropCornerRatio = style.backdropCornerRatio
-            context.backdropShadowRatio = style.backdropShadowRatio
-            context.backdropShadowAlpha = style.backdropShadowAlpha
+            context.watermarkText = annotationStyle.watermarkText
+            context.watermarkMode = annotationStyle.watermarkMode
+            context.watermarkAlpha = annotationStyle.watermarkAlpha
+            context.backdropPaddingRatio = annotationStyle.backdropPaddingRatio
+            context.backdropCornerRatio = annotationStyle.backdropCornerRatio
+            context.backdropShadowRatio = annotationStyle.backdropShadowRatio
+            context.backdropShadowAlpha = annotationStyle.backdropShadowAlpha
             return context
         }
 
@@ -132,23 +193,10 @@ final class OverlayView: NSView {
         layer?.addSublayer(imageLayer)
 
         chrome.render = { [unowned self] ctx, bounds in
-            OverlayRenderer.draw(
-                model: self.model,
-                annotation: self.annotation,
-                slots: self.slots,
-                toolbarContext: self.toolbarContext,
-                hoveredControlID: self.hoveredControlID,
-                pressedControlID: self.pressedControlID,
-                focusedControlID: self.focusedControlID,
-                isPrimaryScreen: self.isPrimaryScreen,
-                confirmHint: self.mode == .plain ? "⏎ 开始录制 · 双击选区 · ⎋ 取消" : nil,
-                fullWindowHint: self.optionHeld && self.allowsFullWindowCapture,
-                magnifier: self.magnifierPayload,
-                in: bounds,
-                ctx: ctx
-            )
+            OverlayRenderer.draw(state: renderState, in: bounds, ctx: ctx)
         }
         addSubview(chrome)
+        self.selectionAIExecution.onChange = { [weak self] in self?.redraw() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -226,40 +274,7 @@ final class OverlayView: NSView {
     // MARK: - 鼠标
 
     override func mouseMoved(with event: NSEvent) {
-        switch model.phase {
-        case .confirmed:
-            let local = localPoint(of: event)
-            let hit = slots.first { $0.control != nil && $0.frame.contains(local) }?.control?.id
-            if hit != hoveredControlID {
-                hoveredControlID = hit
-                redraw()
-            }
-            if hit != nil {
-                NSCursor.arrow.set()
-            } else if let overlay = liveTextOverlay,
-                      overlay.hasInteractiveItem(at: overlay.convert(local, from: self)) {
-                // 鼠标模式：文字上的光标（I-beam）由系统选字层自己管，这里不抢。
-            } else if annotation.tool != nil {
-                NSCursor.crosshair.set()
-            } else if annotation.pointerEngaged,
-                      model.confirmedRect?.contains(geometry.global(fromViewLocal: local)) == true,
-                      let handle = annotation.resizeHandle(
-                          at: geometry.annotationPoint(fromViewLocal: local)
-                      ) {
-                // 鼠标模式下，选中图层的缩放控制点优先于选区自身的控制点 ——
-                // 命中顺序和 mouseDown 一致；中性态不做图层命中。
-                handle.cursor.set()
-            } else {
-                cursor(for: model.handle(at: geometry.global(fromViewLocal: local))).set()
-            }
-        case .idle:
-            NSCursor.crosshair.set()
-            model.hover(at: NSEvent.mouseLocation)
-            updateCursor(localPoint(of: event))
-            redraw()
-        case .dragging, .adjusting:
-            break
-        }
+        router.mouseMoved(local: localPoint(of: event), event: event, host: self)
     }
 
     /// ⌥ 按下 / 松开要立刻反映到窗口高亮上（紫框 ↔ 蓝框），所以监听 flagsChanged。
@@ -278,160 +293,17 @@ final class OverlayView: NSView {
         handle?.cursor ?? .crosshair
     }
 
-    /// 捕获信息层的「App 名+版本」：按窗口归因的 pid 查在跑的 App，版本从其
-    /// bundle 读（和 `MetadataCollector.collect` 同一取法）；查不到退回
-    /// CGWindowList 的 ownerName。只在开启效果时取一次，都是内存操作。
+    /// 捕获信息层的「App 名+版本」。平台读取收在 `MetadataCollector`。
     private static func captureInfoApp(for window: WindowInfo?) -> String? {
-        guard let window else { return nil }
-        let runningApp = NSRunningApplication(processIdentifier: window.pid)
-        let version = runningApp?.bundleURL
-            .flatMap { Bundle(url: $0)?.infoDictionary?["CFBundleShortVersionString"] as? String }
-        return CaptureInfoSpec.appDescription(
-            name: runningApp?.localizedName ?? window.ownerName,
-            version: version
-        )
+        MetadataCollector.appDescription(for: window)
     }
 
     override func mouseDown(with event: NSEvent) {
-        let local = localPoint(of: event)
-
-        // 工具条命中优先
-        if model.phase == .confirmed,
-           let control = slots.first(where: { $0.control != nil && $0.frame.contains(local) })?.control {
-            // 禁用控件也记录按下，以便 mouseUp 被工具条消费；是否执行在松开时判断。
-            pressedControlID = control.id
-            hoveredControlID = control.id
-            focusedControlID = control.id
-            redraw()
-            return
-        }
-
-        let global = geometry.global(fromViewLocal: local)
-        hoveredControlID = nil
-        focusedControlID = nil
-
-        // ⌥+单击窗口 = 整窗捕获（不含遮挡），不进标注阶段，直接完成。
-        if allowsFullWindowCapture, model.phase == .idle,
-           event.modifierFlags.contains(.option) {
-            // 这块屏可能因为别的屏正在操作而被标记 inactive（hover 会被吞掉）——
-            // 用户既然点到这里了，就把它激活。
-            model.setInactive(false)
-            model.hover(at: global)
-            if let window = model.hoveredWindow {
-                emitFullWindow(window)
-                return
-            }
-        }
-
-        // plain 模式（录屏选区）：双击选区内部 = 确认返回。
-        if mode == .plain, model.phase == .confirmed, event.clickCount == 2,
-           model.confirmedRect?.contains(global) == true {
-            emit(ActionID.finish)
-            return
-        }
-
-        // 手上有标注工具时，选区内的拖拽是画标注，不是调整选区
-        if model.phase == .confirmed,
-           annotation.tool != nil,
-           let selection = model.confirmedRect, selection.contains(global) {
-            annotation.beginDraw(at: geometry.annotationPoint(fromViewLocal: local))
-            redraw()
-            return
-        }
-
-        // 有工具在手却点在选区外：忽略，避免误删已画的内容
-        if annotation.tool != nil, model.phase == .confirmed {
-            return
-        }
-
-        // 鼠标模式（tool == nil 且 pointerEngaged）下优先命中选中图层的缩放控制点；
-        // 再是图层本体（选中并准备拖动）；点空处 → 取消选中 + 清掉选字层的文字选择，
-        // 落回下面的选区调整逻辑。中性态（未点「鼠标」）不做图层命中 —— 拖拽只调选区。
-        // 只在选区内测试：图层出了选区的部分是看不见的。
-        // 文字上的点击到不了这里 —— 鼠标模式下由选字层的命中测试包装接走（拖 = 选字）。
-        if model.phase == .confirmed, annotation.tool == nil, annotation.pointerEngaged,
-           let selection = model.confirmedRect, selection.contains(global) {
-            let canvas = geometry.annotationPoint(fromViewLocal: local)
-            if let handle = annotation.resizeHandle(at: canvas) {
-                annotation.endTextEditing()
-                annotation.beginResize(handle: handle, at: canvas)
-                onBecameActive?(self)
-                redraw()
-                return
-            }
-            if let id = annotation.layer(at: canvas) {
-                annotation.endTextEditing()
-                annotation.beginMove(id: id, at: canvas)
-                onBecameActive?(self)
-                redraw()
-                return
-            }
-            redrawIfNeeded(annotation.select(nil))
-            if let overlay = liveTextOverlay, overlay.hasActiveTextSelection {
-                overlay.resetSelection()
-            }
-        }
-
-        annotation.endTextEditing()
-
-        // 点在已有选区的控制点或内部 → 调整，而不是重画
-        if let handle = model.handle(at: global) {
-            model.beginAdjust(handle: handle, at: global)
-            if handle.isMove { NSCursor.closedHand.set() }
-        } else {
-            model.beginDrag(at: global)
-        }
-
-        onBecameActive?(self)
-        redraw()
+        router.mouseDown(local: localPoint(of: event), event: event, host: self)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        if let pressedControlID {
-            let local = localPoint(of: event)
-            let stillInside = slots.contains {
-                $0.control?.id == pressedControlID && $0.frame.contains(local)
-            }
-            let nextHover = stillInside ? pressedControlID : nil
-            if nextHover != hoveredControlID {
-                hoveredControlID = nextHover
-                redraw()
-            }
-            return
-        }
-
-        let local = localPoint(of: event)
-        updateCursor(local)
-        if annotation.isDrawing {
-            redrawIfNeeded(annotation.updateDraw(to: geometry.annotationPoint(fromViewLocal: local)))
-            return
-        }
-        if annotation.isMoving {
-            redrawIfNeeded(annotation.updateMove(to: geometry.annotationPoint(fromViewLocal: local)))
-            return
-        }
-        if annotation.isResizing {
-            redrawIfNeeded(annotation.updateResize(to: geometry.annotationPoint(fromViewLocal: local)))
-            return
-        }
-
-        let global = geometry.global(fromViewLocal: local)
-        switch model.phase {
-        case .adjusting:
-            let oldRect = model.confirmedRect
-            let wasMove = model.adjustingHandle?.isMove == true
-            model.updateAdjust(to: global)
-            if wasMove, let oldRect, let newRect = model.confirmedRect {
-                let dx = newRect.origin.x - oldRect.origin.x
-                let dy = newRect.origin.y - oldRect.origin.y
-                // AppKit Y 向上，画布 Y 向下
-                let deltaCanvas = CGPoint(x: dx, y: -dy)
-                annotation.translateAll(by: deltaCanvas)
-            }
-        default:
-            model.updateDrag(to: global)
-        }
-        redraw()
+        router.mouseDragged(local: localPoint(of: event), event: event, host: self)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -447,7 +319,7 @@ final class OverlayView: NSView {
         }
         let local = localPoint(of: event)
         let styleSlots = slots.filter { $0.control?.group == .style }
-        let isOverStyle = styleSlots.contains { $0.frame.contains(local) }
+        let isOverStyle = styleSlots.contains { $0.hitFrame.contains(local) }
         // 兼容触摸板：任意在样式行上的滚轮即视为意图；不在样式行则仅当有hover时忽略，
         // 避免在画布中间滚轮误改粗细。
         let shouldHandle: Bool = {
@@ -478,66 +350,36 @@ final class OverlayView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if let pressedID = pressedControlID {
-            let local = localPoint(of: event)
-            let control = slots.first {
-                $0.control?.id == pressedID && $0.frame.contains(local)
-            }?.control
-            pressedControlID = nil
-            hoveredControlID = control?.id
-            if let control, control.isEnabled(toolbarContext) {
-                // 效果层的元数据由 effectContext 在激活时现取。
-                control.activate(toolbarContext)
-                syncLiveTextOverlay()
-            }
-            redraw()
-            return
-        }
+        router.mouseUp(local: localPoint(of: event), event: event, host: self)
+    }
 
-        if annotation.isDrawing {
-            annotation.endDraw(pixelSource: frozenPixels)
-            redraw()
-            return
-        }
-        if annotation.isMoving {
-            annotation.endMove(pixelSource: frozenPixels)
-            redraw()
-            return
-        }
-        if annotation.isResizing {
-            annotation.endResize(pixelSource: frozenPixels)
-            redraw()
-            return
-        }
+    /// 选区确认后的统一收尾：退出指针模式、恢复上次工具、对齐选字层、
+    /// 清悬停、光标回箭头。任何进入 confirmed 的路径都走这里，
+    /// 新增副作用只加这一处。
+    func enterConfirmedState() {
+        annotation.pointerEngaged = false
+        restoreLastTool()
+        syncLiveTextOverlay()
+        prepareLiveTextAnalysis()
+        hoveredControlID = nil
+        NSCursor.arrow.set()
+    }
 
-        switch model.phase {
-        case .adjusting:
-            model.endAdjust()
-            prepareLiveTextAnalysis()
-            // 鼠标模式下调整了选区：选字层贴回新位置、套用重跑的分析。
-            syncLiveTextOverlayFrame()
-            hoveredControlID = nil
-            NSCursor.arrow.set()
-        default:
-            if model.endDrag() {
-                if finishOnConfirm {
-                    // 简单模式：确认即返回，不进 confirmed 阶段的工具条/标注流程。
-                    emit(ActionID.finish)
-                    return
-                }
-                // 每次确认选区都回到中性态：没有任何工具高亮，拖拽只调选区。
-                annotation.pointerEngaged = false
-                syncLiveTextOverlay()
-                prepareLiveTextAnalysis()
-                hoveredControlID = nil
-                NSCursor.arrow.set()
-            }
-        }
-        redraw()
+    /// 确认选区后恢复上次使用的工具。
+    ///
+    /// 只在当前是中性态（tool == nil && !pointerEngaged）时恢复：指针模式或
+    /// 已选工具都不动。id 解析失败（旧版本存了已删除的工具）就保持中性。
+    private func restoreLastTool() {
+        guard annotation.tool == nil, !annotation.pointerEngaged,
+              let id = capture.lastToolID,
+              let tool = AnnotationTool.allCases.first(where: { $0.id == id })
+        else { return }
+        annotation.tool = tool
     }
 
     /// 马赛克要从冻结画面取原始像素：标注空间是显示器局部左上原点，先换回 AppKit 全局。
-    private func frozenPixels(_ rect: CGRect) -> CGImage? {
+    /// gesture target 经 `OverlayGestureHost` 调它，不能 private。
+    func frozenPixels(_ rect: CGRect) -> CGImage? {
         let snapshot = model.snapshot
         return snapshot.crop(globalRect: CGRect(
             x: snapshot.frame.minX + rect.minX,
@@ -551,8 +393,13 @@ final class OverlayView: NSView {
     /// 画笔退回中性 → 选区 → 整个截图流程。Esc 与它刻意不同：Esc 一次
     /// 取消整次截图，右键才承担“退回上一层”的精细操作。
     /// 鼠标模式下文字上的右键归系统选字层（服务菜单），能落到这里的都在文字之外。
-    override func rightMouseDown(with event: NSEvent) {
-        if clearLiveTextSelection() {
+    ///
+    /// 返回 false 表示整次截图流程已取消（onFinish 已发）。
+    @discardableResult
+    func stepBackOneLevel() -> Bool {
+        if stepBackSelectionAI() {
+            redraw()
+        } else if clearLiveTextSelection() {
             // 已处理：只清文字选择，不再往下退。
         } else if annotation.select(nil) {
             redraw()
@@ -571,7 +418,13 @@ final class OverlayView: NSView {
             redraw()
         } else {
             onFinish?(nil)
+            return false
         }
+        return true
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        stepBackOneLevel()
     }
 
     // Live Text 已抽至 OverlayView+LiveText.swift
@@ -610,7 +463,8 @@ final class OverlayView: NSView {
 
     /// ⌥+单击的整窗捕获出口。`image` 放冻结画面上窗口可见部分的裁剪 ——
     /// 协调器异步用 SCK 重拍完整窗口，只有窗口已经消失时才落回这份兜底。
-    private func emitFullWindow(_ window: WindowInfo) {
+    /// gesture target 经 `OverlayGestureHost` 调它，不能 private。
+    func emitFullWindow(_ window: WindowInfo) {
         let visible = window.frame.intersection(model.bounds)
         guard let fallback = model.snapshot.crop(globalRect: visible) else { return }
 
@@ -623,6 +477,25 @@ final class OverlayView: NSView {
             layers: Layers<ImageSpace>(),
             windowCaptureRequest: window
         ))
+    }
+}
+
+// MARK: - OverlayGestureHost conformance
+//
+// 其余成员（model/annotation/slots/emit/…）都是本类既有 API，
+// 这里只补 target 需要、而视图还没有的窄门面成员。
+
+extension OverlayView: OverlayGestureHost {
+
+    func becameActive() {
+        onBecameActive?(self)
+    }
+
+    var selectionAIHostIsActive: Bool { selectionAIHost.isActive }
+
+    func hasLiveTextInteractiveItem(atViewLocal local: CGPoint) -> Bool {
+        guard let overlay = liveTextHost.overlay else { return false }
+        return overlay.hasInteractiveItem(at: overlay.convert(local, from: self))
     }
 }
 
