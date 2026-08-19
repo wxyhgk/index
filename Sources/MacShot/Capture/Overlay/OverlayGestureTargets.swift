@@ -265,14 +265,19 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
         let global = host.geometry.global(fromViewLocal: local)
         let selection = host.model.confirmedRect
 
-        // 手上有标注工具时，选区内的拖拽是画标注，不是调整选区
-        if host.annotation.tool != nil, let selection, selection.contains(global) {
-            host.annotation.beginDraw(at: host.geometry.annotationPoint(fromViewLocal: local))
-            host.redraw()
-            return true
-        }
-        // 有工具在手却点在选区外：忽略，避免误删已画的内容
+        // 手上有标注工具时，选区内的拖拽是画标注，不是调整选区。
+        // 例外：命中选区边缘控制点时放行给 OverlaySelectionTarget 做 resize ——
+        // 控制点的 9pt 命中范围大部分在选区外，不拦的话 restoreLastTool 恢复
+        // 工具后选框就再也拉不动了。
         if host.annotation.tool != nil {
+            if let handle = host.model.handle(at: global), handle != .inside {
+                return false
+            }
+            if let selection, selection.contains(global) {
+                host.annotation.beginDraw(at: host.geometry.annotationPoint(fromViewLocal: local))
+                host.redraw()
+                return true
+            }
             return true
         }
 
@@ -341,6 +346,11 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
             return .leaveAlone
         }
         if host.annotation.tool != nil {
+            // 命中选区控制点时不表态，让 OverlaySelectionTarget 给出 resize 光标。
+            if let handle = host.model.handle(at: host.geometry.global(fromViewLocal: local)),
+               handle != .inside {
+                return nil
+            }
             return .set(.crosshair)
         }
         // 选中图层的缩放控制点优先于选区自身的控制点 —— 命中顺序和 mouseDown 一致。

@@ -155,12 +155,6 @@ final class OverlayView: NSView {
         // 截图从中性态开始：确认选区后没有任何工具高亮，拖拽只调整选区；
         // 点「鼠标」按钮（或按 V）才进入指针模式（图层可选 + 选字）。
         annotation.pointerEngaged = false
-        // 记住上次使用的工具：键盘与工具条两条选工具路径都改 `annotation.tool`，
-        // 经这个回调落盘；确认选区后由 `restoreLastTool()` 恢复。指针（nil）不记。
-        annotation.onToolChanged = { [weak self] tool in
-            guard let tool else { return }
-            self?.capture.lastToolID = tool.id
-        }
         // 效果层的注入上下文（覆盖层这一处，与钉图/编辑器同一契约）。
         // 闭包按开关那一刻取值：成品宽 = 选区宽（点）× 缩放倍率；
         // 元数据从确认选区时的窗口归因取（浏览器 URL 是落库后异步回填的，
@@ -353,28 +347,15 @@ final class OverlayView: NSView {
         router.mouseUp(local: localPoint(of: event), event: event, host: self)
     }
 
-    /// 选区确认后的统一收尾：退出指针模式、恢复上次工具、对齐选字层、
+    /// 选区确认后的统一收尾：退出指针模式、对齐选字层、
     /// 清悬停、光标回箭头。任何进入 confirmed 的路径都走这里，
     /// 新增副作用只加这一处。
     func enterConfirmedState() {
         annotation.pointerEngaged = false
-        restoreLastTool()
         syncLiveTextOverlay()
         prepareLiveTextAnalysis()
         hoveredControlID = nil
         NSCursor.arrow.set()
-    }
-
-    /// 确认选区后恢复上次使用的工具。
-    ///
-    /// 只在当前是中性态（tool == nil && !pointerEngaged）时恢复：指针模式或
-    /// 已选工具都不动。id 解析失败（旧版本存了已删除的工具）就保持中性。
-    private func restoreLastTool() {
-        guard annotation.tool == nil, !annotation.pointerEngaged,
-              let id = capture.lastToolID,
-              let tool = AnnotationTool.allCases.first(where: { $0.id == id })
-        else { return }
-        annotation.tool = tool
     }
 
     /// 马赛克要从冻结画面取原始像素：标注空间是显示器局部左上原点，先换回 AppKit 全局。

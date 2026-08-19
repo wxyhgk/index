@@ -83,15 +83,72 @@ extension ResizeHandle {
             ?? point(in: layer.handleBounds)
     }
 
-    /// AppKit 没有公开的斜向缩放光标，四角退回十字（与选区调整同一取舍）。
+    /// AppKit 没有公开的斜向缩放光标，四角自绘对角双箭头：
+    /// 左上/右下是 ↖↘，右上/左下是 ↗↙ —— 方向和控制点对应，一眼知道往哪拉。
+    /// 黑箭头条白边（压暗画面上清晰）。实例建一次缓存在类属性里。
+    private static let nwseCursor: NSCursor = makeDiagonalCursor(nwse: true)
+    private static let neswCursor: NSCursor = makeDiagonalCursor(nwse: false)
+
     var cursor: NSCursor {
         switch self {
-        case .left, .right:             return .resizeLeftRight
-        case .top, .bottom:             return .resizeUpDown
-        case .inside:                   return .openHand
-        case .topLeft, .topRight,
-             .bottomLeft, .bottomRight: return .crosshair
+        case .left, .right:      return .resizeLeftRight
+        case .top, .bottom:      return .resizeUpDown
+        case .inside:            return .openHand
+        case .topLeft, .bottomRight: return Self.nwseCursor
+        case .topRight, .bottomLeft: return Self.neswCursor
         }
+    }
+
+    private static func makeDiagonalCursor(nwse: Bool) -> NSCursor {
+        // SF Symbol 单色渲染做不了双色描边，这里自绘 45° 对角双箭头：
+        // 先粗白线（4.5pt）做边，再细黑线（2.5pt）做芯 —— 黑箭头条白边，
+        // 压暗画面上清晰，也和系统 resizeLeftRight 的风格一致。
+        let size: CGFloat = 28
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        // NSImage y 向上：屏幕左上 = 低 x 高 y，右下 = 高 x 低 y。
+        let inset: CGFloat = 6
+        let a = nwse ? NSPoint(x: inset, y: size - inset) : NSPoint(x: inset, y: inset)
+        let b = nwse ? NSPoint(x: size - inset, y: inset) : NSPoint(x: size - inset, y: size - inset)
+
+        func unit(_ v: CGVector) -> CGVector {
+            let length = max(hypot(v.dx, v.dy), 0.001)
+            return CGVector(dx: v.dx / length, dy: v.dy / length)
+        }
+
+        var strokes: [NSBezierPath] = []
+        let line = NSBezierPath()
+        line.move(to: a)
+        line.line(to: b)
+        strokes.append(line)
+        for (tip, outward) in [(a, unit(CGVector(dx: a.x - b.x, dy: a.y - b.y))),
+                               (b, unit(CGVector(dx: b.x - a.x, dy: b.y - a.y)))] {
+            let base = CGPoint(x: tip.x - outward.dx * 7, y: tip.y - outward.dy * 7)
+            let perp = CGVector(dx: -outward.dy, dy: outward.dx)
+            let head = NSBezierPath()
+            head.move(to: CGPoint(x: base.x + perp.dx * 4.5, y: base.y + perp.dy * 4.5))
+            head.line(to: tip)
+            head.line(to: CGPoint(x: base.x - perp.dx * 4.5, y: base.y - perp.dy * 4.5))
+            strokes.append(head)
+        }
+
+        for (color, width) in [
+            (NSColor.white, 4.5),
+            (NSColor.black, 2.5)
+        ] {
+            color.setStroke()
+            for path in strokes {
+                path.lineWidth = width
+                path.lineCapStyle = .round
+                path.lineJoinStyle = .round
+                path.stroke()
+            }
+        }
+
+        image.isTemplate = false
+        return NSCursor(image: image, hotSpot: NSPoint(x: size / 2, y: size / 2))
     }
 }
 

@@ -1,44 +1,13 @@
 import XCTest
 @testable import MacShot
 
-/// 「记住上次使用的工具」：选过工具就回写 `lastToolID`，
-/// 下次确认选区后从中性态恢复那把工具。
+/// 「确认选区后工具回到中性」（2026-08-20 起的行为）：
+/// 不再恢复上次使用的工具 —— 每次截图确认后都是箭头状态，
+/// 拖拽只调整选区；要画标注就再点一次工具按钮或按快捷键。
 @MainActor
 final class LastToolMemoryTests: XCTestCase {
 
-    func testSelectingToolPersistsLastToolID() {
-        let store = FakeStyleStore()
-        let view = makeView(capture: store)
-
-        view.annotation.tool = .arrow
-        XCTAssertEqual(store.capture.lastToolID, "arrow")
-
-        view.annotation.tool = .pixelate
-        XCTAssertEqual(store.capture.lastToolID, "pixelate")
-    }
-
-    func testPointerDoesNotOverwriteLastToolID() {
-        let store = FakeStyleStore()
-        let view = makeView(capture: store)
-
-        view.annotation.tool = .arrow
-        view.annotation.tool = nil
-
-        XCTAssertEqual(store.capture.lastToolID, "arrow")
-    }
-
-    func testConfirmingSelectionRestoresLastTool() {
-        let store = FakeStyleStore()
-        store.capture.lastToolID = "arrow"
-        let view = makeView(capture: store)
-
-        confirmSelection(on: view)
-
-        XCTAssertEqual(view.annotation.tool, .arrow)
-        XCTAssertFalse(view.annotation.pointerEngaged)
-    }
-
-    func testConfirmingSelectionWithoutSavedToolStaysNeutral() {
+    func testConfirmingSelectionKeepsToolNeutral() {
         let view = makeView()
         confirmSelection(on: view)
 
@@ -46,20 +15,22 @@ final class LastToolMemoryTests: XCTestCase {
         XCTAssertFalse(view.annotation.pointerEngaged)
     }
 
-    func testUnknownToolIDStaysNeutral() {
+    func testConfirmingSelectionDoesNotRestoreSavedToolID() {
+        // 偏好里存着旧工具 id（历史版本写的），确认选区也不该把它捡回来。
         let store = FakeStyleStore()
-        store.capture.lastToolID = "tool-that-was-removed"
+        store.capture.lastToolID = "arrow"
         let view = makeView(capture: store)
 
         confirmSelection(on: view)
 
         XCTAssertNil(view.annotation.tool)
+        XCTAssertFalse(view.annotation.pointerEngaged)
     }
 
     // MARK: - 辅助
 
     /// 模拟一次完整的选区拖拽确认（mouseDown → mouseUp），
-    /// 走 `OverlayView.mouseUp` 里 `model.endDrag()` 的恢复路径。
+    /// 走 `OverlayView.mouseUp` 里 `model.endDrag()` 的收尾路径。
     private func confirmSelection(on view: OverlayView) {
         view.frame = view.bounds == .zero
             ? CGRect(x: 0, y: 0, width: 200, height: 120)
