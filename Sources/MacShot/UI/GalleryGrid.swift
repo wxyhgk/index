@@ -243,6 +243,7 @@ struct GalleryGrid: View {
         // 宽度感知：测量点是**本视图的根帧**（= 网格列的容器帧，滚动条在它内部），
         // 和它历史上待的位置（GalleryView 里 `.background(gridWidthReader)`）是同一层几何，
         // 只是写的 state 从三栏共同父层挪进了网格子树。
+        .onAppear { MouseModifierCache.shared.install() }
         .background(widthReader)
         .dropDestination(for: URL.self) { urls, _ in
             guard scope == .library else { return false }

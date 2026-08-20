@@ -28,6 +28,10 @@ final class RecordingCoordinator {
     private var timer: Timer?
     private var lastHandledTerminationID: UUID?
 
+    /// 本次录制的鼠标点击记录（净录制时间轴 + 全局位置），步骤指南切分与高亮用。
+    private var clickTracker: MouseClickTracker?
+    private var lastClicks: [ClickEvent] = []
+
     /// 暂停/继续切换进行中（stopCapture / startCapture 在途）。
     /// 期间丢弃新的暂停与停止请求，避免同一段被并发收尾。
     private var isTogglingPause = false
@@ -168,6 +172,7 @@ final class RecordingCoordinator {
             guard recorder.isRecording else { return }
             lastRegion = region
             lastDisplay = display
+            startClickTracking()
             showBorder(around: region)
             showControls(around: region, display: display)
             startTimer()
@@ -216,9 +221,12 @@ final class RecordingCoordinator {
         hideBorder()
         hideControls()
         stopTimer()
+        // 正常停止时取回点击记录（步骤指南用）；运行期终止时只拆 monitor。
+        lastClicks = stopClickTracking()
         if clearMetadata {
             lastRegion = nil
             lastDisplay = nil
+            lastClicks = []
         }
     }
 
@@ -266,7 +274,10 @@ final class RecordingCoordinator {
     // MARK: - 录制中的红框提示
 
     private func showBorder(around region: CGRect) {
-        // 边框画在选区**外侧**；而且自身进程已被捕获过滤器排除，绝不会进画面。
+        // 边框画在选区**外侧**。`sharingType = .none` 让 ScreenCaptureKit 直接
+        // 不捕获这个窗口 —— 不依赖「自身进程被 SCContentFilter 排除」：本进程是
+        // .accessory 应用，框选 overlay 关掉后枚举时可能没有可见窗口、不在
+        // applications 列表里，排除会落空（大选区时红框就被录进去了）。
         let panel = NSPanel(
             contentRect: region.insetBy(dx: -4, dy: -4),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -278,6 +289,7 @@ final class RecordingCoordinator {
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.level = .statusBar
+        panel.sharingType = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.contentView = RecordingBorderView()
         panel.orderFrontRegardless()
@@ -346,20 +358,59 @@ final class RecordingCoordinator {
         }
     }
 
+    // MARK: - 鼠标点击记录（步骤指南切分用）
+
+    /// 点击时刻直接取 `recorder.elapsed`（净录制时长，暂停不走字），
+    /// 与分段拼接后的成品 mp4 时间轴天然对齐。
+    private func startClickTracking() {
+        let tracker = MouseClickTracker { [weak self] in self?.recorder.elapsed ?? 0 }
+        tracker.start()
+        clickTracker = tracker
+    }
+
+    /// 停止并取回点击记录。重复调用幂等。
+    private func stopClickTracking() -> [ClickEvent] {
+        defer { clickTracker = nil }
+        return clickTracker?.stop() ?? []
+    }
+
     // MARK: - 结果
 
     private func presentResult(_ url: URL) {
         switch AppAlert.confirm(
             "录屏完成",
             message: url.lastPathComponent,
-            buttons: ["在访达中显示", "转为 GIF", "关闭"]
+            buttons: ["在访达中显示", "转为 GIF", "生成步骤指南", "关闭"]
         ) {
         case 0:
             SystemNavigator.revealInFinder(url)
         case 1:
             convertToGIF(url)
+        case 2:
+            generateStepGuide(url)
         default:
             break
+        }
+    }
+
+    private func generateStepGuide(_ url: URL) {
+        let clicks = lastClicks
+        let region = lastRegion
+        let scale = lastDisplay?.scale ?? 1
+        Task {
+            do {
+                let guide = try await StepGuideGenerator.generate(
+                    videoURL: url,
+                    clicks: clicks,
+                    region: region,
+                    scale: scale
+                )
+                NSLog("[MacShot] 步骤指南已生成（\(guide.stepCount) 步）: \(guide.directory.path)")
+                SystemNavigator.revealInFinder(guide.directory)
+            } catch {
+                NSLog("[MacShot] 步骤指南生成失败: \(error)")
+                presentError("步骤指南生成失败", error)
+            }
         }
     }
 
@@ -437,6 +488,8 @@ private final class RecordingControlPanel: NSObject {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.level = .statusBar
+        // 控制条在选区内时（大选区/整屏）不能被录进去：SCK 直接不捕获。
+        panel.sharingType = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isReleasedWhenClosed = false
         panel.ignoresMouseEvents = false

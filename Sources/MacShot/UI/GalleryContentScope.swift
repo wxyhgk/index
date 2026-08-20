@@ -72,13 +72,25 @@ enum GalleryContentScope: Equatable {
         viewModel.searchText = ""
         viewModel.clearSemanticResults()
         if let fixedFilter { viewModel.filter = fixedFilter }
-        viewModel.reload()
+        // 异步重建查询：同步 reload 用 GRDB `.immediate` scheduling，首次查询跑在
+        // 主线程渲染帧内，是 tab 切换视觉延迟的来源。异步版把 DB 查询移出渲染帧。
+        // 捕获当前状态，避免 Task 执行时 viewModel 已被后续操作修改。
+        let query = viewModel.searchText
+        let filter = viewModel.filter
+        Task { await viewModel.store.reloadInBackground(query: query, filter: filter) }
     }
 
     @MainActor
     func deactivate(in viewModel: GalleryViewModel) {
         guard fixedFilter != nil else { return }
-        viewModel.reset()
+        // 清状态 + 异步 reload：切走的 tab 不再可见，但 store.shots 要更新为 .all，
+        // 这样切回图库 tab 时数据已就绪。异步 reload 不阻塞渲染帧；
+        // 若紧接着的 activate 也 reload，generation 防迟到保证只有最新的生效。
+        viewModel.cancelPendingExactSearch()
+        viewModel.searchText = ""
+        viewModel.clearSemanticResults()
+        viewModel.filter = .all
+        Task { await viewModel.store.reloadInBackground(query: "", filter: .all) }
     }
 
     @MainActor

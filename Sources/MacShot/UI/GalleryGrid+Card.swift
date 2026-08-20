@@ -1,6 +1,34 @@
 import AppKit
 import SwiftUI
 
+// MARK: - 鼠标修饰键缓存
+//
+// SwiftUI 的 TapGesture 回调不带修饰键，旧实现从 `NSApp.currentEvent` 反查。
+// 但 tap 回调执行时 `currentEvent` 可能已被后续 keyDown / scrollWheel 覆盖
+//（GalleryKeyboard 的 keyDown local monitor 加剧了这个窗口），导致普通点击
+// 被误判为 ⌘ 点击走 toggle，把刚选中的那张又取消——表现为"✅ 有时不显示"。
+//
+// 修法：在 mouseDown 时刻（点击手势的起点）用 NSEvent local monitor 缓存
+// 修饰键，tap 回调直接读缓存。与 GalleryKeyboard 用 monitor 而非 SwiftUI
+// 手势的理由一致（GalleryKeyboard.swift:9-11）。
+
+@MainActor
+final class MouseModifierCache {
+    static let shared = MouseModifierCache()
+    private var flags: NSEvent.ModifierFlags?
+    private var monitor: Any?
+
+    func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            self?.flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            return event
+        }
+    }
+
+    var cachedFlags: NSEvent.ModifierFlags? { flags }
+}
+
 // MARK: - 卡片装配 / 右键菜单 / 单张动作
 //
 // 从 `GalleryGrid.swift` 拆出：这一组方法围绕「一张卡片」展开 ——
@@ -75,7 +103,10 @@ extension GalleryGrid {
     /// 点击 = 单选；⌘点击 = toggle；⇧点击 = 锚点到落点的全局顺序区间。
     /// 选中后显式让搜索框等文本输入失焦，使后续 ⌘C 走图片路径而非空文本路径。
     func handleTap(_ shot: Shot) {
-        guard let id = shot.id else { return }
+        guard let id = shot.id else {
+            NSLog("[MacShot] handleTap: shot.id 为 nil，点击被忽略（windowTitle=\(shot.windowTitle ?? "nil")）")
+            return
+        }
         let flags = currentModifiers()
         if flags.contains(.command) {
             selection.toggle(id)
@@ -91,9 +122,10 @@ extension GalleryGrid {
         }
     }
 
-    /// SwiftUI 的 TapGesture 不带修饰键信息，从触发点击的 NSEvent 上取。
+    /// 从 mouseDown 时刻的缓存取修饰键（MouseModifierCache），
+    /// 不再反查 NSApp.currentEvent（tap 回调时它可能已被后续事件覆盖）。
     func currentModifiers() -> NSEvent.ModifierFlags {
-        NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
+        MouseModifierCache.shared.cachedFlags ?? []
     }
 
     // MARK: 右键菜单
