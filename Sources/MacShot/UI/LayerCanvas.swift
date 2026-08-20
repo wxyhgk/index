@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import Vision
 import VisionKit
 
 /// 图库窗口的 contentView 包装层。override `hitTest` 把「选字」鼠标事件
@@ -36,10 +35,9 @@ final class LiveTextRoutingView: NSView {
         }
         // 包装层是 contentView，自身坐标系与窗口坐标系一致（原点都在
         // 内容区左下角），point 可直接按窗口坐标交给画布换算。
-        let hit = liveTextCanvas?.liveTextHitView(atWindowPoint: point)
-        // [LT] 临时诊断：确认包装层是否被调用、画布是否注册、命中是否成功。
-        NSLog("[LT] ROUTING.hitTest point=\(NSStringFromPoint(point)) canvasSet=\(liveTextCanvas != nil) hit=\(hit != nil)")
-        if let hit { return hit }
+        if let hit = liveTextCanvas?.liveTextHitView(atWindowPoint: point) {
+            return hit
+        }
         return super.hitTest(point)
     }
 }
@@ -136,28 +134,21 @@ final class CanvasView: NSView {
     /// 确定、立即可用，不依赖 VisionKit 的 `hasInteractiveItem`。
     /// 分析落地时写入；换图（新 pending）时先清空，避免用旧图的框判新图。
     private var ocrRects: [CGRect] = []
-
-    // ── [LT] 临时诊断日志（定位「图层设置」问题，验证后删除）──
-    private var lastHitLog = ""
-    private var lastLayoutLog = ""
-    /// [LT] 本地事件监视器：记录每次 mouseDown 的真实 target。
-    /// 用来区分「hitTest 命中了 overlay」和「mouseDown 真的派发给了 overlay」。
-    private var mouseDownMonitor: Any?
+    /// 有「已发起未落地」的分析任务。`applyLiveTextAnalysis` 据此决定要不要
+    /// 安排落地闭包 —— 落地后清掉，updateNSView / layout 的反复调用不再空跑。
+    private var pendingApply = false
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         // 注册到窗口 contentView 的 Live Text 路由：它是事件派发链的第一站，
         // 在这里短路返回 overlay 才能绕开 NSHostingView 的 DragGesture 拦截。
-        let routing = window?.contentView as? LiveTextRoutingView
-        routing?.liveTextCanvas = self
-        NSLog("[LT] ROUTING.register contentView=\(String(describing: type(of: window?.contentView as Any))) registered=\(routing != nil)")
+        (window?.contentView as? LiveTextRoutingView)?.liveTextCanvas = self
         if window != nil, !isLiveTextActive, LiveTextAnalyzer.isSupported {
             enterLiveText()
         }
     }
 
     deinit {
-        removeMouseDownMonitor()
         liveTextAnalysis?.task.cancel()
     }
 
@@ -174,59 +165,6 @@ final class CanvasView: NSView {
         liveTextOverlay = overlay
         applyLiveTextAnalysis()
         needsDisplay = true
-        installMouseDownMonitor()
-    }
-
-    func exitLiveText() {
-        guard isLiveTextActive else { return }
-        isLiveTextActive = false
-        removeMouseDownMonitor()
-        liveTextOverlay?.removeFromSuperview()
-        liveTextOverlay = nil
-        // 清掉已绑定标记：再次进入时即使是同一个 analysis 实例
-        // （缓存命中），新 overlay 也必须重新绑一次。
-        appliedAnalysis = nil
-        needsDisplay = true
-    }
-
-    func teardownLiveText() {
-        exitLiveText()
-        liveTextAnalysis?.task.cancel()
-        liveTextAnalysis = nil
-    }
-
-    // ── [LT] 临时诊断：mouseDown 真实去向 ──
-    // 本地监视器在事件派发前触发。`contentView.hitTest(locationInWindow)`
-    // 就是 AppKit 派发 mouseDown 用的同一条链（含各层 hitTest override）。
-    // 若解析结果不是 overlay，说明事件没给系统选字层（被 NSHostingView /
-    // SwiftUI 手势截走）。mouseUp 监视器则直接查 overlay 有没有建出选区。
-    private func installMouseDownMonitor() {
-        removeMouseDownMonitor()
-        mouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
-            guard let self, let window = event.window else { return event }
-            if event.type == .leftMouseDown {
-                let resolved = window.contentView?.hitTest(event.locationInWindow)
-                let resolvedName = resolved.map { String(describing: type(of: $0)) } ?? "nil"
-                let isOverlay = (resolved as? ImageAnalysisOverlayView) === self.liveTextOverlay
-                NSLog("[LT] MONITOR.mouseDown resolved=\(resolvedName) isOverlay=\(isOverlay) winPoint=\(NSStringFromPoint(event.locationInWindow))")
-            } else {
-                NSLog("[LT] MONITOR.mouseUp hasActiveSelection=\(self.liveTextOverlay?.hasActiveTextSelection ?? false)")
-            }
-            return event
-        }
-    }
-
-    private func removeMouseDownMonitor() {
-        if let m = mouseDownMonitor {
-            NSEvent.removeMonitor(m)
-            mouseDownMonitor = nil
-        }
-    }
-
-    /// [LT] 诊断：CanvasView 自己是否收到 mouseDown（hitTest 返回 nil 时事件落到这里）。
-    override func mouseDown(with event: NSEvent) {
-        NSLog("[LT] CANVAS.mouseDown local=\(NSStringFromPoint(convert(event.locationInWindow, from: nil)))")
-        super.mouseDown(with: event)
     }
 
     /// ⌘C：有选中文字就复制文字。返回是否已处理。
@@ -265,6 +203,7 @@ final class CanvasView: NSView {
         if let cached = liveTextAnalysis, cached.image === image { return }
         liveTextAnalysis?.task.cancel()
         liveTextGeneration += 1
+        pendingApply = true
         // 换图先清旧框：新图的分析落地前，命中判定用不到（空数组 = 不命中），
         // 避免拿旧图的框判新图。
         ocrRects = []
@@ -285,7 +224,8 @@ final class CanvasView: NSView {
         } else {
             // 非缓存：OCR 独立跑，落地就写 ocrRects（命中判定立刻可用），
             // 不等 VisionKit 分析（那路只给 overlay 做拖选高亮，较慢）。
-            Task { [weak self] in
+            // 推理在后台线程，落地闭包回主线程写 NSView 属性。
+            Task { @MainActor [weak self] in
                 let lines = await VisionTextRecognition().recognize(in: image)
                 guard let self, self.liveTextGeneration == generation,
                       self.liveTextAnalysis?.image === image else { return }
@@ -317,9 +257,13 @@ final class CanvasView: NSView {
     }
 
     private func applyLiveTextAnalysis() {
+        // 没有「已发起未落地」的任务就不安排 —— updateNSView / layout 每次
+        // 都会走到这里，稳态下空跑 Task 只是浪费。
+        guard pendingApply else { return }
+        pendingApply = false
         let task = liveTextAnalysis?.task
         let generation = liveTextGeneration
-        Task { [weak self, weak overlay = liveTextOverlay] in
+        Task { @MainActor [weak self, weak overlay = liveTextOverlay] in
             let analysis = await task?.value
             // `generation == 当前代数`：换图时起新任务并自增代数，但 VisionKit
             // 推理不响应 Task.cancel —— 占位图的空结果可能**晚于**真图落地，
@@ -328,9 +272,8 @@ final class CanvasView: NSView {
             guard let self, let overlay,
                   self.isLiveTextActive, overlay === self.liveTextOverlay,
                   self.liveTextGeneration == generation else { return }
-            // 同一个 analysis 只绑一次：updateNSView / layout 每次都会走到这里，
-            // 而重复给 overlay 赋同一个 analysis 会重置它的内部交互状态，
-            // 把正在进行中的拖选打断。
+            // 同一个 analysis 只绑一次：重复给 overlay 赋同一个 analysis
+            // 会重置它的内部交互状态，把正在进行中的拖选打断。
             if self.appliedAnalysis !== analysis {
                 self.appliedAnalysis = analysis
                 // 非空结果写进进程级缓存：同一张截图再次打开编辑器时
@@ -345,7 +288,6 @@ final class CanvasView: NSView {
                         ocrRects: self.ocrRects
                     )
                 }
-                NSLog("[LT] SET overlay.analysis gen=\(generation) nil=\(analysis == nil) ocrRects=\(self.ocrRects.count) overlayFrame=\(NSStringFromRect(overlay.frame))")
                 overlay.analysis = analysis
             }
         }
@@ -367,17 +309,10 @@ final class CanvasView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard isLiveTextActive, let overlay = liveTextOverlay else { return nil }
         let local = convert(point, from: superview)
-        let inBounds = bounds.contains(local)
-        let inOverlayBounds = overlay.bounds.contains(overlay.convert(local, from: self))
-        let interactive = hasLiveTextInteractiveItem(atViewLocal: local)
-        if inBounds && inOverlayBounds && interactive {
-            let line = "[LT] HIT point=\(NSStringFromPoint(point)) local=\(NSStringFromPoint(local)) viewFrame=\(NSStringFromRect(frame)) superviewFrame=\(superview.map { NSStringFromRect($0.frame) } ?? "nil") overlayFrame=\(NSStringFromRect(overlay.frame)) -> overlay"
-            if line != lastHitLog { NSLog(line); lastHitLog = line }
-            return overlay.hitTest(overlay.convert(local, from: self)) ?? overlay
-        }
-        let line = "[LT] MISS point=\(NSStringFromPoint(point)) local=\(NSStringFromPoint(local)) inBounds=\(inBounds) inOverlay=\(inOverlayBounds) interactive=\(interactive) viewFrame=\(NSStringFromRect(frame)) superviewFrame=\(superview.map { NSStringFromRect($0.frame) } ?? "nil")"
-        if line != lastHitLog { NSLog(line); lastHitLog = line }
-        return nil
+        guard bounds.contains(local),
+              overlay.bounds.contains(overlay.convert(local, from: self)),
+              hasLiveTextInteractiveItem(atViewLocal: local) else { return nil }
+        return overlay.hitTest(overlay.convert(local, from: self)) ?? overlay
     }
 
     /// 窗口级路由入口（`LiveTextRoutingWindow.hitTest` 调用）：
@@ -398,9 +333,8 @@ final class CanvasView: NSView {
         liveTextOverlay?.frame = bounds
         // 缩放后重新绑定已有分析（钉图同款）：归一化坐标不用重跑 OCR，
         // 但不重绑的话 hasInteractiveItem 在首帧会误判为空白。
+        // applyLiveTextAnalysis 内部有 pendingApply 守卫，稳态下是空操作。
         if isLiveTextActive { applyLiveTextAnalysis() }
-        let line = "[LT] LAYOUT viewFrame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(bounds)) flipped=\(isFlipped) overlayFrame=\(liveTextOverlay.map { NSStringFromRect($0.frame) } ?? "nil") superview=\(String(describing: type(of: superview as Any)))"
-        if line != lastLayoutLog { NSLog(line); lastLayoutLog = line }
     }
 
     // MARK: - 绘制

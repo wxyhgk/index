@@ -40,7 +40,9 @@ final class CanvasPanBox {
     /// （右侧检查器、工具栏）不触发平移，事件照常放行。
     func containsWindowPoint(_ windowPoint: CGPoint) -> Bool {
         guard let scrollView else { return false }
-        return scrollView.frame.contains(scrollView.convert(windowPoint, from: nil))
+        // convert(from: nil) 得到的是视图**自身**坐标，必须和 bounds 比；
+        // frame 是 superview 坐标，混用会在视图有偏移时判错。
+        return scrollView.bounds.contains(scrollView.convert(windowPoint, from: nil))
     }
 }
 
