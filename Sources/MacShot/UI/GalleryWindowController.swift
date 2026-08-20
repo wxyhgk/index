@@ -21,6 +21,15 @@ final class GalleryWindowController: NSWindowController {
         )
 
         let window = NSWindow(contentViewController: hosting)
+        // LiveTextRoutingView 包一层 contentView：窗口派发鼠标事件时从
+        // contentView 的 hitTest 链开始，包装层在第一站短路返回
+        // ImageAnalysisOverlayView，绕开 NSHostingView 的 DragGesture 拦截
+        // （否则编辑器画布上的 mouseDown 永远到不了系统选字层）。
+        let routing = LiveTextRoutingView(frame: hosting.view.bounds)
+        routing.autoresizingMask = [.width, .height]
+        hosting.view.autoresizingMask = [.width, .height]
+        routing.addSubview(hosting.view)
+        window.contentView = routing
         // 标题**藏起来但不清空**：窗口菜单、Mission Control、⌘` 切窗都读它，
         // 编辑模式下还会被换成「标注 — 出处」（见下面那个 sink）。
         window.title = "Index 图库"

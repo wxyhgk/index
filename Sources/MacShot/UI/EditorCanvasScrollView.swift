@@ -15,6 +15,12 @@ final class CanvasPanBox {
     /// 滚动容器在内容尺寸更新后的下一次 update 消费并钳到合法范围。
     var pendingOrigin: CGPoint?
 
+    /// 下一次 update 时把视口滚到内容中心（钳制后）。适应窗口态的内容是
+    /// 3× 视口、图片居中 —— 进入该态（首次加载 / ⌘0 回到适应）时置位，
+    /// 让图片落在视口正中而不是内容左上角。
+    /// 初始 true：编辑器首次打开就是适应态，首次 update 即居中。
+    var centerOnNextUpdate = true
+
     var viewportSize: CGSize { scrollView?.contentView.bounds.size ?? .zero }
 
     /// 当前滚动原点（左上系）。
@@ -27,6 +33,14 @@ final class CanvasPanBox {
         origin.x += dx
         origin.y += dy
         scrollView.scroll(toTopLeftOrigin: origin)
+    }
+
+    /// 点（窗口坐标）是否落在滚动视图可视区内。
+    /// 中键平移用它判断「这次中键按下是否在画布上」—— 画布外的中键
+    /// （右侧检查器、工具栏）不触发平移，事件照常放行。
+    func containsWindowPoint(_ windowPoint: CGPoint) -> Bool {
+        guard let scrollView else { return false }
+        return scrollView.frame.contains(scrollView.convert(windowPoint, from: nil))
     }
 }
 
@@ -67,6 +81,23 @@ struct EditorCanvasScrollView<Content: View>: NSViewRepresentable {
         }
         if let doc = scroll.documentView, doc.frame.size != contentSize {
             doc.setFrameSize(contentSize)
+        }
+        if panBox.centerOnNextUpdate {
+            panBox.centerOnNextUpdate = false
+            // 滚到内容中心：适应态内容 3× 视口、图片在内容正中，
+            // 这样图片落在视口正中，且四周各有一个视口的平移余量。
+            // 延迟到当前布局 pass 之后，并用**执行时刻**的实时文档 frame /
+            // clip bounds 计算 —— 首次 update 时窗口还在创建，捕获的
+            // contentSize 与 clip bounds 都还不是最终尺寸（非翻转文档的
+            // y 换算依赖 clip 高度，用旧值算出的原点会偏半个视口）。
+            DispatchQueue.main.async {
+                guard let doc = scroll.documentView, doc.frame.width > 0 else { return }
+                let clip = scroll.contentView.bounds.size
+                scroll.scroll(toTopLeftOrigin: CGPoint(
+                    x: (doc.frame.width - clip.width) / 2,
+                    y: (doc.frame.height - clip.height) / 2
+                ))
+            }
         }
         if let origin = panBox.pendingOrigin {
             panBox.pendingOrigin = nil
@@ -219,5 +250,95 @@ final class EditorSpaceHandMonitor: ObservableObject {
         guard spaceHeld else { return false }
         spaceHeld = false
         return true
+    }
+}
+
+/// 中键拖拽平移画布（Photoshop / Figma / 浏览器惯例）。
+///
+/// 中键事件会被 NSHostingView 吞掉、SwiftUI 手势默认不响应中键，
+/// 所以走 NSEvent local monitor：中键按下且落在画布区 → 进入平移，
+/// 拖动按窗口坐标增量挪滚动原点（与空格抓手同一套坐标公式），
+/// 松开结束。画布外的中键（右侧检查器、工具栏）不触发，事件放行。
+@MainActor
+final class EditorMiddlePanMonitor: ObservableObject {
+
+    /// 平移命令：按增量挪滚动原点。由 EditorView 注入 `model.panBox.scrollBy`。
+    var scrollBy: ((CGFloat, CGFloat) -> Void)?
+    /// 点（窗口坐标）是否在画布可视区。由 EditorView 注入 `model.panBox.containsWindowPoint`。
+    var isOverCanvas: ((CGPoint) -> Bool)?
+
+    private var monitor: Any?
+    private var lastWindowLocation: CGPoint?
+    /// 窗口失去 key 的观察者：⌘Tab 切走时中键松开事件会发给别的 App，
+    /// 只靠 mouseUp 复位会让平移状态卡住。
+    private var resignKeyObserver: NSObjectProtocol?
+
+    /// 由 EditorView 在 onAppear 装、onDisappear 拆。重复调用无害。
+    func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.otherMouseDown, .otherMouseDragged, .otherMouseUp]
+        ) { [weak self] event in
+            guard let self else { return event }
+            // 只把值类型带进 assumeIsolated，避免非 Sendable 的 NSEvent 跨隔离告警。
+            let type = event.type
+            let location = event.locationInWindow
+            let handled = MainActor.assumeIsolated {
+                self.handle(type: type, location: location)
+            }
+            return handled ? nil : event
+        }
+        resignKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.lastWindowLocation != nil,
+                      GalleryKeyContext.current() != .editor else { return }
+                self.lastWindowLocation = nil
+            }
+        }
+    }
+
+    func remove() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver(resignKeyObserver)
+        }
+        resignKeyObserver = nil
+        lastWindowLocation = nil
+    }
+
+    /// 返回 true = 已接管（监视器吞掉事件），false = 放行。
+    private func handle(type: NSEvent.EventType, location: CGPoint) -> Bool {
+        switch type {
+        case .otherMouseDown:
+            // 只在编辑模式 + 画布上 + 无修饰键时接管中键按下。
+            guard GalleryKeyContext.current() == .editor,
+                  isOverCanvas?(location) == true,
+                  lastWindowLocation == nil else { return false }
+            lastWindowLocation = location
+            NSCursor.openHand.set()
+            return true
+        case .otherMouseDragged:
+            guard let last = lastWindowLocation else { return false }
+            // 平移时内容在光标下滑动，窗口坐标是唯一稳定参照。
+            // 注意：NSEvent.locationInWindow 是 AppKit 窗口坐标（y 向上），
+            // 与空格抓手用的 SwiftUI DragGesture 全局坐标（y 向下）方向相反 ——
+            // x 分量公式相同，y 分量必须反过来，否则垂直方向平移是反的。
+            scrollBy?(last.x - location.x, location.y - last.y)
+            lastWindowLocation = location
+            NSCursor.closedHand.set()
+            return true
+        case .otherMouseUp:
+            guard lastWindowLocation != nil else { return false }
+            lastWindowLocation = nil
+            NSCursor.arrow.set()
+            return true
+        default:
+            return false
+        }
     }
 }

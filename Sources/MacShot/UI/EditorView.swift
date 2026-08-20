@@ -1,6 +1,12 @@
 import SwiftUI
 import AppKit
 
+/// 画布 NSView 的引用容器。LayerCanvas 是 NSViewRepresentable，NSView 实例
+/// 只能在 makeNSView 里拿到 —— 用闭包回传存到这里，⌘C / 悬停让位才能摸到它。
+final class CanvasHolder {
+    var view: CanvasView?
+}
+
 /// 稳定外壳与当前编辑会话之间唯一的一条命令通道。
 ///
 /// Filmstrip 已经移到会话 `.id` 之外，但切图仍必须保持原来的“先落库再换图”顺序。
@@ -113,6 +119,12 @@ struct EditorView: View {
     /// 按住空格临时抓手的按键监视器。
     @StateObject private var spaceMonitor = EditorSpaceHandMonitor()
 
+    /// 中键拖拽平移画布（放大后不用空格也能挪）。
+    @StateObject private var middlePanMonitor = EditorMiddlePanMonitor()
+
+    /// 画布实例引用（LayerCanvas.onCreated 回传）。选字层的 ⌘C / 悬停让位要用它。
+    @State private var canvasHolder = CanvasHolder()
+
     /// 右侧文字框获得焦点时，裸键工具快捷键（R / A / …）必须让位给打字。
     @FocusState private var textFieldFocused: Bool
 
@@ -140,18 +152,27 @@ struct EditorView: View {
         .onAppear {
             model.load()
             spaceMonitor.install()
+            middlePanMonitor.scrollBy = { model.panBox.scrollBy(dx: $0, dy: $1) }
+            middlePanMonitor.isOverCanvas = { model.panBox.containsWindowPoint($0) }
+            middlePanMonitor.install()
             sessionRelay?.install(shotID: shot.id) { model.flushSave() }
         }
         .onDisappear {
             spaceMonitor.remove()
+            middlePanMonitor.remove()
             // 视图消失（换图重建、窗口关闭、切到别的顶层选项）时**立即**落库，
             // 不等节流 —— 节流任务会随视图一起没掉，等不到它自己触发。
             model.flushSave()
             sessionRelay?.remove(shotID: shot.id)
         }
         .onChange(of: model.zoomLevel) { _, newValue in
-            // 适应窗口态没有可平移空间，抓手模式随之退场（按钮也已置灰）。
-            if newValue == nil { model.canvasMode = .pointer }
+            if newValue == nil {
+                // 回到适应态：内容 3× 视口、图片居中，把视口滚回内容中心，
+                // 图片落在视口正中（观感与缩放前一致）。
+                model.panBox.centerOnNextUpdate = true
+                // 抓手模式随之退场（按钮也已置灰）。
+                model.canvasMode = .pointer
+            }
         }
         .onChange(of: spaceMonitor.spaceHeld) { _, held in
             // 空格切手势会让进行中的标注拖拽收不到 onEnded，主动收尾避免状态卡住。
@@ -181,12 +202,20 @@ struct EditorView: View {
     // 效果面板（美化 / 水印 / 外壳 / 捕获信息）已搬到 `EditorEffectsPanel`。
 
     /// 不可见按钮承载的快捷键：⌫ 删除选中图层（打字时禁用，退格让给文字框）、
+    /// ⌘C 复制（选字层有选中文字就复制文字，否则复制成品图）、
     /// ⌘0 适应窗口、⌘+ 放大（⌘= 挂在底栏的加号按钮上，这里补真正的 "+" 键）。
     private var hiddenShortcuts: some View {
         Group {
             Button("删除选中图层") { model.deleteSelected() }
                 .keyboardShortcut(.delete, modifiers: [])
                 .disabled(textFieldFocused || annotation.selectedID == nil)
+            // 与钉图 / 截图覆盖层同一口径：选字层优先，没选中文字才复制图。
+            Button("复制") {
+                let copiedText = canvasHolder.view?.copyLiveTextSelection() ?? false
+                if !copiedText { copyRendered() }
+            }
+            .keyboardShortcut("c", modifiers: .command)
+            .disabled(textFieldFocused)
             Button("适应窗口") { model.zoomLevel = nil }
                 .keyboardShortcut("0", modifiers: .command)
             Button("放大") { zoomIn() }
@@ -240,16 +269,26 @@ struct EditorView: View {
         if let zoom = model.zoomLevel {
             return zoomedRects(zoom: zoom, viewport: viewport)
         }
-        // 适应窗口：四周 16pt 留白里适配居中，内容恰好一个视口大（无滚动）。
+        // 适应窗口：图片按「视口 - 32pt 留白」适配（尺寸与旧版一致），
+        // 但滚动内容是 3× 视口、图片居中 —— 四周各有一个视口的平移余量，
+        // 中键 / 滚轮在适应态也能自由挪（无限画布感）。
+        // 进入该态时 `panBox.centerOnNextUpdate` 把视口滚到内容中心，
+        // 图片落在视口正中，观感与旧版相同。
+        let content = CGSize(width: viewport.width * 3, height: viewport.height * 3)
         let inner = CGSize(
             width: max(1, viewport.width - 32),
             height: max(1, viewport.height - 32)
         )
-        let fitted = fittedRect(in: inner).offsetBy(dx: 16, dy: 16)
-        return (fitted, viewport)
+        let fitted = fittedRect(in: inner).offsetBy(
+            dx: (content.width - inner.width) / 2,
+            dy: (content.height - inner.height) / 2
+        )
+        return (fitted, content)
     }
 
-    /// 抓手是否生效：常驻抓手或按住空格，且处于缩放态（适应态无可平移空间）。
+    /// 抓手是否生效：常驻抓手或按住空格，且处于缩放态。
+    /// 适应态也能平移（中键 / 滚轮，内容 3× 视口），但抓手手势仍限缩放态 ——
+    /// 适应态下左键拖拽是「画标注 / 选字」的主通道，空格临时抓手的优先级低。
     private var handModeActive: Bool {
         model.zoomLevel != nil && (model.canvasMode == .hand || spaceMonitor.spaceHeld)
     }
@@ -261,10 +300,15 @@ struct EditorView: View {
     private func canvasBody(fitted: CGRect) -> some View {
         let handActive = handModeActive
         return LayerCanvas(
+            shotID: shot.id,
             image: model.canvasImage ?? blankImage,
             layers: annotation.displayLayers.projected(onto: .zero, scale: 1),
             pixelatePreviews: annotation.pixelatePreviews,
-            selectedLayerID: annotation.selectedID
+            selectedLayerID: annotation.selectedID,
+            onCreated: { canvasHolder.view = $0 },
+            // 标注图层优先于背景选字：点在自己的图层上时事件归标注，
+            // 不交给系统选字层（与下面 DragGesture 的命中口径是同一份）。
+            layerHitTest: { annotation.layer(at: $0) != nil }
         )
         .frame(width: fitted.width, height: fitted.height)
         .offset(x: fitted.minX, y: fitted.minY)
@@ -280,9 +324,19 @@ struct EditorView: View {
                         ? NSCursor.openHand : NSCursor.closedHand).set()
                     return
                 }
-                annotation.strokeScale = Double(
-                    CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width)
-                )
+                // 文字上显示 I-beam（文本光标准备态）。
+                // 钉图是纯 AppKit，系统选字层自己会换 I-beam；编辑器里事件
+                // 走窗口级路由，mouseMoved 不经过系统层，得自己设。
+                if canvasHolder.view?.hasLiveTextInteractiveItem(
+                    atViewLocal: canvasLocalPoint(location, fitted: fitted)
+                ) == true {
+                    NSCursor.iBeam.set()
+                    return
+                }
+                // 值变了才赋值：strokeScale 挂了 willSet 发布，光标每移一像素都写一次
+                // 会让整棵编辑器视图树每帧重建（hover 风暴），拉长选字分析的竞态窗口。
+                let hoverScale = Double(CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width))
+                if annotation.strokeScale != hoverScale { annotation.strokeScale = hoverScale }
                 if annotation.tool == nil,
                    let handle = annotation.resizeHandle(
                        at: imagePoint(location, fitted: fitted)
@@ -335,10 +389,19 @@ struct EditorView: View {
 
         if canvasDrag == nil {
             let start = imagePoint(value.startLocation, fitted: fitted)
+            // 选字层优先：落点在可拖选的文字上时系统层接管，本手势闲置 ——
+            // 否则「拖一次既选了字又画了一笔」（SwiftUI 手势不走 hitTest，
+            // 不能指望它自动让位）。
+            if canvasHolder.view?.hasLiveTextInteractiveItem(
+                atViewLocal: canvasLocalPoint(value.startLocation, fitted: fitted)
+            ) == true {
+                canvasDrag = .idle
+                return
+            }
             // 笔宽按显示倍率反算：不论画布被缩到多小，画出来的线在屏幕上都一样粗。
-            annotation.strokeScale = Double(
-                CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width)
-            )
+            // 同样只在值变化时赋值（见 onContinuousHover 处的注释）。
+            let dragScale = Double(CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width))
+            if annotation.strokeScale != dragScale { annotation.strokeScale = dragScale }
 
             if annotation.tool == .text {
                 placeTextLayer(at: start)
@@ -437,6 +500,12 @@ struct EditorView: View {
             x: (point.x - fitted.minX) * scale,
             y: (point.y - fitted.minY) * scale
         )
+    }
+
+    /// 修饰链 .local 坐标 → CanvasView 本地坐标。画布被 offset 到 fitted.origin，
+    /// offset 只挪命中位置不动布局 frame，所以减掉 origin 即得视图内坐标。
+    private func canvasLocalPoint(_ point: CGPoint, fitted: CGRect) -> CGPoint {
+        CGPoint(x: point.x - fitted.minX, y: point.y - fitted.minY)
     }
 
     // MARK: - 缩放控制
