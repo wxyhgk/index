@@ -32,6 +32,7 @@ private struct ClipboardContent: View {
 
     @State private var renameItem: ClipboardHistoryItem?
     @State private var renameText = ""
+    @State private var collectionItem: ClipboardHistoryItem?
 
     init(store: ClipboardHistoryStore = .shared) {
         self.store = store
@@ -60,6 +61,14 @@ private struct ClipboardContent: View {
         } message: {
             Text("给这条剪贴板记录起个名字，方便以后查找")
         }
+        .sheet(item: $collectionItem) { item in
+            CollectionPickerSheet(
+                item: item,
+                viewModel: viewModel
+            )
+            .frame(width: 360)
+            .frame(minHeight: 320)
+        }
     }
 
     // MARK: 页头：标题 + 计数 + 类型过滤 + 搜索
@@ -78,53 +87,11 @@ private struct ClipboardContent: View {
 
             Spacer(minLength: DS.s2)
 
-            // 类型过滤
-            HStack(spacing: DS.s1) {
-                filterTab("全部", kind: nil)
-                filterTab("文本", kind: .text)
-                filterTab("图片", kind: .image)
-                filterTab("文件", kind: .file)
-            }
-
-            // 搜索
-            HStack(spacing: DS.s1) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: DS.font12))
-                    .foregroundStyle(.tertiary)
-                TextField("搜索", text: $viewModel.query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: DS.font13))
-                    .frame(width: 140)
-                    .onChange(of: viewModel.query) { _ in
-                        viewModel.searchChanged()
-                    }
-            }
-            .padding(.horizontal, DS.s2)
-            .padding(.vertical, DS.s1)
-            .background(DS.iconPlaceholderFill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            ClipboardFilterBar(viewModel: viewModel, searchWidth: 140)
         }
         .padding(.horizontal, DS.s5)
         .padding(.top, DS.s5)
         .padding(.bottom, DS.s3)
-    }
-
-    private func filterTab(_ title: String, kind: ClipboardHistoryKind?) -> some View {
-        Button {
-            viewModel.setTypeFilter(kind)
-        } label: {
-            Text(title)
-                .font(.system(size: DS.font12, weight: viewModel.typeFilter == kind ? .semibold : .regular))
-                .padding(.horizontal, DS.s2)
-                .padding(.vertical, DS.s1)
-                .background(
-                    viewModel.typeFilter == kind
-                        ? DS.accent.opacity(0.15)
-                        : Color.clear,
-                    in: RoundedRectangle(cornerRadius: DS.radiusSmall)
-                )
-                .foregroundStyle(viewModel.typeFilter == kind ? DS.accent : .secondary)
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: 网格
@@ -150,19 +117,31 @@ private struct ClipboardContent: View {
                             item: item,
                             thumbnail: item.id.flatMap { viewModel.imageThumbnails[$0] },
                             appIcon: item.sourceApp.flatMap { viewModel.appIcons[$0] },
-                            isSelected: selection.selectedID == item.id
+                            isSelected: selection.selectedID == item.id,
+                            onToggleFavorite: { viewModel.toggleFavorite(item) }
                         )
                         .onTapGesture {
                             selection.select(item.id)
                         }
                         .contextMenu {
-                            Button("复制") { viewModel.copyBack(item) }
+                            Button("复制") {
+                                selection.selectedID = item.id
+                                viewModel.copyBack(item)
+                            }
                             Button("重命名…") {
+                                selection.selectedID = item.id
                                 renameText = item.title ?? ""
                                 renameItem = item
                             }
-                            Button(item.isFavorite ? "取消收藏" : "收藏") { viewModel.toggleFavorite(item) }
-                            Button(item.pinned ? "取消固定" : "固定") { viewModel.togglePin(item) }
+                            Button(item.isFavorite ? "取消收藏" : "收藏") {
+                                selection.selectedID = item.id
+                                viewModel.toggleFavorite(item)
+                            }
+                            Button(item.pinned ? "取消固定" : "固定") {
+                                selection.selectedID = item.id
+                                viewModel.togglePin(item)
+                            }
+                            collectionMenu(for: item)
                             Divider()
                             Button("删除", role: .destructive) {
                                 viewModel.delete(item)
@@ -176,6 +155,40 @@ private struct ClipboardContent: View {
             }
         }
     }
+
+    @ViewBuilder
+    private func collectionMenu(for item: ClipboardHistoryItem) -> some View {
+        let summaries = viewModel.collectionSummaries
+        let memberships = item.id.flatMap { viewModel.collectionMemberships[$0] } ?? []
+        if summaries.isEmpty {
+            Text("尚无专题集，请先到「收藏」页创建")
+                .disabled(true)
+        } else if summaries.count <= 5 {
+            // 少量集合：内联菜单直接选。
+            Menu {
+                ForEach(summaries) { collection in
+                    let isIn = memberships.contains(collection.id)
+                    Button {
+                        viewModel.toggleCollectionMembership(item, collectionID: collection.id)
+                    } label: {
+                        Label(
+                            collection.name,
+                            systemImage: isIn ? "checkmark" : "rectangle.stack.badge.plus"
+                        )
+                    }
+                }
+            } label: {
+                Label("加入专题收藏集", systemImage: "rectangle.stack.badge.plus")
+            }
+        } else {
+            // 集合多：弹带搜索的 sheet。
+            Button {
+                collectionItem = item
+            } label: {
+                Label("加入专题收藏集…", systemImage: "rectangle.stack.badge.plus")
+            }
+        }
+    }
 }
 
 // MARK: - 网格卡片（比浮动面板卡片稍小，适配网格）
@@ -186,114 +199,43 @@ struct ClipboardGridCard: View {
     let thumbnail: NSImage?
     let appIcon: NSImage?
     var isSelected: Bool = false
+    var onToggleFavorite: (() -> Void)? = nil
+
+    @State private var isHovering = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerBar
-            contentArea
-            footer
-        }
-        .frame(height: 160)
-        .background(DS.panelFill(.resting))
-        .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
-                .strokeBorder(isSelected ? DS.clipboardSelectedRing : DS.borderDefault, lineWidth: isSelected ? 2 : DS.strokeSubtle)
-        )
-        // .clipped() 只裁视觉，命中区域仍会超出 frame 挡住相邻卡片。
-        // contentShape 把 hit testing 锁定在卡片实际 bounds 内。
-        .contentShape(Rectangle())
-    }
-
-    private var headerBar: some View {
-        CardHeaderBar(
-            label: typeLabel,
-            time: item.capturedAt,
+        ClipboardCardBody(
+            item: item,
+            thumbnail: thumbnail,
             appIcon: appIcon,
-            barColor: barColor,
-            pinned: item.pinned
+            textLineLimit: 4
         )
+        .overlay(alignment: .topLeading) { favoriteButton }
+        .frame(height: 160)
+        .modifier(ClipboardCardChrome(isSelected: isSelected, isHovering: isHovering))
+        .onHover { isHovering = $0 }
     }
 
+    /// 收藏星：悬停浮出，已收藏常显实心黄星。
     @ViewBuilder
-    private var contentArea: some View {
-        switch item.kind {
-        case .text:
-            Text(item.text ?? item.summary ?? "")
-                .font(.system(size: DS.font12))
-                .lineLimit(4)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(DS.s2)
-        case .image:
-            if let thumbnail {
-                // Color.clear 先占满可用空间，overlay 图片 .fill 居中裁剪，
-                // 避免长图 intrinsic size 撑破 VStack 布局。
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(
-                        Image(nsImage: thumbnail)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    )
-                    .clipped()
-            } else {
-                placeholderIcon("photo")
+    private var favoriteButton: some View {
+        if let onToggleFavorite, (isHovering || item.isFavorite) {
+            Button(action: onToggleFavorite) {
+                ZStack {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .frame(width: 24, height: 24)
+                    Image(systemName: item.isFavorite ? "star.fill" : "star")
+                        .font(.system(size: DS.font12, weight: .semibold))
+                        .foregroundStyle(item.isFavorite ? .yellow : .primary)
+                        .symbolEffect(.bounce, value: item.isFavorite)
+                }
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
             }
-        case .file:
-            placeholderIcon("doc")
-        }
-    }
-
-    private var footer: some View {
-        HStack(spacing: DS.s1) {
-            Text(item.displayName)
-                .font(.system(size: DS.font11, weight: .medium))
-                .lineLimit(1)
-            Spacer()
-            Text(footerText)
-                .font(.system(size: DS.font9))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, DS.s2)
-        .padding(.vertical, DS.s1)
-    }
-
-    private func placeholderIcon(_ name: String) -> some View {
-        VStack {
-            Image(systemName: name)
-                .font(.system(size: DS.font20))
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var typeLabel: String {
-        switch item.kind {
-        case .text: return "文本"
-        case .image: return "图片"
-        case .file: return "文件"
-        }
-    }
-
-    private var barColor: Color {
-        switch item.kind {
-        case .text: return DS.clipboardTextBar
-        case .image: return DS.clipboardImageBar
-        case .file: return DS.clipboardFileBar
-        }
-    }
-
-    private var footerText: String {
-        switch item.kind {
-        case .text:
-            let count = (item.text ?? "").count
-            return "\(count) 个字符"
-        case .image:
-            return item.summary ?? "图片"
-        case .file:
-            return item.summary ?? "文件"
+            .buttonStyle(.plain)
+            .padding(DS.s1)
+            .help(item.isFavorite ? "取消收藏" : "收藏")
         }
     }
 }
@@ -311,5 +253,126 @@ final class ClipboardSelection: ObservableObject {
 
     func clearIf(_ id: Int64?) {
         if selectedID == id { selectedID = nil }
+    }
+}
+
+// MARK: - 专题收藏集选择器（集合多时弹出，带搜索）
+
+private struct CollectionPickerSheet: View {
+    let item: ClipboardHistoryItem
+    @ObservedObject var viewModel: ClipboardHistoryViewModel
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+
+    private var summaries: [ShotCollectionSummary] { viewModel.collectionSummaries }
+    private var memberships: Set<Int64> {
+        item.id.flatMap { viewModel.collectionMemberships[$0] } ?? []
+    }
+
+    private var filtered: [ShotCollectionSummary] {
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return summaries }
+        return summaries.filter { $0.name.localizedCaseInsensitiveContains(q) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            headerBar
+            searchBar
+            listSection
+        }
+    }
+
+    private var headerBar: some View {
+        HStack {
+            Text("加入专题收藏集")
+                .font(.headline)
+            Spacer()
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, DS.s4)
+        .padding(.top, DS.s4)
+        .padding(.bottom, DS.s2)
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: DS.s1) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: DS.font12))
+                .foregroundStyle(.tertiary)
+            TextField("搜索专题集", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: DS.font13))
+        }
+        .padding(.horizontal, DS.s2)
+        .padding(.vertical, DS.s1)
+        .background(DS.iconPlaceholderFill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .padding(.horizontal, DS.s4)
+        .padding(.bottom, DS.s3)
+    }
+
+    @ViewBuilder
+    private var listSection: some View {
+        if filtered.isEmpty {
+            ContentUnavailableView(
+                searchText.isEmpty ? "尚无专题集" : "没有匹配的专题集",
+                systemImage: "rectangle.stack",
+                description: Text(searchText.isEmpty ? "请先到「收藏」页创建" : "换个关键词试试")
+            )
+            .frame(maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: DS.s1) {
+                    ForEach(filtered) { collection in
+                        row(for: collection)
+                    }
+                }
+                .padding(.horizontal, DS.s3)
+                .padding(.bottom, DS.s3)
+            }
+        }
+    }
+
+    private func row(for collection: ShotCollectionSummary) -> some View {
+        let isIn = memberships.contains(collection.id)
+        return Button {
+            viewModel.toggleCollectionMembership(item, collectionID: collection.id)
+        } label: {
+            HStack(spacing: DS.s2) {
+                Image(systemName: isIn ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: DS.font15))
+                    .foregroundStyle(isIn ? AnyShapeStyle(DS.accent) : AnyShapeStyle(.tertiary))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(collection.name)
+                        .font(.system(size: DS.font13, weight: .medium))
+                        .lineLimit(1)
+                    Text("\(collection.itemCount) 张")
+                        .font(.system(size: DS.font11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isIn {
+                    Text("已加入")
+                        .font(.system(size: DS.font11))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, DS.s3)
+            .padding(.vertical, DS.s2)
+            .background(
+                isIn ? DS.accent.opacity(0.08) : Color.clear,
+                in: RoundedRectangle(cornerRadius: DS.radiusSmall)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

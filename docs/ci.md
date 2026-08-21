@@ -18,7 +18,7 @@ Index 只能在 macOS 上构建：AppKit、ScreenCaptureKit 和 Vision 在 Linux
 Releases。工作流也支持手动选择一个已经存在、且与 `Info.plist` 版本一致的标签重新出包。
 
 仓库尚未配置 Developer ID 与 Apple 公证凭据，因此当前 CI 附件明确标记为未公证预览版，
-并使用 `MACSHOT_ALLOW_ADHOC=1` 这一显式例外。它适合体验，不代表正式签名发行；本地固定
+并使用 `INDEX_ALLOW_ADHOC=1` 这一显式例外。它适合体验，不代表正式签名发行；本地固定
 开发证书不会上传到公共 CI。
 
 ## 本地提交前
@@ -56,7 +56,7 @@ Release App 只能通过以下命令组装：
 `build/Index.app`。不得手工覆盖正在运行的 App；详细原因见
 [`docs/errors/2026-08-11-running-app-rebuild-tcc-identity.md`](errors/2026-08-11-running-app-rebuild-tcc-identity.md)。
 
-本地开发可先运行 `./scripts/make-dev-cert.sh` 创建固定的 `MacShot Dev` 身份。该证书只适合
+本地开发可先运行 `./scripts/make-dev-cert.sh` 创建固定的 `Index Dev` 身份。该证书只适合
 开发机，不适合向其他用户分发。GitHub Release 的正式可下载 App 应使用 Developer ID
 Application 签名并完成 Apple notarization；接入正式凭据后，应移除工作流中的 ad-hoc
 预览例外并取消 prerelease 标记。

@@ -227,7 +227,7 @@ struct MultiSelectionPane: View {
             do {
                 try store.addToCollection(shotIDs: ids, collectionID: collectionID)
             } catch {
-                NSLog("[MacShot] 批量加入收藏集失败: \(error)")
+                NSLog("[Index] 批量加入收藏集失败: \(error)")
             }
         }
         Task { await refreshCollections() }

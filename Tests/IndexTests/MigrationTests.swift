@@ -1,6 +1,6 @@
 import XCTest
 import GRDB
-@testable import MacShot
+@testable import IndexApp
 
 /// 迁移链的安全网：空库全量迁移、v3 → v4 重建表的数据保真。
 final class MigrationTests: XCTestCase {

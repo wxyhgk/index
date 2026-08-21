@@ -47,11 +47,11 @@ Metadata/   元数据：MetadataCollector + ScrollStitcher（滚动拼接，成�
 
 ## 工具条双行与 DS 令牌（2026-08-10）
 
-`Toolbar/` 见 `Sources/MacShot/Toolbar/README.md` 的几何契约；截图工具条形态更新如下：
+`Toolbar/` 见 `Sources/Index/Toolbar/README.md` 的几何契约；截图工具条形态更新如下：
 
 * 尺寸 `blockSize = max(上行宽, 下行宽)`，有样式高 `76 (=34*2+8)` 无样式单行 `34`；`slots(origin:)` 主行在上、样式行在下，主行始终最靠近锚点，`interRowGap=8`；绘制与命中共用 `slots`。
 * `ToolbarRenderer` 双胶囊底板与选中/悬停均走 `DS.toolbarBackground/Stroke/Separator/Selected/Hover`（`UI/DesignTokens.swift` AppKit 令牌区），无裸写 `NSColor`；`check.sh` 纪律四覆盖。
 
 ## PAL 边界
 
-平台副作用（面板/弹窗/剪贴板/浏览器 URL 等）只许出现在 `Platform/`，见 `Sources/MacShot/Platform/README.md` 与 `Sources/MacShot/README.md` 的 CSS/API 分层表；`Platform/Platform.swift` 为 PAL 骨架。
+平台副作用（面板/弹窗/剪贴板/浏览器 URL 等）只许出现在 `Platform/`，见 `Sources/Index/Platform/README.md` 与 `Sources/Index/README.md` 的 CSS/API 分层表；`Platform/Platform.swift` 为 PAL 骨架。

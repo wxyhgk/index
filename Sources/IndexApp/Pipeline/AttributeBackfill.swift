@@ -96,7 +96,7 @@ enum AttributeBackfill {
         }
         guard !pending.isEmpty else { return }
 
-        NSLog("[MacShot] 属性回填：\(pending.count) 张待处理，每批 \(configuration.batchSize) 张")
+        NSLog("[Index] 属性回填：\(pending.count) 张待处理，每批 \(configuration.batchSize) 张")
         var batchStart = 0
         while batchStart < pending.count, !Task.isCancelled {
             let batchEnd = min(batchStart + configuration.batchSize, pending.count)

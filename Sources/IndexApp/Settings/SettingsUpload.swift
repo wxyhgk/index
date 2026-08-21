@@ -97,7 +97,7 @@ struct UploadSettings: View {
         Task {
             do {
                 let link = try await ImageUploader.upload(
-                    png: png, filename: "macshot-test.png", config: config
+                    png: png, filename: "index-test.png", config: config
                 )
                 testResult = "成功：\(link)"
                 testSucceeded = true

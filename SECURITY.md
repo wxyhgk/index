@@ -19,11 +19,11 @@
 
 请不要提交：
 
-- `~/Library/Application Support/MacShot/` 下的真实图库或数据库；
+- `~/Library/Application Support/Index/` 下的真实图库或数据库；
 - 图床请求头、访问 token、浏览器 cookie 或 Native Messaging 私有数据；
 - 签名证书、私钥、provisioning profile 或 notarization 凭据。
 
 ## 分发安全
 
-本地 `MacShot Dev` 证书只用于保持开发机上的 TCC 身份稳定。公开二进制必须使用 Developer ID
+本地 `Index Dev` 证书只用于保持开发机上的 TCC 身份稳定。公开二进制必须使用 Developer ID
 Application 签名并完成 Apple notarization；不要把开发证书或私钥提交到仓库或公共 CI。

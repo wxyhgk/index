@@ -38,10 +38,10 @@ package:
     - if: $CI_COMMIT_TAG
   script:
     - ./build.sh release
-    - codesign --verify --deep --strict build/MacShot.app
-    - ditto -c -k --keepParent build/MacShot.app "MacShot-${CI_COMMIT_TAG}.app.zip"
+    - codesign --verify --deep --strict build/Index.app
+    - ditto -c -k --keepParent build/Index.app "Index-${CI_COMMIT_TAG}.app.zip"
   artifacts:
-    name: "MacShot-${CI_COMMIT_TAG}"
+    name: "Index-${CI_COMMIT_TAG}"
     paths:
-      - "MacShot-${CI_COMMIT_TAG}.app.zip"
+      - "Index-${CI_COMMIT_TAG}.app.zip"
     expire_in: 3 months

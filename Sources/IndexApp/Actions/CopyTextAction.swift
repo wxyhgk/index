@@ -18,7 +18,7 @@ struct CopyTextAction: CaptureAction {
         // 对原图识别，不含标注 —— 画上去的箭头和高亮可能盖住文字。
         let text = await VisionOCR().recognizeText(in: context.base)
         guard !text.isEmpty else {
-            NSLog("[MacShot] 取字：未识别到文字")
+            NSLog("[Index] 取字：未识别到文字")
             return
         }
         Clipboard.copy(text: text)

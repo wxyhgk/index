@@ -78,7 +78,7 @@ final class MacScreenCapturer: ScreenCapturing {
             for display in displays {
                 try Task.checkCancellation()
                 guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
-                    NSLog("[MacShot] 共享内容中找不到显示器 displayID=%u name=%@", display.id, display.name)
+                    NSLog("[Index] 共享内容中找不到显示器 displayID=%u name=%@", display.id, display.name)
                     failedDisplays.append(display)
                     continue
                 }
@@ -108,7 +108,7 @@ final class MacScreenCapturer: ScreenCapturing {
                     guard abs(image.width - config.width) <= 1,
                           abs(image.height - config.height) <= 1 else {
                         NSLog(
-                            "[MacShot] 显示器像素校验失败 displayID=%u name=%@ 请求=%dx%d 实得=%dx%d",
+                            "[Index] 显示器像素校验失败 displayID=%u name=%@ 请求=%dx%d 实得=%dx%d",
                             display.id, display.name, config.width, config.height, image.width, image.height
                         )
                         failedDisplays.append(display)
@@ -125,7 +125,7 @@ final class MacScreenCapturer: ScreenCapturing {
                     throw error
                 } catch {
                     NSLog(
-                        "[MacShot] 显示器捕获失败 displayID=%u name=%@ error=%@",
+                        "[Index] 显示器捕获失败 displayID=%u name=%@ error=%@",
                         display.id, display.name, String(describing: error)
                     )
                     failedDisplays.append(display)
@@ -135,7 +135,7 @@ final class MacScreenCapturer: ScreenCapturing {
             let topologyStillMatches = generation == topologyGeneration
                 && DisplayTopology.matches(displays, currentDisplays())
             guard topologyStillMatches else {
-                NSLog("[MacShot] 捕获期间显示器拓扑变化 generation=%llu attempt=%d", generation, attempt + 1)
+                NSLog("[Index] 捕获期间显示器拓扑变化 generation=%llu attempt=%d", generation, attempt + 1)
                 if attempt == 0 {
                     try await waitForTopologyToSettle()
                     continue
@@ -145,7 +145,7 @@ final class MacScreenCapturer: ScreenCapturing {
 
             guard failedDisplays.isEmpty, snapshots.count == displays.count else {
                 let names = failedDisplays.isEmpty ? displays.map(\.name) : failedDisplays.map(\.name)
-                NSLog("[MacShot] 显示器捕获失败 names=%@", names.joined(separator: ", "))
+                NSLog("[Index] 显示器捕获失败 names=%@", names.joined(separator: ", "))
                 throw CaptureError.displayCaptureFailed(names)
             }
 
@@ -153,7 +153,7 @@ final class MacScreenCapturer: ScreenCapturing {
                 "\(snapshot.display.name)=\(snapshot.image.width)x\(snapshot.image.height)@\(String(format: "%.2f", snapshot.imageScale))x"
             }.joined(separator: ", ")
             NSLog(
-                "[MacShot] 多屏冻结完成 generation=%llu elapsed=%.3fs count=%d images=%@",
+                "[Index] 多屏冻结完成 generation=%llu elapsed=%.3fs count=%d images=%@",
                 generation,
                 Date().timeIntervalSince(startedAt),
                 snapshots.count,
@@ -177,7 +177,7 @@ final class MacScreenCapturer: ScreenCapturing {
     private func displayTopologyDidChange() {
         topologyGeneration &+= 1
         cachedDisplayContent = nil
-        NSLog("[MacShot] 显示器拓扑变化 generation=%llu", topologyGeneration)
+        NSLog("[Index] 显示器拓扑变化 generation=%llu", topologyGeneration)
     }
 
     private func displayContent(
@@ -223,7 +223,7 @@ final class MacScreenCapturer: ScreenCapturing {
             operationName: "window:\(windowID)"
         )
         NSLog(
-            "[MacShot] 整窗捕获: 请求 %dx%d 实得 %dx%d 阴影=%@",
+            "[Index] 整窗捕获: 请求 %dx%d 实得 %dx%d 阴影=%@",
             config.width,
             config.height,
             image.width,

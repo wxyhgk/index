@@ -49,6 +49,15 @@ struct ClipboardHistoryItem: Codable, FetchableRecord, MutablePersistableRecord,
     }
 }
 
+/// 剪贴板条目 → 专题收藏集的关联行。
+struct ClipboardCollectionItem: Codable, FetchableRecord, PersistableRecord, Equatable {
+    static let databaseTableName = "clipboardCollectionItem"
+
+    var collectionID: Int64
+    var clipboardID: Int64
+    var addedAt: Date
+}
+
 // MARK: - 仓库
 
 /// 剪贴板历史的读写。非 MainActor：写入走 DatabasePool，不阻塞主线程。
@@ -63,7 +72,7 @@ final class ClipboardHistoryStore: @unchecked Sendable {
     }()
 
     private let writer: any DatabaseWriter
-    /// 图片落盘目录（Application Support/MacShot/clipboard/）。
+    /// 图片落盘目录（Application Support/Index/clipboard/）。
     let assetDirectory: URL
 
     init(writer: (any DatabaseWriter)? = nil) throws {
@@ -72,12 +81,12 @@ final class ClipboardHistoryStore: @unchecked Sendable {
         } else {
             let base = FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("MacShot", isDirectory: true)
+                .appendingPathComponent("Index", isDirectory: true)
             self.writer = try AppDatabase.makeWriter(at: base.appendingPathComponent("index.sqlite"))
         }
         let assetBase = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MacShot", isDirectory: true)
+            .appendingPathComponent("Index", isDirectory: true)
             .appendingPathComponent("clipboard", isDirectory: true)
         try FileManager.default.createDirectory(at: assetBase, withIntermediateDirectories: true)
         self.assetDirectory = assetBase
@@ -167,6 +176,18 @@ final class ClipboardHistoryStore: @unchecked Sendable {
         }
     }
 
+    /// 某专题集里的剪贴板成员（收藏 tab 打开专题集时展示），按加入时间倒序。
+    func items(inCollection collectionID: Int64) throws -> [ClipboardHistoryItem] {
+        try writer.read { db in
+            try ClipboardHistoryItem.fetchAll(db, sql: """
+                SELECT h.* FROM clipboardHistory h
+                JOIN clipboardCollectionItem c ON c.clipboardID = h.id
+                WHERE c.collectionID = ?
+                ORDER BY h.capturedAt DESC
+                """, arguments: StatementArguments([collectionID]))
+        }
+    }
+
     /// 某条目的完整内容（文本全文 / 图片文件 URL）。
     func content(of item: ClipboardHistoryItem) -> (text: String?, assetURL: URL?) {
         switch item.kind {
@@ -221,6 +242,13 @@ final class ClipboardHistoryStore: @unchecked Sendable {
             )
         }
         try? writer.write { db in
+            // 级联清理收藏集关联行，避免孤儿数据。
+            if let id = item.id {
+                try db.execute(
+                    sql: "DELETE FROM clipboardCollectionItem WHERE clipboardID = ?",
+                    arguments: [id]
+                )
+            }
             var mutable = item
             _ = try mutable.delete(db)
         }
@@ -245,5 +273,60 @@ final class ClipboardHistoryStore: @unchecked Sendable {
                 _ = try mutable.delete(db)
             }
         }
+    }
+
+    // MARK: 专题收藏集关联
+
+    /// 幂等加入：重复 (collectionID, clipboardID) 不生成重复行。
+    /// 跨域写入：剪贴板条目和截图条目是两种成员关系表，但共享
+    /// shotCollection.updatedAt 用于收藏 tab 排序，这里直接 UPDATE。
+    func addToCollection(clipboardID: Int64, collectionID: Int64) throws {
+        try writer.write { db in
+            let now = Date()
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO clipboardCollectionItem
+                    (collectionID, clipboardID, addedAt)
+                VALUES (?, ?, ?)
+                """, arguments: [collectionID, clipboardID, now])
+            try db.execute(
+                sql: "UPDATE shotCollection SET updatedAt = ? WHERE id = ?",
+                arguments: [now, collectionID]
+            )
+        }
+    }
+
+    func removeFromCollection(clipboardID: Int64, collectionID: Int64) {
+        try? writer.write { db in
+            try db.execute(sql: """
+                DELETE FROM clipboardCollectionItem
+                WHERE collectionID = ? AND clipboardID = ?
+                """, arguments: [collectionID, clipboardID])
+            try db.execute(
+                sql: "UPDATE shotCollection SET updatedAt = ? WHERE id = ?",
+                arguments: [Date(), collectionID]
+            )
+        }
+    }
+
+    /// 批量查询剪贴板条目的收藏集成员关系。
+    func collectionMemberships(clipboardIDs: [Int64]) -> [Int64: Set<Int64>] {
+        let ids = Array(Set(clipboardIDs))
+        guard !ids.isEmpty else { return [:] }
+        return (try? writer.read { db in
+            var result: [Int64: Set<Int64>] = [:]
+            for start in stride(from: 0, to: ids.count, by: 500) {
+                let chunk = Array(ids[start..<min(start + 500, ids.count)])
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT clipboardID, collectionID FROM clipboardCollectionItem
+                    WHERE clipboardID IN (\(chunk.map { _ in "?" }.joined(separator: ",")))
+                    """, arguments: StatementArguments(chunk))
+                for row in rows {
+                    let clipboardID: Int64 = row["clipboardID"]
+                    let collectionID: Int64 = row["collectionID"]
+                    result[clipboardID, default: []].insert(collectionID)
+                }
+            }
+            return result
+        }) ?? [:]
     }
 }

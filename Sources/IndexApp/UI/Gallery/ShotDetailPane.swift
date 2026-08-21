@@ -424,7 +424,7 @@ struct ShotDetailPane: View {
             do {
                 try store.addToCollection(shotIDs: [id], collectionID: collectionID)
             } catch {
-                NSLog("[MacShot] 加入收藏集失败: \(error)")
+                NSLog("[Index] 加入收藏集失败: \(error)")
             }
         }
         refreshCollections()

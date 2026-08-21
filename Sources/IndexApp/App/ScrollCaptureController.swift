@@ -102,7 +102,7 @@ final class ScrollCaptureController {
                 }
                 guard didBegin else { throw CaptureError.displayTopologyChanged }
             } catch {
-                NSLog("[MacShot] 滚动截图准备失败: \(error)")
+                NSLog("[Index] 滚动截图准备失败: \(error)")
             }
         }
     }
@@ -156,7 +156,7 @@ final class ScrollCaptureController {
             // 编辑器活在图库窗口内（单窗口双模式）：弹图库并直接进编辑模式。
             GalleryWindowController.shared.showEditor(for: shot)
         } catch {
-            NSLog("[MacShot] 滚动截图保存失败: \(error)")
+            NSLog("[Index] 滚动截图保存失败: \(error)")
         }
     }
 }
@@ -223,7 +223,7 @@ private final class ScrollCaptureSession {
             }
             grabber.onStopped = { [weak self] error in
                 guard let self, !self.finished else { return }
-                NSLog("[MacShot] 滚动采集流中断: \(error)")
+                NSLog("[Index] 滚动采集流中断: \(error)")
                 self.cancel()
             }
             do {
@@ -235,7 +235,7 @@ private final class ScrollCaptureSession {
                 }
                 self.grabber = grabber
             } catch {
-                NSLog("[MacShot] 滚动采集启动失败: \(error)")
+                NSLog("[Index] 滚动采集启动失败: \(error)")
                 self.cancel()
             }
         }
@@ -332,7 +332,7 @@ private final class ScrollFrameStream: NSObject, SCStreamOutput, SCStreamDelegat
     private let region: CGRect
     private let display: DisplayInfo
     private let stitcherConfig: ScrollStitcher.Config
-    private let sampleQueue = DispatchQueue(label: "com.macshot.scroll-capture.frames")
+    private let sampleQueue = DispatchQueue(label: "com.index.scroll-capture.frames")
     private var stream: SCStream?
     /// 只在 sampleQueue 上访问：上一帧的行签名，「画面没变就丢弃」的节流状态。
     private var lastSignatures: [[Float]]?
@@ -400,7 +400,7 @@ private final class ScrollFrameStream: NSObject, SCStreamOutput, SCStreamDelegat
         do {
             try await stream.stopCapture()
         } catch {
-            NSLog("[MacShot] 滚动采集流停止失败: \(error)")
+            NSLog("[Index] 滚动采集流停止失败: \(error)")
         }
     }
 

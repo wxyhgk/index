@@ -156,7 +156,7 @@ final class ShelfCardController: NSWindowController {
             dragFileURL = url
             return url
         } catch {
-            NSLog("[MacShot] 暂存卡片写临时文件失败: \(error)")
+            NSLog("[Index] 暂存卡片写临时文件失败: \(error)")
             return nil
         }
     }

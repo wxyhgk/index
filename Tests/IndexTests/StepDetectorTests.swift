@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class StepDetectorTests: XCTestCase {
 

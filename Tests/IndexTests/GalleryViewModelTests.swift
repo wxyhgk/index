@@ -2,7 +2,7 @@ import CoreGraphics
 import Combine
 import GRDB
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class GalleryViewModelTests: XCTestCase {

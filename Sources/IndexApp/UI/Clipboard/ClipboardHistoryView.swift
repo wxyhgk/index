@@ -1,5 +1,103 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
+
+// MARK: - 窗口拖拽区域
+//
+// 用 AppKit 原生 performDrag(with:) 实现，系统级拖动不抖不卡。
+// 放在 topBar 的 background 层，不影响按钮/输入框的点击。
+
+private struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        DragAreaView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class DragAreaView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+    }
+}
+
+// MARK: - 图片 hover 大图预览
+//
+// 独立 NSWindow 浮出，可以超出面板边界。
+// 鼠标悬停 400ms 后显示，离开即消失。
+
+@MainActor
+final class ImagePreviewController {
+    static let shared = ImagePreviewController()
+
+    private var window: NSWindow?
+    private var imageView: NSImageView?
+    private var showTask: Task<Void, Never>?
+
+    func scheduleShow(image: NSImage, screenPoint: NSPoint) {
+        showTask?.cancel()
+        showTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            self?.show(image: image, near: screenPoint)
+        }
+    }
+
+    /// 立即显示（空格键触发，不走延迟）。
+    func showNow(image: NSImage, screenPoint: NSPoint) {
+        showTask?.cancel()
+        showTask = nil
+        show(image: image, near: screenPoint)
+    }
+
+    func cancel() {
+        showTask?.cancel()
+        showTask = nil
+        window?.orderOut(nil)
+    }
+
+    private func show(image: NSImage, near point: NSPoint) {
+        let maxDim: CGFloat = 420
+        let scale = min(1, maxDim / max(image.size.width, image.size.height))
+        let w = image.size.width * scale
+        let h = image.size.height * scale
+
+        if window == nil {
+            let win = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: w, height: h),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            win.level = .floating
+            win.isOpaque = false
+            win.backgroundColor = .clear
+            win.hasShadow = true
+            win.ignoresMouseEvents = true
+            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+            let iv = NSImageView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+            iv.imageScaling = .scaleProportionallyUpOrDown
+            iv.wantsLayer = true
+            iv.layer?.cornerRadius = 10
+            iv.layer?.masksToBounds = true
+            iv.layer?.borderWidth = 1
+            iv.layer?.borderColor = NSColor.separatorColor.cgColor
+            win.contentView = iv
+            window = win
+            imageView = iv
+        }
+
+        window?.setContentSize(NSSize(width: w, height: h))
+        imageView?.image = image
+
+        // 位置：鼠标上方居中
+        let x = point.x - w / 2
+        let y = point.y + 8
+        window?.setFrameOrigin(NSPoint(x: x, y: y))
+        window?.orderFront(nil)
+    }
+}
 
 // ============================================================
 // MARK: - 横向滚动桥接器
@@ -127,6 +225,7 @@ struct ClipboardHistoryView: View {
     let store: ClipboardHistoryStore
 
     @FocusState private var searchFocused: Bool
+    @State private var isPinned = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -141,33 +240,21 @@ struct ClipboardHistoryView: View {
 
     private var topBar: some View {
         HStack(spacing: DS.s3) {
-            // 类型过滤 tab
-            HStack(spacing: DS.s1) {
-                filterTab("全部", kind: nil)
-                filterTab("文本", kind: .text)
-                filterTab("图片", kind: .image)
-                filterTab("文件", kind: .file)
-            }
+            ClipboardFilterBar(viewModel: viewModel, searchWidth: 160)
 
             Spacer()
 
-            // 搜索
-            HStack(spacing: DS.s1) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: DS.font12))
-                    .foregroundStyle(.tertiary)
-                TextField("搜索", text: $viewModel.query)
-                    .textFieldStyle(.plain)
+            // 钉住按钮
+            Button {
+                isPinned.toggle()
+                ClipboardHistoryCoordinator.shared.isPinned = isPinned
+            } label: {
+                Image(systemName: isPinned ? "pin.fill" : "pin")
                     .font(.system(size: DS.font13))
-                    .frame(width: 160)
-                    .focused($searchFocused)
-                    .onChange(of: viewModel.query) { _ in
-                        viewModel.searchChanged()
-                    }
+                    .foregroundStyle(isPinned ? AnyShapeStyle(DS.accent) : AnyShapeStyle(.tertiary))
             }
-            .padding(.horizontal, DS.s2)
-            .padding(.vertical, DS.s1)
-            .background(DS.iconPlaceholderFill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .buttonStyle(.plain)
+            .help(isPinned ? "取消钉住" : "钉住面板")
 
             // 计数
             Text("\(viewModel.filteredItems.count) 项")
@@ -176,25 +263,7 @@ struct ClipboardHistoryView: View {
         }
         .padding(.horizontal, DS.s4)
         .padding(.vertical, DS.s3)
-    }
-
-    private func filterTab(_ title: String, kind: ClipboardHistoryKind?) -> some View {
-        Button {
-            viewModel.setTypeFilter(kind)
-        } label: {
-            Text(title)
-                .font(.system(size: DS.font12, weight: viewModel.typeFilter == kind ? .semibold : .regular))
-                .padding(.horizontal, DS.s2)
-                .padding(.vertical, DS.s1)
-                .background(
-                    viewModel.typeFilter == kind
-                        ? DS.accent.opacity(0.15)
-                        : Color.clear,
-                    in: RoundedRectangle(cornerRadius: DS.radiusSmall)
-                )
-                .foregroundStyle(viewModel.typeFilter == kind ? DS.accent : .secondary)
-        }
-        .buttonStyle(.plain)
+        .background(WindowDragArea())
     }
 
     // MARK: 横向卡片流
@@ -215,9 +284,16 @@ struct ClipboardHistoryView: View {
                             isSelected: index == viewModel.selectedIndex
                         )
                         .onTapGesture {
-                            viewModel.selectedIndex = index
-                            viewModel.copyBack(item)
-                            ClipboardHistoryCoordinator.shared.togglePanel()
+                            if viewModel.selectedIndex == index {
+                                // 第二次点同一张卡片：粘贴。
+                                viewModel.pasteSelected()
+                            } else {
+                                // 第一次点：选中。
+                                viewModel.selectedIndex = index
+                            }
+                        }
+                        .onDrag {
+                            viewModel.dragProvider(for: item)
                         }
                         .contextMenu {
                             Button("复制") { viewModel.copyBack(item) }

@@ -17,6 +17,7 @@ struct GalleryBottomBar: View {
     @ObservedObject private var imageImporter = ImageImportCoordinator.shared
     @ObservedObject private var appsNavigation = AppsNavigationState.shared
     @ObservedObject private var collectionsNavigation = CollectionsNavigationState.shared
+    @State private var isImportingLibrary = false
 
     @AppStorage("galleryLayout") private var layout = GalleryLayoutKind.grid
     @AppStorage("galleryZoom") private var zoom = 200.0
@@ -110,12 +111,18 @@ struct GalleryBottomBar: View {
     }
 
     private var importButton: some View {
-        Button {
-            guard let urls = SystemNavigator.chooseImageFiles(), !urls.isEmpty else { return }
-            viewModel.reset()
-            imageImporter.enqueue(urls)
+        Menu {
+            Button("导入图片…") {
+                guard let urls = SystemNavigator.chooseImageFiles(), !urls.isEmpty else { return }
+                viewModel.reset()
+                imageImporter.enqueue(urls)
+            }
+            Button("导入便携图库…") {
+                importPortableLibrary()
+            }
+            .disabled(isImportingLibrary)
         } label: {
-            if imageImporter.isImporting {
+            if imageImporter.isImporting || isImportingLibrary {
                 ProgressView()
                     .controlSize(.small)
             } else {
@@ -123,11 +130,27 @@ struct GalleryBottomBar: View {
                     .font(.system(size: DS.font13, weight: .medium))
             }
         }
+        .menuStyle(.button)
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .disabled(imageImporter.isImporting)
-        .help("导入本地图片")
-        .accessibilityLabel(imageImporter.isImporting ? "正在导入图片" : "导入图片")
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("导入图片或便携图库")
+        .accessibilityLabel(imageImporter.isImporting || isImportingLibrary ? "正在导入" : "导入")
+    }
+
+    private func importPortableLibrary() {
+        guard let directory = SystemNavigator.chooseDirectory() else { return }
+        isImportingLibrary = true
+        Task {
+            defer { isImportingLibrary = false }
+            do {
+                let report = try await ShotStore.shared.importPortableLibrary(at: directory)
+                AppAlert.info("导入完成", message: report.summary)
+            } catch {
+                AppAlert.info("导入失败", message: error.localizedDescription)
+            }
+        }
     }
 
     private var layoutPicker: some View {

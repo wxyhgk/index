@@ -124,7 +124,7 @@ actor CLIPEncoder {
         do {
             return try MLModel(contentsOf: url, configuration: configuration)
         } catch {
-            NSLog("[MacShot] CLIP 模型加载失败: \(error)")
+            NSLog("[Index] CLIP 模型加载失败: \(error)")
             return nil
         }
     }

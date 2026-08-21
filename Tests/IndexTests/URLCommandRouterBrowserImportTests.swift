@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import GRDB
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class URLCommandRouterBrowserImportTests: XCTestCase {
@@ -71,7 +71,7 @@ final class URLCommandRouterBrowserImportTests: XCTestCase {
         )
     }
 
-    func testAcceptsIndexAndLegacyMacShotSchemes() throws {
+    func testAcceptsIndexAndLegacySchemes() throws {
         let database = try DatabaseQueue()
         try AppDatabase.migrator.migrate(database)
         let libraryRoot = temporaryDirectory("schemes")

@@ -1,6 +1,6 @@
 import XCTest
 import CoreGraphics
-@testable import MacShot
+@testable import IndexApp
 
 final class MoleculeXYZTests: XCTestCase {
     func testParsesStandardXYZAndNormalizesElements() throws {

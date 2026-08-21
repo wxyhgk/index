@@ -25,6 +25,9 @@ struct CollectionsContent: View {
     @State private var clipboardFavorites: [ClipboardHistoryItem] = []
     @State private var clipboardFavoritesThumbnails: [Int64: NSImage] = [:]
     @State private var clipboardFavoritesAppIcons: [String: NSImage] = [:]
+    @State private var collectionClipboardItems: [ClipboardHistoryItem] = []
+    @State private var collectionClipboardThumbnails: [Int64: NSImage] = [:]
+    @State private var collectionClipboardAppIcons: [String: NSImage] = [:]
 
     init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
         _store = ObservedObject(wrappedValue: store)
@@ -44,6 +47,9 @@ struct CollectionsContent: View {
                     clipboardFavorites: clipboardFavorites,
                     clipboardFavoritesThumbnails: clipboardFavoritesThumbnails,
                     clipboardFavoritesAppIcons: clipboardFavoritesAppIcons,
+                    collectionClipboardItems: collectionClipboardItems,
+                    collectionClipboardThumbnails: collectionClipboardThumbnails,
+                    collectionClipboardAppIcons: collectionClipboardAppIcons,
                     onClose: closeDetail
                 )
             } else {
@@ -112,6 +118,30 @@ struct CollectionsContent: View {
             navigation.route = nil
         }
         reloadClipboardFavorites()
+        reloadCollectionClipboardItems()
+    }
+
+    /// 当前打开的专题集里的剪贴板成员（截图成员由 GalleryGrid 走 viewModel 渲染）。
+    private func reloadCollectionClipboardItems() {
+        guard case .collection(let id) = navigation.route else {
+            collectionClipboardItems = []
+            return
+        }
+        let items = (try? ClipboardHistoryStore.shared.items(inCollection: id)) ?? []
+        collectionClipboardItems = items
+        for item in items where item.kind == .image {
+            guard let id = item.id, collectionClipboardThumbnails[id] == nil,
+                  let url = ClipboardHistoryStore.shared.content(of: item).assetURL,
+                  let image = NSImage(contentsOf: url) else { continue }
+            collectionClipboardThumbnails[id] = image
+        }
+        for item in items {
+            guard let app = item.sourceApp, collectionClipboardAppIcons[app] == nil else { continue }
+            Task {
+                guard let icon = await AppIconProvider.shared.icon(forName: app) else { return }
+                collectionClipboardAppIcons[app] = icon
+            }
+        }
     }
 
     private func reloadClipboardFavorites() {
@@ -167,6 +197,10 @@ struct CollectionsContent: View {
                 scope.activate(in: viewModel)
             }
             navigation.route = route
+        }
+        // 导航到专题集时加载其剪贴板成员（reload 只在首次出现时执行，导航切换不会触发）。
+        if case .collection = route {
+            reloadCollectionClipboardItems()
         }
     }
 

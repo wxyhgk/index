@@ -283,7 +283,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
     private func perform(_ actionID: String) {
         guard let action = CaptureActionRegistry.shared.action(id: actionID) else { return }
         guard actionExecution.begin(actionID) else {
-            NSLog("[MacShot] 动作 \(actionID) 已在执行，忽略重复触发")
+            NSLog("[Index] 动作 \(actionID) 已在执行，忽略重复触发")
             return
         }
         layoutToolbar()
@@ -302,7 +302,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
             do {
                 try await action.perform(context)
             } catch {
-                NSLog("[MacShot] 动作 \(actionID) 失败: \(error)")
+                NSLog("[Index] 动作 \(actionID) 失败: \(error)")
                 AppAlert.error("\(action.title)失败", error: error, host: window)
             }
         }

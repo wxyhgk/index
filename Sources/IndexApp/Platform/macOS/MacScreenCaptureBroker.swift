@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-/// MacShot 进程内唯一的 ScreenCaptureKit 事务入口。
+/// Index 进程内唯一的 ScreenCaptureKit 事务入口。
 ///
 /// 一次事务覆盖内容枚举以及紧随其后的截图或流启动，避免普通截图、录屏和
 /// 滚动截图在 replayd 中交错初始化。客户端超时或取消只结束本地等待；已经
@@ -121,7 +121,7 @@ final class MacScreenCaptureBroker: @unchecked Sendable {
                     let completion = requestGate.finishOperation(operation)
                     if completion == .releasedQuarantine {
                         NSLog(
-                            "[MacShot] ScreenCaptureKit 迟到回调已结束隔离 stage=%@",
+                            "[Index] ScreenCaptureKit 迟到回调已结束隔离 stage=%@",
                             operation.name
                         )
                     }
@@ -132,7 +132,7 @@ final class MacScreenCaptureBroker: @unchecked Sendable {
                 ) { [requestGate] in
                     guard requestGate.timeOut(operation) else { return }
                     NSLog(
-                        "[MacShot] ScreenCaptureKit 等待超时并进入隔离 stage=%@",
+                        "[Index] ScreenCaptureKit 等待超时并进入隔离 stage=%@",
                         operation.name
                     )
                     waiter.resume(
@@ -143,7 +143,7 @@ final class MacScreenCaptureBroker: @unchecked Sendable {
         } onCancel: { [requestGate] in
             guard requestGate.timeOut(operation) else { return }
             NSLog(
-                "[MacShot] ScreenCaptureKit 客户端取消并进入隔离 stage=%@",
+                "[Index] ScreenCaptureKit 客户端取消并进入隔离 stage=%@",
                 operation.name
             )
             waiter.resume(with: .failure(CancellationError()))

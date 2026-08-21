@@ -150,13 +150,9 @@ struct GalleryView: View {
                     (destination?.content() ?? AnyView(EmptyView()))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                    // 选项自己说不需要右侧栏时，整块宽度让给中间 ——
-                    // 不画一块空白板子。
                     if showInspector, let inspector = destination?.inspector() {
                         inspector
                             .frame(width: DS.Shell.inspectorWidth)
-                            // 从右侧滑入 / 滑出。ReduceMotion 下由下面那条
-                            // `.animation(reduced:)` 降级成短 easeOut，不是硬切。
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
@@ -176,6 +172,21 @@ struct GalleryView: View {
         .ignoresSafeArea(.container, edges: .top)
         .animation(DS.Motion.standard(reduced: reduceMotion), value: showInspector)
         .frame(minWidth: 1000, minHeight: 600)
+        // ZStack 下所有 tab 始终存在，onAppear/onDisappear 不再可靠。
+        // scope 切换统一在这里处理：destinationID 变化时激活对应 scope。
+        .task {
+            activateScope(for: destinationID)
+        }
+        .onChange(of: destinationID) { _, newID in
+            activateScope(for: newID)
+        }
+    }
+
+    /// 按 destinationID 激活对应的 GalleryContentScope。
+    /// 只有需要固定范围的 destination（如录屏）才有非 .library scope。
+    private func activateScope(for id: String) {
+        guard let destination = GalleryDestinationRegistry.shared.resolve(id: id) else { return }
+        destination.contentScope.activate(in: viewModel)
     }
 
 

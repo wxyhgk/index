@@ -68,10 +68,16 @@ enum GalleryContentScope: Equatable {
 
     @MainActor
     func activate(in viewModel: GalleryViewModel) {
+        let targetFilter = fixedFilter ?? .all
+        // 短路：filter 和 searchText 都已匹配时不跑 reload，
+        // 避免 tab 切换时重复 DB 查询（条件渲染下每次切换都触发 activate）。
+        if viewModel.filter == targetFilter && viewModel.searchText.isEmpty {
+            return
+        }
         // destination 切换不继承上一入口的查询结果；否则语义结果会短暂越过固定范围。
         viewModel.searchText = ""
         viewModel.clearSemanticResults()
-        if let fixedFilter { viewModel.filter = fixedFilter }
+        viewModel.filter = targetFilter
         // 异步重建查询：同步 reload 用 GRDB `.immediate` scheduling，首次查询跑在
         // 主线程渲染帧内，是 tab 切换视觉延迟的来源。异步版把 DB 查询移出渲染帧。
         // 捕获当前状态，避免 Task 执行时 viewModel 已被后续操作修改。

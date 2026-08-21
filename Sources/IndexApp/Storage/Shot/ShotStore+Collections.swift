@@ -40,7 +40,7 @@ extension ShotStore {
         do {
             try attributeRepository.setFavorite(shotIDs: shotIDs, isFavorite: isFavorite)
         } catch {
-            NSLog("[MacShot] 批量修改收藏失败: \(error.localizedDescription)")
+            NSLog("[Index] 批量修改收藏失败: \(error.localizedDescription)")
         }
     }
 
@@ -75,7 +75,7 @@ extension ShotStore {
         do {
             try collectionRepository.delete(id: id)
         } catch {
-            NSLog("[MacShot] 删除收藏集失败: \(error)")
+            NSLog("[Index] 删除收藏集失败: \(error)")
             return
         }
     }
@@ -91,7 +91,7 @@ extension ShotStore {
         do {
             try collectionRepository.remove(shotIDs: shotIDs, from: collectionID)
         } catch {
-            NSLog("[MacShot] 移出收藏集失败: \(error)")
+            NSLog("[Index] 移出收藏集失败: \(error)")
             return
         }
     }
@@ -123,7 +123,7 @@ extension ShotStore {
         do {
             try attributeRepository.addTag(shotID: shotID, name: name)
         } catch {
-            NSLog("[MacShot] 添加标签 \(name) 失败: \(error)")
+            NSLog("[Index] 添加标签 \(name) 失败: \(error)")
             return
         }
     }
@@ -134,7 +134,7 @@ extension ShotStore {
         do {
             try attributeRepository.removeTag(shotID: shotID, name: tag)
         } catch {
-            NSLog("[MacShot] 移除标签 \(tag) 失败: \(error)")
+            NSLog("[Index] 移除标签 \(tag) 失败: \(error)")
             return
         }
     }
@@ -158,7 +158,7 @@ extension ShotStore {
         do {
             try attributeRepository.renameTag(old, to: name)
         } catch {
-            NSLog("[MacShot] 重命名标签 \(old) 失败: \(error)")
+            NSLog("[Index] 重命名标签 \(old) 失败: \(error)")
             return
         }
     }
@@ -169,7 +169,7 @@ extension ShotStore {
         do {
             try attributeRepository.deleteTag(tag)
         } catch {
-            NSLog("[MacShot] 删除标签 \(tag) 失败: \(error)")
+            NSLog("[Index] 删除标签 \(tag) 失败: \(error)")
             return
         }
     }

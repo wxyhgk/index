@@ -15,7 +15,7 @@ enum Clipboard {
     /// 网页复制的图片通常是 TIFF 或 PNG；从访达复制文件则是 file URL。
     static func readImage() -> CGImage? {
         let pasteboard = NSPasteboard.general
-        // 优先 PNG（MacShot 自己复制的、多数网页截图）
+        // 优先 PNG（Index 自己复制的、多数网页截图）
         if let data = pasteboard.data(forType: .png),
            let image = ImageCodec.load(from: data) {
             return image

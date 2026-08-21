@@ -238,11 +238,11 @@ final class ScreenRecorder {
 
     // MARK: - 输出位置
 
-    /// `~/Library/Application Support/MacShot/recordings/<时间戳>.mp4`
+    /// `~/Library/Application Support/Index/recordings/<时间戳>.mp4`
     private static func makeOutputURL() throws -> URL {
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MacShot/recordings", isDirectory: true)
+            .appendingPathComponent("Index/recordings", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let formatter = DateFormatter()
@@ -335,7 +335,7 @@ private final class RecordingJob {
             try await session.stop()
             partURLs.append(session.outputURL)
         } catch {
-            NSLog("[MacShot] 录屏分段收尾失败，跳过该段: \(error)")
+            NSLog("[Index] 录屏分段收尾失败，跳过该段: \(error)")
         }
     }
 
@@ -389,7 +389,7 @@ private final class RecordingJob {
                 guard duration > .zero,
                       tracks.contains(where: { $0.mediaType == .video })
                 else {
-                    NSLog("[MacShot] 录屏分段无有效画面，跳过: \(part.lastPathComponent)")
+                    NSLog("[Index] 录屏分段无有效画面，跳过: \(part.lastPathComponent)")
                     continue
                 }
 
@@ -417,7 +417,7 @@ private final class RecordingJob {
                 cursor = cursor + duration
                 merged += 1
             } catch {
-                NSLog("[MacShot] 录屏分段不可用，跳过: \(part.lastPathComponent) \(error)")
+                NSLog("[Index] 录屏分段不可用，跳过: \(part.lastPathComponent) \(error)")
             }
         }
 
@@ -434,7 +434,7 @@ private final class RecordingJob {
         let asset = AVURLAsset(url: url)
         guard let tracks = try? await asset.load(.tracks) else { return }
         let kinds = tracks.map(\.mediaType.rawValue).joined(separator: ", ")
-        NSLog("[MacShot] 录屏完成 \(url.lastPathComponent)，轨道: [\(kinds)]")
+        NSLog("[Index] 录屏完成 \(url.lastPathComponent)，轨道: [\(kinds)]")
     }
 }
 

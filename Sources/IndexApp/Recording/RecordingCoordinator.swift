@@ -105,7 +105,7 @@ final class RecordingCoordinator {
                 freezeTimer(paused: willPause)
                 onStateChanged?()
             } catch {
-                NSLog("[MacShot] 录屏暂停/继续失败: \(error)")
+                NSLog("[Index] 录屏暂停/继续失败: \(error)")
                 // 运行期终止事件已经负责 UI 与错误提示，避免同一故障再弹一次。
                 guard recorder.isRecording else { return }
                 onStateChanged?()
@@ -150,7 +150,7 @@ final class RecordingCoordinator {
                 }
                 guard didBegin else { throw CaptureError.displayTopologyChanged }
             } catch {
-                NSLog("[MacShot] 录屏框选失败: \(error)")
+                NSLog("[Index] 录屏框选失败: \(error)")
                 presentError("无法开始录屏", error)
             }
         }
@@ -178,7 +178,7 @@ final class RecordingCoordinator {
             startTimer()
             onStateChanged?()
         } catch {
-            NSLog("[MacShot] 录屏启动失败: \(error)")
+            NSLog("[Index] 录屏启动失败: \(error)")
             presentError("无法开始录屏", error)
         }
     }
@@ -196,7 +196,7 @@ final class RecordingCoordinator {
             presentResult(url)
         } catch {
             onStateChanged?()
-            NSLog("[MacShot] 录屏收尾失败: \(error)")
+            NSLog("[Index] 录屏收尾失败: \(error)")
             presentError("录屏失败", error)
         }
     }
@@ -208,7 +208,7 @@ final class RecordingCoordinator {
         lastHandledTerminationID = event.id
         teardownRecordingUI(clearMetadata: true)
         onStateChanged?()
-        NSLog("[MacShot] 录屏运行期终止: \(event.error)")
+        NSLog("[Index] 录屏运行期终止: \(event.error)")
         if let runtimeFailurePresenter {
             runtimeFailurePresenter(event.error)
         } else {
@@ -267,7 +267,7 @@ final class RecordingCoordinator {
             let shot = try shotStore.save(image: frame, metadata: meta)
             try shotStore.attachRecording(at: url, to: shot)
         } catch {
-            NSLog("[MacShot] 录屏首帧入库失败: \(error)")
+            NSLog("[Index] 录屏首帧入库失败: \(error)")
         }
     }
 
@@ -405,10 +405,10 @@ final class RecordingCoordinator {
                     region: region,
                     scale: scale
                 )
-                NSLog("[MacShot] 步骤指南已生成（\(guide.stepCount) 步）: \(guide.directory.path)")
+                NSLog("[Index] 步骤指南已生成（\(guide.stepCount) 步）: \(guide.directory.path)")
                 SystemNavigator.revealInFinder(guide.directory)
             } catch {
-                NSLog("[MacShot] 步骤指南生成失败: \(error)")
+                NSLog("[Index] 步骤指南生成失败: \(error)")
                 presentError("步骤指南生成失败", error)
             }
         }
@@ -420,7 +420,7 @@ final class RecordingCoordinator {
                 let gif = try await GIFExporter.export(videoURL: url)
                 SystemNavigator.revealInFinder(gif)
             } catch {
-                NSLog("[MacShot] GIF 转换失败: \(error)")
+                NSLog("[Index] GIF 转换失败: \(error)")
                 presentError("GIF 转换失败", error)
             }
         }

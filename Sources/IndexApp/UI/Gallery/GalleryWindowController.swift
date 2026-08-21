@@ -57,10 +57,10 @@ final class GalleryWindowController: NSWindowController {
         // 会在还没上色的新边缘闪出一条更亮的灰。
         window.backgroundColor = DS.windowBase
         // 记住窗口位置与大小；首次启动没有记录时才居中。
-        if !window.setFrameUsingName("MacShotGallery") {
+        if !window.setFrameUsingName("IndexGallery") {
             window.center()
         }
-        _ = window.setFrameAutosaveName("MacShotGallery")
+        _ = window.setFrameAutosaveName("IndexGallery")
         super.init(window: window)
 
         GalleryKeyboard.shared.install()

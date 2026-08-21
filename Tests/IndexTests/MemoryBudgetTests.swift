@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class MemoryBudgetTests: XCTestCase {
     func testSharedTextAnalysisRunsAnalyzerOnlyOnceForConcurrentConsumers() async {

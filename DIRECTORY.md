@@ -1,6 +1,6 @@
 # Index 开发目录说明
 
-产品名是 **Index**，当前 SwiftPM target 和部分内部类型仍沿用 `MacShot`。目录不按技术类型分（没有 Views / Models / Controllers 这种分法），而是按**这块代码在依赖链的哪一层、允许认识谁**来分。
+产品名是 **Index**，当前 SwiftPM target 和部分内部类型仍沿用 `Index`。目录不按技术类型分（没有 Views / Models / Controllers 这种分法），而是按**这块代码在依赖链的哪一层、允许认识谁**来分。
 
 规则只有一条，来自 `ARCHITECTURE.md`：**依赖只向下，同层互不认识。** 想知道一段代码该放哪，就问它需要认识谁——需要认识窗口和用户操作的，放界面层；只需要认识图层和像素的，放领域层；碰系统 API 的，放 `Platform/`。
 
@@ -20,9 +20,9 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 | 路径 | 说明 |
 |---|---|
 | `Package.swift` | 单 target + GRDB 依赖 + 测试 target，`swiftLanguageMode(.v5)` |
-| `build.sh` | 在旁路目录组装并固定身份签名，退出旧 Index/MacShot 后原子替换 `Index.app`，按原运行状态自动重启；签名优先级 Developer ID → 自签名 "MacShot Dev"，ad-hoc 只可显式启用 |
-| `Sources/MacShot/` | 应用源码，按依赖边界分模块 |
-| `Tests/MacShotTests/` | 单元、回归、架构和生命周期测试 |
+| `build.sh` | 在旁路目录组装并固定身份签名，退出旧 Index/Index 后原子替换 `Index.app`，按原运行状态自动重启；签名优先级 Developer ID → 自签名 "Index Dev"，ad-hoc 只可显式启用 |
+| `Sources/Index/` | 应用源码，按依赖边界分模块 |
+| `Tests/IndexTests/` | 单元、回归、架构和生命周期测试 |
 | `Resources/` | `Info.plist`、应用图标及品牌 SVG 源文件 |
 | `BrowserExtensions/Edge/` | Edge 图片导入扩展、Native Messaging host 与独立说明 |
 | `Contracts/` | 面向未来 Windows 客户端的便携图库和标注 JSON Schema |
@@ -200,10 +200,10 @@ OCR、场景标签、内容分类、敏感信息检测、相似图特征指纹�
 
 收敛的另一份红利是 `PanelPlacement`：模态面板（存盘、选目录、无宿主的 `NSAlert`）该弹在哪块屏、归谁管，只需要在这一处说清楚。它解决两个叠在一起的毛病：
 
-1. **跑错屏**。MacShot 是 accessory App，选区覆盖层在动作执行前就收掉了，面板打开时往往没有 key 窗口，AppKit 会退回菜单栏那块屏。存盘面板因此接收一个可选的锚点矩形（截图选区），没有锚点时按 key 窗口 → 指针 → 主屏兜底。注意摆放**必须**发生在 `runModal()` 之后（登记一个主队列 block），之前设置会被面板自己恢复的上次位置覆盖。
-2. **把用户正在用的 App 挤进侧边条**。默认行为下面板算 MacShot 的主窗口，和图库同属一组 stage；台前调度开着时，在别的屏截图点保存会把 MacShot 整组 stage 拽到前台。`detachFromAppStage` 用 macOS 13 为此新增的 `.auxiliary` + `.canJoinAllApplications`（再加 `.moveToActiveSpace`）把面板摘出这一组。三对标志位互斥，所以先摘对立面再设。
+1. **跑错屏**。Index 是 accessory App，选区覆盖层在动作执行前就收掉了，面板打开时往往没有 key 窗口，AppKit 会退回菜单栏那块屏。存盘面板因此接收一个可选的锚点矩形（截图选区），没有锚点时按 key 窗口 → 指针 → 主屏兜底。注意摆放**必须**发生在 `runModal()` 之后（登记一个主队列 block），之前设置会被面板自己恢复的上次位置覆盖。
+2. **把用户正在用的 App 挤进侧边条**。默认行为下面板算 Index 的主窗口，和图库同属一组 stage；台前调度开着时，在别的屏截图点保存会把 Index 整组 stage 拽到前台。`detachFromAppStage` 用 macOS 13 为此新增的 `.auxiliary` + `.canJoinAllApplications`（再加 `.moveToActiveSpace`）把面板摘出这一组。三对标志位互斥，所以先摘对立面再设。
 
-截图路径还要多走一步。那里 MacShot 一个窗口都没有，想让面板拿到键盘焦点就得 `NSApp.activate(ignoringOtherApps:)`，而它的旧语义是「顺带把 App 的所有窗口都拉到前台」——图库那组 stage 正是这样被拽出来的。逐个实测过的结论：`NSApp.activate()`（新 API）、光立宿主窗口、宿主 + `runModal`，面板都拿不到 key；**只有 `.nonactivatingPanel` 宿主 + `beginSheetModal` 两者兼得**——面板是 key，且不需要那句 activate。所以 `ImageExporter` 有两条呈现路径（形状与 `AppAlert` 一致）：有窗口在眼前的场合走同步 `runModal`，截图流程走 `makeSheetHost` + sheet。sheet 天然跟着宿主那块屏走，落点因此不用再手动补救。
+截图路径还要多走一步。那里 Index 一个窗口都没有，想让面板拿到键盘焦点就得 `NSApp.activate(ignoringOtherApps:)`，而它的旧语义是「顺带把 App 的所有窗口都拉到前台」——图库那组 stage 正是这样被拽出来的。逐个实测过的结论：`NSApp.activate()`（新 API）、光立宿主窗口、宿主 + `runModal`，面板都拿不到 key；**只有 `.nonactivatingPanel` 宿主 + `beginSheetModal` 两者兼得**——面板是 key，且不需要那句 activate。所以 `ImageExporter` 有两条呈现路径（形状与 `AppAlert` 一致）：有窗口在眼前的场合走同步 `runModal`，截图流程走 `makeSheetHost` + sheet。sheet 天然跟着宿主那块屏走，落点因此不用再手动补救。
 
 ## Recording/ — 录屏
 

@@ -18,7 +18,7 @@ enum SystemNavigator {
     /// App 已被卸载时静默失败 —— 「回到出处」是尽力而为，不值得弹窗。
     static func activateApp(bundleID: String) {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            NSLog("[MacShot] 找不到 App：\(bundleID)")
+            NSLog("[Index] 找不到 App：\(bundleID)")
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()
@@ -84,7 +84,7 @@ enum SystemNavigator {
 
     /// 当前前台 App。
     ///
-    /// 必须在选区覆盖层出现**之前**读 —— 覆盖层一旦拿到焦点，它就变成 MacShot 自己了。
+    /// 必须在选区覆盖层出现**之前**读 —— 覆盖层一旦拿到焦点，它就变成 Index 自己了。
     static var frontmostApplication: NSRunningApplication? {
         NSWorkspace.shared.frontmostApplication
     }

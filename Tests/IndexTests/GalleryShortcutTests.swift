@@ -1,6 +1,6 @@
 import XCTest
 import AppKit
-@testable import MacShot
+@testable import IndexApp
 
 /// 图库快捷键守卫的回归测试。
 /// 防止 `flags == .command` 的精确相等在 CapsLock/Function 带位时误判为 false。

@@ -11,11 +11,11 @@ Index 是本地优先的 macOS 图片资料库和截图工具。当前版本不�
 语义向量默认保存在：
 
 ```text
-~/Library/Application Support/MacShot/
+~/Library/Application Support/Index/
 ```
 
 为了保持既有 TCC 授权和数据兼容，用户可见品牌已改为 Index，但目录名和 Bundle ID 仍沿用
-MacShot。设置项保存在 Bundle ID `com.wxyhgk.macshot` 对应的 macOS UserDefaults 中。
+Index。设置项保存在 Bundle ID `com.wxyhgk.index` 对应的 macOS UserDefaults 中。
 
 ## 系统权限
 
@@ -44,15 +44,15 @@ Index 没有后台遥测。只有以下功能会联网：
 
 Edge Demo 申请 `http://*/*` 和 `https://*/*` 主机权限，是为了在用户明确点击图片右键菜单后
 重新读取该图片。扩展不会批量抓取页面图片，也不会把数据发送到 Index 之外的服务；图片先进入
-`~/Library/Application Support/MacShot/browser-inbox/`，入库完成后临时目录会被清理。
+`~/Library/Application Support/Index/browser-inbox/`，入库完成后临时目录会被清理。
 
 ## 删除数据
 
-退出 Index 后，删除 `~/Library/Application Support/MacShot/` 可移除图库、模型和浏览器导入
+退出 Index 后，删除 `~/Library/Application Support/Index/` 可移除图库、模型和浏览器导入
 临时数据。以下命令可删除偏好设置：
 
 ```bash
-defaults delete com.wxyhgk.macshot
+defaults delete com.wxyhgk.index
 ```
 
 Edge 连接器可通过 `./scripts/install-edge-demo.sh --uninstall` 卸载。执行删除前请先导出需要保留的

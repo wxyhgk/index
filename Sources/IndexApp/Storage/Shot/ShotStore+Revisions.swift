@@ -46,7 +46,7 @@ extension ShotStore {
             return saved
         } catch {
             // 此前是 try?，写失败仍返回一个 id 为 nil 的 Revision，调用方无从分辨。
-            NSLog("[MacShot] 追加修订失败: \(error)")
+            NSLog("[Index] 追加修订失败: \(error)")
             return nil
         }
     }

@@ -324,6 +324,7 @@ private struct FeaturedAppCard: View {
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var hovering = false
 
     var body: some View {
@@ -350,12 +351,25 @@ private struct FeaturedAppCard: View {
             }
             .padding(DS.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(fill, in: cardShape)
-            .overlay { cardShape.strokeBorder(rim.gradient, lineWidth: rim.lineWidth) }
+            .background(DS.panelFill(.resting), in: cardShape)
+            .overlay {
+                let r = DS.rim(hovering ? .raised : .content, scheme, hovering: hovering)
+                cardShape.strokeBorder(r.gradient, lineWidth: r.lineWidth)
+                    .blendMode(reduceTransparency ? .normal : r.blend)
+                    .allowsHitTesting(false)
+            }
+            .compositingGroup()
             .contentShape(cardShape)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .scaleEffect(hovering ? DS.Lift.hoverScale : 1)
+        .offset(y: hovering && !reduceMotion ? DS.Lift.hoverY : 0)
+        .shadow(
+            color: hoverShadow.color,
+            radius: hoverShadow.radius,
+            y: hoverShadow.y
+        )
         .animation(DS.Motion.micro(reduced: reduceMotion), value: hovering)
         .accessibilityLabel("\(app.name)，\(app.captureCount) 张截图")
     }
@@ -366,8 +380,10 @@ private struct FeaturedAppCard: View {
     private var previewShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: DS.radiusChip, style: .continuous)
     }
-    private var fill: Color { DS.surfaceFill(hovering ? .raised : .content, scheme) }
-    private var rim: DS.Rim { DS.rim(.content, scheme, hovering: hovering) }
+    private var hoverShadow: DS.Shadow {
+        guard scheme != .dark, hovering else { return .none }
+        return DS.shadow(.raised, scheme)
+    }
 }
 
 private struct CompactAppCard: View {
@@ -376,6 +392,7 @@ private struct CompactAppCard: View {
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var hovering = false
 
     var body: some View {
@@ -383,12 +400,25 @@ private struct CompactAppCard: View {
             AppCardIdentity(app: app, iconSide: 32)
                 .padding(DS.s3)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(fill, in: cardShape)
-                .overlay { cardShape.strokeBorder(rim.gradient, lineWidth: rim.lineWidth) }
+                .background(DS.panelFill(.resting), in: cardShape)
+                .overlay {
+                    let r = DS.rim(hovering ? .raised : .content, scheme, hovering: hovering)
+                    cardShape.strokeBorder(r.gradient, lineWidth: r.lineWidth)
+                        .blendMode(reduceTransparency ? .normal : r.blend)
+                        .allowsHitTesting(false)
+                }
+                .compositingGroup()
                 .contentShape(cardShape)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .scaleEffect(hovering ? DS.Lift.hoverScale : 1)
+        .offset(y: hovering && !reduceMotion ? DS.Lift.hoverY : 0)
+        .shadow(
+            color: hoverShadow.color,
+            radius: hoverShadow.radius,
+            y: hoverShadow.y
+        )
         .animation(DS.Motion.micro(reduced: reduceMotion), value: hovering)
         .accessibilityLabel("\(app.name)，\(app.captureCount) 张截图")
     }
@@ -396,8 +426,10 @@ private struct CompactAppCard: View {
     private var cardShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
     }
-    private var fill: Color { DS.surfaceFill(hovering ? .raised : .content, scheme) }
-    private var rim: DS.Rim { DS.rim(.content, scheme, hovering: hovering) }
+    private var hoverShadow: DS.Shadow {
+        guard scheme != .dark, hovering else { return .none }
+        return DS.shadow(.raised, scheme)
+    }
 }
 
 private struct AppCardIdentity: View {

@@ -63,16 +63,16 @@ jobs:
 
       - name: Build preview app
         env:
-          MACSHOT_ALLOW_ADHOC: "1"
+          INDEX_ALLOW_ADHOC: "1"
         run: |
           ./build.sh release
 
           if [[ -d build/Index.app ]]; then
             built_app="build/Index.app"
-          elif [[ -d build/MacShot.app ]]; then
+          elif [[ -d build/Index.app ]]; then
             # 允许手动重打 0.1.9 及更早的既有标签；旧源码的 build.sh
-            # 仍输出 MacShot.app，但公开附件必须统一展示为 Index.app。
-            built_app="build/MacShot.app"
+            # 仍输出 Index.app，但公开附件必须统一展示为 Index.app。
+            built_app="build/Index.app"
           else
             echo "Release App was not produced" >&2
             exit 1

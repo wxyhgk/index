@@ -1,7 +1,7 @@
 import CoreGraphics
 import GRDB
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class ImageImportCoordinatorTests: XCTestCase {

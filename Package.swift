@@ -2,21 +2,21 @@
 import PackageDescription
 
 let package = Package(
-    name: "MacShot",
+    name: "Index",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "MacShot", targets: ["MacShot"])
+        .executable(name: "IndexApp", targets: ["IndexApp"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0")
     ],
     targets: [
         .executableTarget(
-            name: "MacShot",
+            name: "IndexApp",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
-            path: "Sources/MacShot",
+            path: "Sources/IndexApp",
             exclude: [
                 "README.md",
                 "Capture/README.md",
@@ -34,12 +34,12 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "MacShotTests",
+            name: "IndexTests",
             dependencies: [
-                "MacShot",
+                "IndexApp",
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
-            path: "Tests/MacShotTests",
+            path: "Tests/IndexTests",
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]

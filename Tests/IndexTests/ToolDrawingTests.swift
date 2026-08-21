@@ -1,6 +1,6 @@
 import XCTest
 import CoreGraphics
-@testable import MacShot
+@testable import IndexApp
 
 /// 绘制搬家的安全网。
 ///

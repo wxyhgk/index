@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 /// 图库时间分组（`ShotSection.group`）的纯逻辑单测。
 ///

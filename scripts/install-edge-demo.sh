@@ -4,7 +4,7 @@ set -euo pipefail
 REPOSITORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXTENSION_DIR="$REPOSITORY_ROOT/BrowserExtensions/Edge"
 HOST_SCRIPT="$EXTENSION_DIR/native_host.py"
-HOST_NAME="com.wxyhgk.macshot.edge"
+HOST_NAME="com.wxyhgk.index.edge"
 EXPECTED_EXTENSION_ID="anhidejnknnfchdjgnkbkgnifophmgnm"
 MANIFEST_DIR="$HOME/Library/Application Support/Microsoft Edge/NativeMessagingHosts"
 HOST_MANIFEST="$MANIFEST_DIR/$HOST_NAME.json"
@@ -58,7 +58,7 @@ import sys
 
 target, host_script, extension_id = sys.argv[1:]
 payload = {
-    "name": "com.wxyhgk.macshot.edge",
+    "name": "com.wxyhgk.index.edge",
     "description": "Index Microsoft Edge image import demo",
     "path": os.path.abspath(host_script),
     "type": "stdio",

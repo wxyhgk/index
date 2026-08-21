@@ -10,7 +10,7 @@ enum MoleculeSourceFilePresenter {
     ) throws {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MacShot", isDirectory: true)
+            .appendingPathComponent("Index", isDirectory: true)
             .appendingPathComponent("Molecule Working Copies", isDirectory: true)
         try FileManager.default.createDirectory(
             at: base,

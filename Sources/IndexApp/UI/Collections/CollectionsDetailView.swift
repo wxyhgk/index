@@ -16,10 +16,14 @@ struct CollectionsDetailView: View {
     let clipboardFavorites: [ClipboardHistoryItem]
     let clipboardFavoritesThumbnails: [Int64: NSImage]
     let clipboardFavoritesAppIcons: [String: NSImage]
+    let collectionClipboardItems: [ClipboardHistoryItem]
+    let collectionClipboardThumbnails: [Int64: NSImage]
+    let collectionClipboardAppIcons: [String: NSImage]
     let onClose: () -> Void
 
     @AppStorage("galleryInspectorShown") private var showInspector = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var clipboardSelection = ClipboardSelection.shared
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.Shell.panelGap) {
@@ -44,19 +48,68 @@ struct CollectionsDetailView: View {
     @ViewBuilder
     private var content: some View {
         switch route {
-        case .favorites, .collection:
+        case .favorites:
             GalleryGrid(
                 store: store,
                 viewModel: viewModel,
                 scope: scope,
                 chrome: .libraryPanel
             )
+        case .collection:
+            VStack(spacing: 0) {
+                GalleryGrid(
+                    store: store,
+                    viewModel: viewModel,
+                    scope: scope,
+                    chrome: .libraryPanel
+                )
+                if !collectionClipboardItems.isEmpty {
+                    collectionClipboardSection
+                }
+            }
         case .clipboardFavorites:
             ClipboardFavoritesGrid(
                 items: clipboardFavorites,
                 thumbnails: clipboardFavoritesThumbnails,
                 appIcons: clipboardFavoritesAppIcons
             )
+        }
+    }
+
+    /// 专题集里的剪贴板成员：和截图网格同样的布局，无分区标识。
+    private var collectionClipboardSection: some View {
+        ScrollView {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 180), spacing: DS.s4)],
+                spacing: DS.s4
+            ) {
+                ForEach(collectionClipboardItems) { item in
+                    ClipboardGridCard(
+                        item: item,
+                        thumbnail: item.id.flatMap { collectionClipboardThumbnails[$0] },
+                        appIcon: item.sourceApp.flatMap { collectionClipboardAppIcons[$0] },
+                        isSelected: ClipboardSelection.shared.selectedID == item.id
+                    )
+                    .onTapGesture {
+                        ClipboardSelection.shared.select(item.id)
+                    }
+                    .contextMenu {
+                        Button("复制") {
+                            ClipboardHistoryViewModel.shared.copyBack(item)
+                        }
+                        Button(item.isFavorite ? "取消收藏" : "收藏") {
+                            ClipboardHistoryViewModel.shared.toggleFavorite(item)
+                        }
+                        Divider()
+                        Button("删除", role: .destructive) {
+                            ClipboardHistoryViewModel.shared.delete(item)
+                            ClipboardSelection.shared.clearIf(item.id)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, DS.s4)
+            .padding(.vertical, DS.s3)
         }
     }
 

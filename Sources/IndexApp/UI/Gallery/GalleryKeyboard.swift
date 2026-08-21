@@ -126,7 +126,7 @@ final class GalleryKeyboard {
             do {
                 _ = try ShotStore.shared.save(image: image, metadata: metadata)
             } catch {
-                NSLog("[MacShot] 粘贴导入失败: \(error)")
+                NSLog("[Index] 粘贴导入失败: \(error)")
             }
             return true
 

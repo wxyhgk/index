@@ -61,7 +61,7 @@ enum ImageUploader {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        let boundary = "MacShot-\(UUID().uuidString)"
+        let boundary = "Index-\(UUID().uuidString)"
         request.setValue(
             "multipart/form-data; boundary=\(boundary)",
             forHTTPHeaderField: "Content-Type"

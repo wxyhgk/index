@@ -1,7 +1,7 @@
 import XCTest
 import GRDB
 import CoreGraphics
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class GalleryContentScopeTests: XCTestCase {

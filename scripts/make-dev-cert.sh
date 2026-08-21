@@ -1,5 +1,5 @@
 #!/bin/bash
-# 创建一个本地自签的代码签名证书，用来给 MacShot 提供**稳定的签名身份**。
+# 创建一个本地自签的代码签名证书，用来给 Index 提供**稳定的签名身份**。
 #
 # 为什么需要：ad-hoc 签名（codesign -s -）没有身份信息，TCC（隐私授权数据库）
 # 只能按二进制的 cdhash 记录「屏幕录制」授权 —— 代码一改哈希就变，授权立刻失效。
@@ -8,7 +8,7 @@
 # 只需要跑一次。之后 build.sh 会自动找到它。
 set -euo pipefail
 
-CERT_NAME="MacShot Dev"
+CERT_NAME="Index Dev"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
 if security find-certificate -c "$CERT_NAME" >/dev/null 2>&1; then
@@ -26,7 +26,7 @@ x509_extensions    = v3
 prompt             = no
 
 [dn]
-CN = MacShot Dev
+CN = Index Dev
 
 [v3]
 basicConstraints     = critical,CA:false
@@ -43,7 +43,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
 
 # macOS 的 security 只认老的 PKCS#12 加密算法，OpenSSL 3 默认用 AES-256 会导入失败，
 # 所以这里显式降级到 3DES/SHA1。密码只是临时用于导入。
-P12_PASS="macshot-import"
+P12_PASS="index-import"
 openssl pkcs12 -export \
     -certpbe PBE-SHA1-3DES \
     -keypbe PBE-SHA1-3DES \

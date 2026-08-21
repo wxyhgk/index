@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 /// 工具契约的安全网。
 ///

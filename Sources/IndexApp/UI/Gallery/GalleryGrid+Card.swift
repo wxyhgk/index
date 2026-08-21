@@ -104,7 +104,7 @@ extension GalleryGrid {
     /// 选中后显式让搜索框等文本输入失焦，使后续 ⌘C 走图片路径而非空文本路径。
     func handleTap(_ shot: Shot) {
         guard let id = shot.id else {
-            NSLog("[MacShot] handleTap: shot.id 为 nil，点击被忽略（windowTitle=\(shot.windowTitle ?? "nil")）")
+            NSLog("[Index] handleTap: shot.id 为 nil，点击被忽略（windowTitle=\(shot.windowTitle ?? "nil")）")
             return
         }
         let flags = currentModifiers()
@@ -256,7 +256,7 @@ extension GalleryGrid {
             do {
                 try store.addToCollection(shotIDs: shotIDs, collectionID: collectionID)
             } catch {
-                NSLog("[MacShot] 加入收藏集失败: \(error)")
+                NSLog("[Index] 加入收藏集失败: \(error)")
             }
         }
         Task { await refreshSelectedCollectionMemberships() }
@@ -310,9 +310,9 @@ extension GalleryGrid {
             do {
                 let link = try await ImageUploader.upload(png: png, filename: filename, config: config)
                 Clipboard.copy(text: settings.uploadLinkFormat.format(link))
-                NSLog("[MacShot] 图库上传成功，链接已复制: \(link)")
+                NSLog("[Index] 图库上传成功，链接已复制: \(link)")
             } catch {
-                NSLog("[MacShot] 图库上传失败: \(error)")
+                NSLog("[Index] 图库上传失败: \(error)")
             }
         }
     }

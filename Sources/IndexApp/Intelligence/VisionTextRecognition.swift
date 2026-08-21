@@ -62,7 +62,7 @@ struct VisionTextRecognition {
             do {
                 try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             } catch {
-                NSLog("[MacShot] 文字识别失败: \(error)")
+                NSLog("[Index] 文字识别失败: \(error)")
                 continuation.resume(returning: [])
             }
         }

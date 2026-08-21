@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class ShotPageMetadataRepositoryTests: XCTestCase {
     func testFetchReturnsAllCardMetadataFromOneSnapshot() async throws {

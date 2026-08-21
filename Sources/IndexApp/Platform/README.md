@@ -59,7 +59,7 @@
 * **WindowListing**（`Platform.swift` 协议，`Platform/macOS/MacWindowLister.swift` 实现）收敛 `CGWindowListCopyWindowInfo`（`layer==0 / 排除自身PID / >20pt 过滤 / front-to-back`）；`Capture/Snapshot/WindowInfo.swift` 的 `WindowLister` 仅保留兼容转发门面。
 * 调用方（`CaptureCoordinator / ScrollCaptureController / RecordingCoordinator / AppDelegate.registerCaptureSources`）只依赖 `ScreenCapturing / WindowListing` 协议，通过 `MacScreenCapturer.shared / MacWindowLister.shared` 注入；`Capture/Overlay/OverlayView.swift` 等视图层不持有任何 `ScreenCaptureKit / CGWindowList` 符号。
 
-验证：`grep -rn ScreenCaptureKit/CGWindowListCopyWindowInfo/SCShareableContent Sources/MacShot/Capture` 仅剩注释行；实现仅存于 `Platform/macOS/`。
+验证：`grep -rn ScreenCaptureKit/CGWindowListCopyWindowInfo/SCShareableContent Sources/Index/Capture` 仅剩注释行；实现仅存于 `Platform/macOS/`。
 
 约束：
 

@@ -32,7 +32,7 @@
 - 支持 PNG、JPEG、HEIC/HEIF、TIFF，单张最多 25 MB。
 - 普通 `http(s)` 图片会携带 Edge 当前凭据重新读取；服务器若禁止扩展重新请求，可能失败。
 - `blob:`、Canvas、CSS 背景图和 WebP 暂不支持；这些属于下一步的内容脚本/格式扩展。
-- 图片只会进入兼容目录 `~/Library/Application Support/MacShot/browser-inbox/<UUID>/`，Index URL
+- 图片只会进入兼容目录 `~/Library/Application Support/Index/browser-inbox/<UUID>/`，Index URL
   命令不接受任意文件路径。导入完成后该临时目录会被删除。
 - Native Messaging host 最多等待 15 秒，由 Index 回写真实入库结果后才向 Edge 报成功。
 

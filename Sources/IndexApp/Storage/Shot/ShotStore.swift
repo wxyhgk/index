@@ -7,7 +7,7 @@ import Combine
 /// 文件 + 数据库的统一入口。
 ///
 /// 磁盘布局：
-///   ~/Library/Application Support/MacShot/
+///   ~/Library/Application Support/Index/
 ///     originals/<sha256>.png   原图，写入后永不修改
 ///     thumbnails/<sha256>.jpg  缩略图
 ///     index.sqlite             元数据 / 修订 / 全文索引
@@ -52,6 +52,7 @@ final class ShotStore: ObservableObject {
     let pageMetadataRepository: ShotPageMetadataRepository
     /// 跨平台便携包只读导出器；不暴露运行中的 SQLite/WAL。
     private let portableLibraryExporter: PortableLibraryExporter
+    private let writer: any DatabaseWriter
 
     /// 当前 `shots` 对应的查询快照。它不是 UI 状态：只用于写入后的自动刷新、
     /// 翻页与无参数兼容入口，确保仓储缓存知道自己装的是什么数据。
@@ -77,7 +78,7 @@ final class ShotStore: ObservableObject {
     init(rootDirectory: URL? = nil, database: (any DatabaseWriter)? = nil) {
         let base = rootDirectory ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MacShot", isDirectory: true)
+            .appendingPathComponent("Index", isDirectory: true)
 
         self.rootDirectory = base
         originalsDirectory = base.appendingPathComponent("originals", isDirectory: true)
@@ -87,12 +88,11 @@ final class ShotStore: ObservableObject {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
 
-        let writer: any DatabaseWriter
         if let database {
-            writer = database
+            self.writer = database
         } else {
             do {
-                writer = try AppDatabase.makeWriter(at: base.appendingPathComponent("index.sqlite"))
+                self.writer = try AppDatabase.makeWriter(at: base.appendingPathComponent("index.sqlite"))
             } catch {
                 fatalError("无法打开数据库: \(error)")
             }
@@ -160,6 +160,16 @@ final class ShotStore: ObservableObject {
             exportedAt: exportedAt,
             producerVersion: producerVersion
         )
+    }
+
+    /// 从便携图库包恢复数据。幂等：按内容哈希去重，重复导入不产生重复数据。
+    /// 导入成功后刷新列表。
+    @discardableResult
+    func importPortableLibrary(at directory: URL) async throws -> PortableLibraryImporter.Report {
+        let importer = PortableLibraryImporter(writer: writer, rootDirectory: rootDirectory)
+        let report = try await importer.importLibrary(at: directory)
+        reload()
+        return report
     }
 
     func originalImage(for shot: Shot) -> CGImage? {
@@ -255,7 +265,7 @@ final class ShotStore: ObservableObject {
                 )
             }
         } catch {
-            NSLog("[MacShot] 写入属性 \(key) 失败: \(error)")
+            NSLog("[Index] 写入属性 \(key) 失败: \(error)")
             return
         }
     }
@@ -269,7 +279,7 @@ final class ShotStore: ObservableObject {
                 shotID: shotID
             )
         } catch {
-            NSLog("[MacShot] 修改截图名称失败: \(error.localizedDescription)")
+            NSLog("[Index] 修改截图名称失败: \(error.localizedDescription)")
         }
     }
 
@@ -331,7 +341,7 @@ final class ShotStore: ObservableObject {
         do {
             try attributeRepository.remove(shotID: shotID, key: key)
         } catch {
-            NSLog("[MacShot] 删除属性 \(key) 失败: \(error)")
+            NSLog("[Index] 删除属性 \(key) 失败: \(error)")
             return
         }
     }
@@ -361,7 +371,7 @@ final class ShotStore: ObservableObject {
         do {
             orphaned = try metadataRepository.delete(ids: shotIDs)
         } catch {
-            NSLog("[MacShot] 删除截图 \(shotIDs) 失败: \(error)")
+            NSLog("[Index] 删除截图 \(shotIDs) 失败: \(error)")
             return
         }
 

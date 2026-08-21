@@ -25,7 +25,7 @@ struct FeaturePrint {
                 )
                 continuation.resume(returning: data)
             } catch {
-                NSLog("[MacShot] 特征指纹提取失败: \(error)")
+                NSLog("[Index] 特征指纹提取失败: \(error)")
                 continuation.resume(returning: nil)
             }
         }

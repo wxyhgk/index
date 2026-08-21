@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class ShotMetadataRepositoryTests: XCTestCase {
     private func makeDatabase() throws -> DatabaseQueue {

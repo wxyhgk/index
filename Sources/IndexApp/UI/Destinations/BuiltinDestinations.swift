@@ -58,6 +58,8 @@ struct RecordingsDestination: GalleryDestination {
     let symbol = "play.rectangle"
     let order = 50
 
+    var contentScope: GalleryContentScope { .recordings }
+
     func badge(reader: any ShotReading = ShotStore.shared) -> Int? {
         let count = reader.recordingCount()
         return count > 0 ? count : nil
@@ -90,12 +92,6 @@ private struct RecordingsContent: View {
             GalleryPageHeader(store: store, viewModel: viewModel, scope: .recordings)
                 .padding(.horizontal, DS.s2)
             GalleryGrid(store: store, viewModel: viewModel, scope: .recordings)
-        }
-        .onAppear {
-            GalleryContentScope.recordings.activate(in: viewModel)
-        }
-        .onDisappear {
-            GalleryContentScope.recordings.deactivate(in: viewModel)
         }
     }
 }

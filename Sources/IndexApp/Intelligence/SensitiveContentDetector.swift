@@ -157,7 +157,7 @@ struct SensitiveContentDetector {
             do {
                 try handler.perform([request])
             } catch {
-                NSLog("[MacShot] 人脸检测失败: \(error)")
+                NSLog("[Index] 人脸检测失败: \(error)")
                 continuation.resume(returning: [])
             }
         }

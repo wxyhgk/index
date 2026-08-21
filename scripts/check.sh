@@ -67,7 +67,7 @@ fi
 code_only() { grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*|/\*)'; }
 
 section "纪律一：模态面板与弹窗只许出现在 Platform/"
-# 路径不写结尾斜杠：grep -r 会把 `Sources/` 输出成 `Sources//MacShot/…`，
+# 路径不写结尾斜杠：grep -r 会把 `Sources/` 输出成 `Sources//Index/…`，
 # 后面按前缀排除 Platform/ 就全落空了。
 panel_hits=$(grep -rn "NSAlert()\|NSOpenPanel()\|NSSavePanel()\|\.runModal()" \
     --include="*.swift" Sources 2>/dev/null \
@@ -83,7 +83,7 @@ section "纪律二：依赖只向下，下层不认识界面层"
 layer_hits=""
 for dir in Capture Render Annotation Storage Toolbar Actions Pipeline Intelligence; do
     hits=$(grep -rn "GalleryView\|EditorView\|GalleryGrid\|ShotDetailPane\|GalleryWindowController" \
-        --include="*.swift" "Sources/MacShot/$dir" 2>/dev/null | code_only || true)
+        --include="*.swift" "Sources/IndexApp/$dir" 2>/dev/null | code_only || true)
     [ -n "$hits" ] && layer_hits="${layer_hits}${hits}"$'\n'
 done
 if [ -z "${layer_hits// }" ]; then
@@ -97,7 +97,7 @@ section "纪律三：工具契约没有被绕过"
 # 加一个标注工具应当只碰 Tools/ 与登记处。这里查的是反向症状：
 # 领域层里重新长出按图层种类分派的 switch。
 switch_hits=$(grep -rn "switch layer.kind\|switch original.kind\|switch shape.kind" \
-    --include="*.swift" Sources/MacShot/Annotation Sources/MacShot/Render 2>/dev/null \
+    --include="*.swift" Sources/IndexApp/Annotation Sources/IndexApp/Render 2>/dev/null \
     | grep -v "/Tools/" | code_only || true)
 if [ -z "$switch_hits" ]; then
     ok "没有按图层种类分派的 switch"
@@ -125,10 +125,10 @@ fi
 
 section "纪律五：DS vs Theme 双轨已收敛"
 # Theme 仅作兼容转发，新代码不得新增 Theme/MacTheme 调用点。
-# 允许的唯一 Theme 出现位置是 UI/Theme.swift 本身（定义处）。
-theme_hits=$(grep -rn "Theme\.\|MacTheme\|: Theme" --include="*.swift" Sources 2>/dev/null | grep -v "UI/Theme\.swift" | grep -v "//" | code_only || true)
+# 允许的唯一 Theme 出现位置是 UI/Design/Theme.swift 本身（定义处）。
+theme_hits=$(grep -rn "Theme\.\|MacTheme\|: Theme" --include="*.swift" Sources 2>/dev/null | grep -v "UI/Design/Theme\.swift" | grep -v "//" | code_only || true)
 if [ -z "$theme_hits" ]; then
-    ok "Theme 仅在 UI/Theme.swift 兼容转发，调用点只认 DS"
+    ok "Theme 仅在 UI/Design/Theme.swift 兼容转发，调用点只认 DS"
 else
     printf "%s\n" "$theme_hits" | sed 's/^/    /'
     bad "新增 Theme/MacTheme 调用点 —— 请改为 DS（Theme 已收敛为兼容层）"
@@ -156,7 +156,7 @@ if [ -z "$unsafe_bundle_replace" ] \
     && grep -q 'PRODUCT_NAME="Index"' build.sh \
     && grep -q 'running_pids()' build.sh \
     && grep -qF 'mv "$STAGED_APP" "$APP_BUNDLE"' build.sh \
-    && grep -q 'MACSHOT_ALLOW_ADHOC' build.sh; then
+    && grep -q 'INDEX_ALLOW_ADHOC' build.sh; then
     ok "Release 先旁路签名，旧进程退出后再替换，ad-hoc 只能显式启用"
 else
     [ -n "$unsafe_bundle_replace" ] && printf "%s\n" "$unsafe_bundle_replace" | sed 's/^/    /'
@@ -168,7 +168,7 @@ section "纪律八：ScreenCaptureKit 初始化只走统一事务门"
 # 就可能和普通截图在 replayd 内交错，把一次超时扩散成多个在途请求。
 sck_entry_hits=$(grep -rn \
     "SCShareableContent\.getExcludingDesktopWindows\|SCShareableContent\.excludingDesktopWindows\|SCScreenshotManager\.captureImage\|stream\.startCapture(" \
-    --include="*.swift" Sources/MacShot 2>/dev/null \
+    --include="*.swift" Sources/IndexApp 2>/dev/null \
     | grep -v "Platform/macOS/MacScreenCaptureBroker\.swift" \
     | code_only || true)
 if [ -z "$sck_entry_hits" ]; then
@@ -182,12 +182,12 @@ fi
 
 if [ "${1:-}" = "--full" ]; then
     section "组装 .app（release）"
-    if ./build.sh release >/tmp/macshot-bundle.log 2>&1; then
-        ok "$(du -h build/Index.app/Contents/MacOS/MacShot | cut -f1) 可执行文件已签名"
+    if ./build.sh release >/tmp/index-bundle.log 2>&1; then
+        ok "$(du -h build/Index.app/Contents/MacOS/Index | cut -f1) 可执行文件已签名"
         codesign --verify --deep build/Index.app 2>/dev/null \
             && ok "签名校验通过" || bad "签名校验失败"
     else
-        tail -20 /tmp/macshot-bundle.log | sed 's/^/    /'
+        tail -20 /tmp/index-bundle.log | sed 's/^/    /'
         bad "build.sh 失败"
     fi
 fi

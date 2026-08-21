@@ -20,6 +20,8 @@ final class ClipboardHistoryCoordinator {
     private let watcher: ClipboardWatcher
     private let store: ClipboardHistoryStore
     private var panel: ClipboardHistoryPanel?
+    /// 面板打开前的前台应用，粘贴时恢复焦点到它。
+    private var previousFrontmostApp: NSRunningApplication?
 
     /// 面板显示状态的观察者（菜单栏/设置用）。
     var onPanelVisibilityChanged: ((Bool) -> Void)?
@@ -55,7 +57,7 @@ final class ClipboardHistoryCoordinator {
                 try recordText(text, sourceApp: snapshot.sourceApp)
             }
         } catch {
-            NSLog("[MacShot] 剪贴板历史记录失败: \(error)")
+            NSLog("[Index] 剪贴板历史记录失败: \(error)")
         }
     }
 
@@ -130,7 +132,42 @@ final class ClipboardHistoryCoordinator {
                 self?.onPanelVisibilityChanged?(true)
             }
         }
+        // 记住打开面板前的前台应用（排除 Index 自身），粘贴时恢复焦点到它。
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousFrontmostApp = frontmost
+        }
         panel?.show()
+    }
+
+    /// 粘贴前把焦点还给之前正在使用的应用。
+    func restoreFrontmostApp() {
+        previousFrontmostApp?.activate(options: [])
+        previousFrontmostApp = nil
+    }
+
+    /// 面板钉住状态（点击外部不关闭）。
+    var isPinned: Bool {
+        get { panel?.isPinned ?? false }
+        set { panel?.isPinned = newValue }
+    }
+
+    /// 粘贴流程：关面板 → 恢复焦点到之前应用 → 模拟 Cmd+V。
+    /// 窗口生命周期和 CGEvent 注入收口在这里，ViewModel 只负责复制内容。
+    func performPaste() {
+        togglePanel()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            self.restoreFrontmostApp()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            let source = CGEventSource(stateID: .combinedSessionState)
+            let vDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true)
+            vDown?.flags = .maskCommand
+            let vUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
+            vUp?.flags = .maskCommand
+            vDown?.post(tap: .cghidEventTap)
+            vUp?.post(tap: .cghidEventTap)
+        }
     }
 
     // MARK: 工具

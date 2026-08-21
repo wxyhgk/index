@@ -1,7 +1,7 @@
 import XCTest
 import CoreGraphics
 import GRDB
-@testable import MacShot
+@testable import IndexApp
 
 /// ShotStore 的行为安全网：清理候选的豁免规则、批量删除的引用计数、
 /// 侧边栏四个智能筛选（今天 / 本周 / 未整理 / 已标注）的边界与计数。
@@ -13,7 +13,7 @@ final class ShotStoreTests: XCTestCase {
 
     override func setUpWithError() throws {
         tempRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MacShotTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("IndexTests-\(UUID().uuidString)", isDirectory: true)
     }
 
     override func tearDownWithError() throws {

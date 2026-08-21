@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 /// 模态面板落点的安全网。
 ///

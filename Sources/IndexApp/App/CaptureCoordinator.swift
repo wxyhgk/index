@@ -78,12 +78,12 @@ final class CaptureCoordinator {
 
         // 录屏进行中（或正在框选录制区域）不开截图 —— 两套覆盖层会互相打架。
         guard !ScreenRecorder.shared.isRecording, !RecordingCoordinator.shared.isSelecting else {
-            NSLog("[MacShot] 录屏进行中，截图请求被拒绝")
+            NSLog("[Index] 录屏进行中，截图请求被拒绝")
             return
         }
 
         guard let source = sources.source(id: sourceID) else {
-            NSLog("[MacShot] 未注册的捕获方式: \(sourceID)")
+            NSLog("[Index] 未注册的捕获方式: \(sourceID)")
             return
         }
 
@@ -120,7 +120,7 @@ final class CaptureCoordinator {
                 // 必须在覆盖层出现前记下来。放在捕获之后记 —— 延时等待期间用户可能切换了 App，
                 // 定格瞬间的前台应用才是截图的真实来源。
                 let previousApp = SystemNavigator.frontmostApplication
-                // 不排除自身 PID：让用户能选中 MacShot 自己的窗口（图库等）截图。
+                // 不排除自身 PID：让用户能选中 Index 自己的窗口（图库等）截图。
                 // overlay 窗口 layer != 0，不会出现在 layer == 0 的窗口列表里。
                 let windowList = windowListing.onScreenWindows(
                     excludingPID: 0
@@ -134,7 +134,7 @@ final class CaptureCoordinator {
             } catch is CancellationError {
                 // 用户主动取消延时，静默返回。
             } catch {
-                NSLog("[MacShot] 捕获失败(\(sourceID)): \(error)")
+                NSLog("[Index] 捕获失败(\(sourceID)): \(error)")
                 presentError(error)
             }
         }
@@ -162,7 +162,7 @@ final class CaptureCoordinator {
                         includeShadow: styleStore.windowCaptureShadow
                     )
                 } catch {
-                    NSLog("[MacShot] 整窗捕获失败，退回冻结画面裁剪: \(error)")
+                    NSLog("[Index] 整窗捕获失败，退回冻结画面裁剪: \(error)")
                 }
                 store(result, image: image, previousApp: previousApp)
             }
@@ -288,7 +288,7 @@ final class CaptureCoordinator {
                 ShelfController.shared.present(image: context.rendered(), shot: shot)
             }
         } catch {
-            NSLog("[MacShot] 保存失败: \(error)")
+            NSLog("[Index] 保存失败: \(error)")
             presentError(error)
         }
     }
@@ -314,13 +314,13 @@ final class CaptureCoordinator {
 
         Task.detached(priority: .utility) {
             guard let data = ImageCodec.pngData(from: image) else {
-                NSLog("[MacShot] 自动副本：PNG 编码失败")
+                NSLog("[Index] 自动副本：PNG 编码失败")
                 return
             }
             do {
                 try ImageExporter.writePNG(data, into: directory, preferredName: name)
             } catch {
-                NSLog("[MacShot] 自动副本写入失败: \(error)")
+                NSLog("[Index] 自动副本写入失败: \(error)")
             }
         }
     }
@@ -329,7 +329,7 @@ final class CaptureCoordinator {
     /// 新增动作不会改动这个方法。
     private func run(actionID: String, context: CaptureContext) {
         guard let action = CaptureActionRegistry.shared.action(id: actionID) else {
-            NSLog("[MacShot] 未注册的动作: \(actionID)")
+            NSLog("[Index] 未注册的动作: \(actionID)")
             return
         }
 
@@ -343,7 +343,7 @@ final class CaptureCoordinator {
             do {
                 try await action.perform(context)
             } catch {
-                NSLog("[MacShot] 动作 \(actionID) 失败: \(error)")
+                NSLog("[Index] 动作 \(actionID) 失败: \(error)")
                 presentError(error)
             }
         }

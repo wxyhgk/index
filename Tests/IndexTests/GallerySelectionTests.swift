@@ -1,6 +1,6 @@
 import Combine
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class GallerySelectionTests: XCTestCase {

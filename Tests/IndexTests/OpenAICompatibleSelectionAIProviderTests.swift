@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class OpenAICompatibleSelectionAIProviderTests: XCTestCase {
     func testConfigurationNormalizesResponsesEndpointAndRejectsHTTP() {

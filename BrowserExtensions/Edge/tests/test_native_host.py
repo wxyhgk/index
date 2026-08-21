@@ -16,7 +16,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = ROOT / "native_host.py"
-SPEC = importlib.util.spec_from_file_location("macshot_edge_native_host", HOST)
+SPEC = importlib.util.spec_from_file_location("index_edge_native_host", HOST)
 NATIVE_HOST = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(NATIVE_HOST)
@@ -36,7 +36,7 @@ def read_framed(data: bytes) -> dict:
 class NativeHostTests(unittest.TestCase):
     def test_opens_gallery_only_after_explicit_command(self):
         environment = os.environ.copy()
-        environment["MACSHOT_BROWSER_SKIP_OPEN"] = "1"
+        environment["INDEX_BROWSER_SKIP_OPEN"] = "1"
         process = subprocess.run(
             [sys.executable, str(HOST)],
             input=framed({"type": "open-gallery"}),
@@ -52,8 +52,8 @@ class NativeHostTests(unittest.TestCase):
     def test_stages_image_and_returns_transfer_id(self):
         with tempfile.TemporaryDirectory() as directory:
             environment = os.environ.copy()
-            environment["MACSHOT_BROWSER_INBOX"] = directory
-            environment["MACSHOT_BROWSER_SKIP_OPEN"] = "1"
+            environment["INDEX_BROWSER_INBOX"] = directory
+            environment["INDEX_BROWSER_SKIP_OPEN"] = "1"
             message = {
                 "type": "import-image",
                 "fileName": "MR-TADF.png",
@@ -80,7 +80,7 @@ class NativeHostTests(unittest.TestCase):
             metadata = json.loads((item / "metadata.json").read_text())
             self.assertEqual(metadata["pageURL"], "https://example.test/paper")
 
-    def test_waits_for_macshot_import_confirmation(self):
+    def test_waits_for_index_import_confirmation(self):
         with tempfile.TemporaryDirectory() as directory:
             transfer_id = str(uuid.uuid4())
             result_directory = Path(directory) / ".results"
@@ -94,8 +94,8 @@ class NativeHostTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-            previous = os.environ.get("MACSHOT_BROWSER_INBOX")
-            os.environ["MACSHOT_BROWSER_INBOX"] = directory
+            previous = os.environ.get("INDEX_BROWSER_INBOX")
+            os.environ["INDEX_BROWSER_INBOX"] = directory
             try:
                 worker = threading.Thread(target=confirm_import)
                 worker.start()
@@ -103,9 +103,9 @@ class NativeHostTests(unittest.TestCase):
                 worker.join()
             finally:
                 if previous is None:
-                    os.environ.pop("MACSHOT_BROWSER_INBOX", None)
+                    os.environ.pop("INDEX_BROWSER_INBOX", None)
                 else:
-                    os.environ["MACSHOT_BROWSER_INBOX"] = previous
+                    os.environ["INDEX_BROWSER_INBOX"] = previous
 
             self.assertEqual(response, {"ok": True, "fileName": "molecule.png"})
             self.assertFalse(result_path.exists())
@@ -113,8 +113,8 @@ class NativeHostTests(unittest.TestCase):
     def test_rejects_unsupported_mime_type(self):
         with tempfile.TemporaryDirectory() as directory:
             environment = os.environ.copy()
-            environment["MACSHOT_BROWSER_INBOX"] = directory
-            environment["MACSHOT_BROWSER_SKIP_OPEN"] = "1"
+            environment["INDEX_BROWSER_INBOX"] = directory
+            environment["INDEX_BROWSER_SKIP_OPEN"] = "1"
             process = subprocess.run(
                 [sys.executable, str(HOST)],
                 input=framed({

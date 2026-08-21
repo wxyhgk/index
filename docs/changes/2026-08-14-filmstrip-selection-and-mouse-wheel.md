@@ -31,10 +31,10 @@
 
 相关实现：
 
-- `Sources/MacShot/UI/EditorView.swift`
-- `Sources/MacShot/UI/EditorModel.swift`
-- `Sources/MacShot/UI/EditorFilmstrip.swift`
-- `Tests/MacShotTests/EditorFilmstripLayoutTests.swift`
+- `Sources/Index/UI/EditorView.swift`
+- `Sources/Index/UI/EditorModel.swift`
+- `Sources/Index/UI/EditorFilmstrip.swift`
+- `Tests/IndexTests/EditorFilmstripLayoutTests.swift`
 
 ## 问题二：普通鼠标无法横向滚动 Filmstrip
 
@@ -61,7 +61,7 @@ Filmstrip 是 SwiftUI 的横向 `ScrollView`。触控板横向手势可以使用
 
 核心计算位于 `EditorFilmstripWheel`，AppKit 事件桥接位于 `EditorFilmstripWheelBridge`，均在：
 
-- `Sources/MacShot/UI/EditorFilmstrip.swift`
+- `Sources/Index/UI/EditorFilmstrip.swift`
 
 ## 验证中发现的独立竞态
 
@@ -71,8 +71,8 @@ Filmstrip 是 SwiftUI 的横向 `ScrollView`。触控板横向手势可以使用
 
 相关实现：
 
-- `Sources/MacShot/UI/ThumbnailImage.swift`
-- `Tests/MacShotTests/ThumbnailLoadingTests.swift`
+- `Sources/Index/UI/ThumbnailImage.swift`
+- `Tests/IndexTests/ThumbnailLoadingTests.swift`
 
 ## 自动化验证
 
@@ -91,7 +91,7 @@ Filmstrip 定向测试覆盖：
 ```text
 git diff --check       通过
 ./scripts/check.sh     249 项测试，0 失败；8 项架构纪律全部通过
-./build.sh release     使用 MacShot Dev 签名，旁路组装后原子替换并启动 Index
+./build.sh release     使用 Index Dev 签名，旁路组装后原子替换并启动 Index
 ```
 
 ## 人工回归步骤

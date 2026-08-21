@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://macshot.local/contracts/portable-library-v1.schema.json",
-  "title": "MacShot portable library manifest v1",
+  "$id": "https://index.local/contracts/portable-library-v1.schema.json",
+  "title": "Index portable library manifest v1",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,7 +9,7 @@
     "shots", "collections"
   ],
   "properties": {
-    "format": { "const": "com.macshot.portable-library" },
+    "format": { "const": "com.index.portable-library" },
     "formatVersion": { "const": 1 },
     "minimumReaderVersion": { "type": "integer", "minimum": 1 },
     "exportedAt": { "type": "string", "format": "date-time" },
@@ -85,7 +85,7 @@
         "note": { "type": "string" },
         "layers": {
           "allOf": [
-            { "$ref": "https://macshot.local/contracts/layers-v1.schema.json" }
+            { "$ref": "https://index.local/contracts/layers-v1.schema.json" }
           ]
         }
       }

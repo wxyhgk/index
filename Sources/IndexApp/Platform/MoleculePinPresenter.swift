@@ -140,7 +140,7 @@ private final class MoleculePinWindowController: NSWindowController, PinPassthro
             close()
         } catch {
             (window?.contentView as? WKWebView)?.evaluateJavaScript(
-                "window.__macshotFreezeFinished(false)"
+                "window.__indexFreezeFinished(false)"
             )
             AppAlert.error("无法定格 3D 分子", error: error, host: window)
         }
@@ -197,25 +197,25 @@ private final class MoleculePinWindowController: NSWindowController, PinPassthro
           <script>
             const status = document.getElementById('status');
             const freeze = document.getElementById('freeze');
-            window.__macshotFreezeFinished = function(success) {
+            window.__indexFreezeFinished = function(success) {
               if (!success) {
                 freeze.disabled = false;
                 freeze.textContent = '定格为图片';
               }
             };
             freeze.addEventListener('click', () => {
-              if (!window.__macshotViewer) return;
+              if (!window.__indexViewer) return;
               freeze.disabled = true;
               freeze.textContent = '正在定格…';
               try {
-                Promise.resolve(window.__macshotViewer.pngURI()).then(uri => {
+                Promise.resolve(window.__indexViewer.pngURI()).then(uri => {
                   window.webkit.messageHandlers.\(freezeMessageName).postMessage(uri);
                 }).catch(error => {
-                  window.__macshotFreezeFinished(false);
+                  window.__indexFreezeFinished(false);
                   showError('定格失败：' + (error?.message || String(error)));
                 });
               } catch (error) {
-                window.__macshotFreezeFinished(false);
+                window.__indexFreezeFinished(false);
                 showError('定格失败：' + (error?.message || String(error)));
               }
             });
@@ -238,7 +238,7 @@ private final class MoleculePinWindowController: NSWindowController, PinPassthro
                   backgroundAlpha: 1,
                   antialias: true
                 });
-                window.__macshotViewer = viewer;
+                window.__indexViewer = viewer;
                 const model = viewer.addModel(xyz, 'xyz');
                 if (!model || model.selectedAtoms({}).length !== \(atomCount)) {
                   showError('XYZ 已读取，但渲染器返回的原子数不一致。');

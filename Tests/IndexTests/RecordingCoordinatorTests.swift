@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class RecordingCoordinatorTests: XCTestCase {

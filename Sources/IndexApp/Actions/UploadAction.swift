@@ -43,12 +43,12 @@ struct UploadAction: CaptureAction {
         )
 
         Clipboard.copy(text: upload.uploadLinkFormat.format(link))
-        NSLog("[MacShot] 上传成功，链接已复制: \(link)")
+        NSLog("[Index] 上传成功，链接已复制: \(link)")
     }
 
     private static func filename(for shot: Shot?) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        return "macshot-\(formatter.string(from: shot?.capturedAt ?? Date())).png"
+        return "index-\(formatter.string(from: shot?.capturedAt ?? Date())).png"
     }
 }

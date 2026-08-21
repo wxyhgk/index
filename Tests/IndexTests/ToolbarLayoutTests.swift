@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 /// 工具条布局的纯函数安全网：无样式时单行，有样式时双行，命中与绘制同源。
 @MainActor

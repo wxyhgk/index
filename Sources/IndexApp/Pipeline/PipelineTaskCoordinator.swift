@@ -86,7 +86,7 @@ final class BoundedPostProcessScheduler {
                 return
             }
             guard let image = ImageCodec.load(from: work.originalURL) else {
-                NSLog("[MacShot] 后处理无法读取截图 \(work.shotID)：\(work.originalURL.path)")
+                NSLog("[Index] 后处理无法读取截图 \(work.shotID)：\(work.originalURL.path)")
                 await MainActor.run { [weak self] in self?.didFinish(work.id) }
                 return
             }

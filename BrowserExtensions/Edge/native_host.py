@@ -67,10 +67,10 @@ def write_message(stream, value: dict) -> None:
 
 
 def inbox_root() -> Path:
-    override = os.environ.get("MACSHOT_BROWSER_INBOX")
+    override = os.environ.get("INDEX_BROWSER_INBOX")
     if override:
         return Path(override).expanduser().resolve()
-    return Path.home() / "Library" / "Application Support" / "MacShot" / "browser-inbox"
+    return Path.home() / "Library" / "Application Support" / "Index" / "browser-inbox"
 
 
 def safe_file_name(raw: object, mime_type: str) -> str:
@@ -147,8 +147,8 @@ def stage_import(message: dict) -> tuple[str, str]:
     return transfer_id, file_name
 
 
-def open_macshot(transfer_id: str) -> None:
-    if os.environ.get("MACSHOT_BROWSER_SKIP_OPEN") == "1":
+def open_index(transfer_id: str) -> None:
+    if os.environ.get("INDEX_BROWSER_SKIP_OPEN") == "1":
         return
     result = subprocess.run(
         ["/usr/bin/open", "-g", f"index://import/browser?id={transfer_id}"],
@@ -163,7 +163,7 @@ def open_macshot(transfer_id: str) -> None:
 
 
 def open_gallery() -> None:
-    if os.environ.get("MACSHOT_BROWSER_SKIP_OPEN") == "1":
+    if os.environ.get("INDEX_BROWSER_SKIP_OPEN") == "1":
         return
     result = subprocess.run(
         ["/usr/bin/open", "index://gallery"],
@@ -177,7 +177,7 @@ def open_gallery() -> None:
 
 
 def wait_for_import(transfer_id: str) -> dict:
-    if os.environ.get("MACSHOT_BROWSER_SKIP_OPEN") == "1":
+    if os.environ.get("INDEX_BROWSER_SKIP_OPEN") == "1":
         return {"ok": True, "staged": True}
 
     result_path = inbox_root() / ".results" / f"{transfer_id.lower()}.json"
@@ -203,14 +203,14 @@ def main() -> int:
             return 0
 
         transfer_id, file_name = stage_import(message)
-        open_macshot(transfer_id)
+        open_index(transfer_id)
         result = wait_for_import(transfer_id)
         result.setdefault("id", transfer_id)
         result.setdefault("fileName", file_name)
         write_message(sys.stdout.buffer, result)
         return 0 if result.get("ok") else 1
     except Exception as error:
-        print(f"[MacShot Edge Host] {error}", file=sys.stderr)
+        print(f"[Index Edge Host] {error}", file=sys.stderr)
         write_message(sys.stdout.buffer, {"ok": False, "error": str(error)})
         return 1
 

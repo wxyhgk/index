@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 /// 事件路由单测：给定坐标与状态，断言哪个 target 消费、状态怎么变。
 ///

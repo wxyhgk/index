@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 /// 撤销/重做操作栈的纯规则单测：出入栈顺序、redo 分支清空、style 合并、reset。
 ///

@@ -63,6 +63,8 @@ struct CollectionCardShell: View {
     let hovering: Bool
     let action: () -> Void
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         Button(action: action) {
@@ -109,12 +111,31 @@ struct CollectionCardShell: View {
             }
             .padding(DS.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DS.surfaceFill(hovering ? .raised : .content, scheme), in: cardShape)
-            .overlay { cardShape.strokeBorder(DS.rim(.content, scheme, hovering: hovering).gradient) }
+            .background(DS.panelFill(.resting), in: cardShape)
+            .overlay {
+                let rim = DS.rim(hovering ? .raised : .content, scheme, hovering: hovering)
+                cardShape.strokeBorder(rim.gradient, lineWidth: rim.lineWidth)
+                    .blendMode(reduceTransparency ? .normal : rim.blend)
+                    .allowsHitTesting(false)
+            }
+            .compositingGroup()
             .contentShape(cardShape)
         }
         .buttonStyle(.plain)
+        .scaleEffect(hovering ? DS.Lift.hoverScale : 1)
+        .offset(y: hovering && !reduceMotion ? DS.Lift.hoverY : 0)
+        .shadow(
+            color: hoverShadow.color,
+            radius: hoverShadow.radius,
+            y: hoverShadow.y
+        )
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: hovering)
         .accessibilityLabel("\(title)，\(count) 张图片")
+    }
+
+    private var hoverShadow: DS.Shadow {
+        guard scheme != .dark, hovering else { return .none }
+        return DS.shadow(.raised, scheme)
     }
 
     private var cardShape: RoundedRectangle {

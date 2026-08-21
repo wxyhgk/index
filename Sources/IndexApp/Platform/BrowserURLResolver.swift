@@ -76,7 +76,7 @@ enum BrowserURLResolver {
                 try process.run()
             } catch {
                 process.terminationHandler = nil
-                NSLog("[MacShot] 无法启动 osascript: \(error)")
+                NSLog("[Index] 无法启动 osascript: \(error)")
                 continuation.resume(returning: false)
             }
         }
@@ -84,7 +84,7 @@ enum BrowserURLResolver {
 
         guard started else { return nil }
         guard process.terminationStatus == 0 else {
-            NSLog("[MacShot] 取浏览器地址失败或超时: \(bundleID)")
+            NSLog("[Index] 取浏览器地址失败或超时: \(bundleID)")
             return nil
         }
 

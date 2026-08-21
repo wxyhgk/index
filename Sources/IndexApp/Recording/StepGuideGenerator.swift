@@ -109,7 +109,7 @@ enum StepGuideGenerator {
             let text = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
             return text.isEmpty ? fallback : text
         } catch {
-            NSLog("[MacShot] 步骤 \(number) AI 配文失败，回退默认文案: \(error)")
+            NSLog("[Index] 步骤 \(number) AI 配文失败，回退默认文案: \(error)")
             return fallback
         }
     }

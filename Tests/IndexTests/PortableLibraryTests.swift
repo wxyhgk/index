@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import GRDB
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class PortableLibraryTests: XCTestCase {
@@ -83,7 +83,7 @@ final class PortableLibraryTests: XCTestCase {
             )
         }
 
-        let destination = exportRoot.appendingPathComponent("Chemistry.macshotlibrary")
+        let destination = exportRoot.appendingPathComponent("Chemistry.indexlibrary")
         let exportedAt = Date(timeIntervalSince1970: 1_700_001_000)
         _ = try await store.exportPortableLibrary(
             to: destination,
@@ -95,7 +95,7 @@ final class PortableLibraryTests: XCTestCase {
         let manifest = try PortableLibraryCoding.makeDecoder()
             .decode(PortableLibraryManifest.self, from: manifestData)
         XCTAssertEqual(manifest.format, PortableLibraryManifest.formatIdentifier)
-        XCTAssertEqual(manifest.formatVersion, 1)
+        XCTAssertEqual(manifest.formatVersion, 2)
         XCTAssertEqual(manifest.producer, PortableLibraryProducer(
             name: "Index", version: "0.1.8", platform: "macOS"
         ))
@@ -180,7 +180,7 @@ final class PortableLibraryTests: XCTestCase {
         let (store, _) = try makeStore()
         let shot = try store.save(image: makeImage(gray: 0.75), metadata: CaptureMetadata())
         try FileManager.default.removeItem(at: store.originalURL(for: shot))
-        let destination = exportRoot.appendingPathComponent("Broken.macshotlibrary")
+        let destination = exportRoot.appendingPathComponent("Broken.indexlibrary")
 
         do {
             _ = try await store.exportPortableLibrary(to: destination)
@@ -199,7 +199,7 @@ final class PortableLibraryTests: XCTestCase {
     func testExistingDestinationIsNeverOverwritten() async throws {
         let (store, _) = try makeStore()
         _ = try store.save(image: makeImage(gray: 0.9), metadata: CaptureMetadata())
-        let destination = exportRoot.appendingPathComponent("Existing.macshotlibrary")
+        let destination = exportRoot.appendingPathComponent("Existing.indexlibrary")
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let sentinel = destination.appendingPathComponent("keep-me.txt")
         try Data("user-data".utf8).write(to: sentinel)

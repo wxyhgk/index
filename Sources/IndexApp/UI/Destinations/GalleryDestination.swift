@@ -44,11 +44,17 @@ protocol GalleryDestination {
     /// 右侧面板。**nil = 这个选项不需要右侧栏**，容器会把整块宽度让给中间 ——
     /// 不是画一块空白板子。
     func inspector() -> AnyView?
+
+    /// 这个选项固定使用的 GalleryContentScope。
+    /// 默认 `.library`（无固定筛选）；录屏等需要固定范围的选项覆盖。
+    /// ZStack 下所有 tab 始终存在，scope 切换由容器在 destinationID 变化时统一处理。
+    var contentScope: GalleryContentScope { get }
 }
 
 extension GalleryDestination {
     func badge() -> Int? { nil }
     func inspector() -> AnyView? { nil }
+    var contentScope: GalleryContentScope { .library }
 }
 
 /// 选项注册表。

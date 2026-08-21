@@ -1,4 +1,4 @@
-# MacShot Portable Library Contract
+# Index Portable Library Contract
 
 这个目录定义 macOS 与未来 Windows 原生客户端之间的**数据边界**，不是要求两端
 共享 Swift/C# 源码，也不是让两个进程共同打开运行中的 SQLite 数据库。
@@ -8,7 +8,7 @@
 便携图库是一个后缀可由界面决定的普通目录：
 
 ```text
-Example.macshotlibrary/
+Example.indexlibrary/
 ├── manifest.json
 ├── originals/
 │   └── <sha256>.png
@@ -32,7 +32,7 @@ Example.macshotlibrary/
 以 `contentHash` 和导入端策略决定。
 
 不要通过 OneDrive、Dropbox 或网络盘让 macOS 和 Windows 同时打开同一个
-`index.sqlite`/WAL。正确流程是：MacShot 导出独立包 → Windows 验证清单与哈希 →
+`index.sqlite`/WAL。正确流程是：Index 导出独立包 → Windows 验证清单与哈希 →
 导入 Windows 自己的本地数据库。
 
 ## 坐标
@@ -53,7 +53,7 @@ Example.macshotlibrary/
 
 ## 当前实现
 
-- Swift DTO/编码：`Sources/MacShot/Storage/PortableLibrary.swift`
+- Swift DTO/编码：`Sources/Index/Storage/PortableLibrary.swift`
 - 图层 Schema：`layers-v1.schema.json`
 - 清单 Schema：`portable-library-v1.schema.json`
-- 回归测试：`Tests/MacShotTests/PortableLibraryTests.swift`
+- 回归测试：`Tests/IndexTests/PortableLibraryTests.swift`

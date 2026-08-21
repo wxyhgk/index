@@ -21,10 +21,21 @@ final class ClipboardHistoryPanel: NSPanel {
     private var viewModel: ClipboardHistoryViewModel!
     private var localMonitor: Any?
     private var globalMonitor: Any?
+    /// 钉住模式：点击外部不关闭。
+    var isPinned = false {
+        didSet {
+            if isPinned {
+                removeGlobalMonitor()
+            } else {
+                installGlobalMonitor()
+            }
+        }
+    }
 
-    init(store: ClipboardHistoryStore) {
+    init(store: ClipboardHistoryStore, viewModel: ClipboardHistoryViewModel? = nil) {
         self.store = store
-        self.viewModel = ClipboardHistoryViewModel(store: store)
+        let resolvedViewModel = viewModel ?? ClipboardHistoryViewModel.shared
+        self.viewModel = resolvedViewModel
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 320),
             styleMask: [.borderless],
@@ -39,11 +50,12 @@ final class ClipboardHistoryPanel: NSPanel {
         hasShadow = true
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
+        isMovable = true
 
-        let root = ClipboardHistoryView(viewModel: viewModel, store: store)
+        let root = ClipboardHistoryView(viewModel: resolvedViewModel, store: store)
         let hosting = NSHostingController(rootView: root)
         hosting.view.wantsLayer = true
-        hosting.view.layer?.cornerRadius = DS.radiusCard
+        hosting.view.layer?.cornerRadius = DS.radiusPanel
         hosting.view.layer?.masksToBounds = true
         contentView = hosting.view
     }
@@ -54,7 +66,17 @@ final class ClipboardHistoryPanel: NSPanel {
 
     func show() {
         viewModel.refresh()
-        if let screen = NSScreen.main {
+        // 用鼠标所在的屏幕定位面板（多显示器/Sidecar 场景）。
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouseLocation) } ?? NSScreen.main
+        // 优先用上次保存的相对位置（比例），在目标屏幕上还原。
+        if let screen, let relative = savedRelativePosition {
+            let origin = NSPoint(
+                x: screen.frame.minX + relative.x * screen.frame.width - frame.width / 2,
+                y: screen.frame.minY + relative.y * screen.frame.height - frame.height / 2
+            )
+            setFrameOrigin(origin)
+        } else if let screen {
             let size = frame.size
             let origin = NSPoint(
                 x: screen.frame.midX - size.width / 2,
@@ -93,17 +115,29 @@ final class ClipboardHistoryPanel: NSPanel {
 
     private func installMonitors() {
         removeMonitors()
-        // 键盘导航：Esc 关闭，←→ 选择，Enter 复制，Delete 删除。
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        // 键盘导航：Esc 关闭，←→ 选择，Enter 粘贴，Delete 删除，空格 大图预览。
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] (event: NSEvent) -> NSEvent? in
             guard let self else { return event }
+            // 焦点在文本输入框内时，放行按键给文本框（退格、方向键等）
+            if let responder = self.firstResponder, responder is NSText {
+                return event
+            }
+            // 空格键：按下显示大图，松开隐藏（类似 Finder Quick Look）。
+            // isARepeat 过滤：按住不放时系统连续发 keyDown，只在第一次按下时定位，
+            // 否则图片会跟着鼠标移动（每次 repeat 都用新的 mouseLocation 重新定位）。
+            if event.keyCode == 49 {
+                if event.type == .keyDown, !event.isARepeat {
+                    self.showPreviewForSelection()
+                } else if event.type == .keyUp {
+                    ImagePreviewController.shared.cancel()
+                }
+                return nil
+            }
+            guard event.type == .keyDown else { return event }
             // Esc 始终关闭面板
             if event.keyCode == 53 {
                 self.close()
                 return nil
-            }
-            // 焦点在文本输入框内时，放行按键给文本框（退格、方向键等）
-            if let responder = self.firstResponder, responder is NSText {
-                return event
             }
             switch event.keyCode {
             case 123: // ←
@@ -112,8 +146,8 @@ final class ClipboardHistoryPanel: NSPanel {
             case 124: // →
                 self.viewModel.moveSelection(1)
                 return nil
-            case 36: // Enter
-                self.viewModel.copySelected()
+            case 36: // Enter = 粘贴选中项
+                self.viewModel.pasteSelected()
                 return nil
             case 51, 117: // Delete / Forward Delete
                 self.viewModel.deleteSelected()
@@ -122,10 +156,44 @@ final class ClipboardHistoryPanel: NSPanel {
                 return event
             }
         }
-        // 点击面板外面关闭
+        if !isPinned {
+            installGlobalMonitor()
+        }
+    }
+
+    /// 空格键触发：选中项是图片时显示大图预览。
+    private func showPreviewForSelection() {
+        let visible = viewModel.filteredItems
+        guard viewModel.selectedIndex < visible.count else { return }
+        let item = visible[viewModel.selectedIndex]
+        guard item.kind == .image,
+              let id = item.id,
+              let thumbnail = viewModel.imageThumbnails[id]
+        else { return }
+        ImagePreviewController.shared.showNow(image: thumbnail, screenPoint: NSEvent.mouseLocation)
+    }
+
+    /// 点击面板外部时关闭（非钉住模式）。
+    /// 用位置检查代替时间宽限：NSApp.activate 异步完成前 WindowServer
+    /// 可能把点击路由给之前的前台应用，但鼠标位置不会变——
+    /// 只要鼠标在面板 frame 内就不关闭。
+    private func installGlobalMonitor() {
+        guard globalMonitor == nil else { return }
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            guard let self, self.isVisible else { return }
+            guard let self, self.isVisible, !self.isPinned else { return }
+            // 鼠标在面板内 → 不关闭（即使事件被路由到了其他应用）。
+            let mouseLocation = NSEvent.mouseLocation
+            if self.frame.contains(mouseLocation) {
+                return
+            }
             self.close()
+        }
+    }
+
+    private func removeGlobalMonitor() {
+        if let monitor = globalMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalMonitor = nil
         }
     }
 
@@ -134,13 +202,28 @@ final class ClipboardHistoryPanel: NSPanel {
             NSEvent.removeMonitor(monitor)
             localMonitor = nil
         }
-        if let monitor = globalMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalMonitor = nil
-        }
+        removeGlobalMonitor()
+    }
+
+    /// 上次保存的相对位置（0-1 比例），适配多显示器/分辨率变化。
+    private var savedRelativePosition: CGPoint? {
+        guard UserDefaults.standard.bool(forKey: "clipboardPanelPositionSaved") else { return nil }
+        let x = UserDefaults.standard.double(forKey: "clipboardPanelRelX")
+        let y = UserDefaults.standard.double(forKey: "clipboardPanelRelY")
+        return CGPoint(x: x, y: y)
     }
 
     override func close() {
+        // 面板关闭时取消图片预览，避免预览窗残留。
+        ImagePreviewController.shared.cancel()
+        // 保存相对位置（比例），下次打开时按当前主屏尺寸还原。
+        if let screen = NSScreen.main {
+            let relX = (frame.midX - screen.frame.minX) / screen.frame.width
+            let relY = (frame.midY - screen.frame.minY) / screen.frame.height
+            UserDefaults.standard.set(relX, forKey: "clipboardPanelRelX")
+            UserDefaults.standard.set(relY, forKey: "clipboardPanelRelY")
+            UserDefaults.standard.set(true, forKey: "clipboardPanelPositionSaved")
+        }
         removeMonitors()
         super.close()
         onClose?()

@@ -97,7 +97,7 @@ extension ShotStore {
                       generation == self.listObservationGeneration,
                       request == self.activeListQuery
                 else { return }
-                NSLog("[MacShot] 图库数据库观察失败: \(error)")
+                NSLog("[Index] 图库数据库观察失败: \(error)")
                 self.finishPendingInitialObservation()
             },
             onChange: { [weak self] snapshot in

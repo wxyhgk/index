@@ -86,7 +86,7 @@ final class GlobalHotKeyCenter {
             if status == noErr {
                 refs.append(ref)
             } else {
-                NSLog("[MacShot] 注册快捷键失败 \(name)=\(binding.shortcut.displayString), status=\(status)（可能已被占用）")
+                NSLog("[Index] 注册快捷键失败 \(name)=\(binding.shortcut.displayString), status=\(status)（可能已被占用）")
             }
         }
     }

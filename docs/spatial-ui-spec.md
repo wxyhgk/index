@@ -1,4 +1,4 @@
-# MacShot 图库 — macOS Spatial UI 设计规格
+# Index 图库 — macOS Spatial UI 设计规格
 
 > 目标：macOS 14 部署目标下，用 macOS 14/15 已有能力**神似**地做出 Apple 空间设计语言的深度感。
 > 本文是实施规格，不是讨论稿。每条都有数值和理由。
@@ -373,7 +373,7 @@ Apple WWDC23 的现代轴是 `duration + bounce`：bounce **0 = 默认**，**0.1
 
 以下代码在 `platforms: [.macOS(.v14)]` + `swiftLanguageMode(.v5)` 的 SPM 包里**编译通过、零警告**（含 Swift 6 严格并发检查）。
 
-建议落到 `Sources/MacShot/UI/DesignTokens.swift`（扩展现有 `enum DS`）+ 新增 `Sources/MacShot/UI/SpatialModifiers.swift`。
+建议落到 `Sources/Index/UI/DesignTokens.swift`（扩展现有 `enum DS`）+ 新增 `Sources/Index/UI/SpatialModifiers.swift`。
 
 ```swift
 import SwiftUI

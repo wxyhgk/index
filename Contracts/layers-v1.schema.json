@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://macshot.local/contracts/layers-v1.schema.json",
-  "title": "MacShot annotation layers v1",
+  "$id": "https://index.local/contracts/layers-v1.schema.json",
+  "title": "Index annotation layers v1",
   "description": "Coordinates use image pixels with the origin at the top-left.",
   "type": "array",
   "items": { "$ref": "#/$defs/layer" },

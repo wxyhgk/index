@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class RecordingAssetTests: XCTestCase {
     func testMissingPathIsScreenshot() {

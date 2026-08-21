@@ -57,7 +57,7 @@ final class SelectionOverlayController {
         let frozenDisplays = snapshots.map(\.display)
         guard DisplayTopology.matches(frozenDisplays, currentDisplays) else {
             NSLog(
-                "[MacShot] 覆盖层拒绝陈旧拓扑 frozen=%@ current=%@",
+                "[Index] 覆盖层拒绝陈旧拓扑 frozen=%@ current=%@",
                 frozenDisplays.map { "\($0.name)(\($0.id))" }.joined(separator: ", "),
                 currentDisplays.map { "\($0.name)(\($0.id))" }.joined(separator: ", ")
             )

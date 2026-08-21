@@ -28,7 +28,7 @@ struct VisionSceneLabels {
             do {
                 try handler.perform([request])
             } catch {
-                NSLog("[MacShot] 场景分类失败: \(error)")
+                NSLog("[Index] 场景分类失败: \(error)")
                 continuation.resume(returning: [])
             }
         }

@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 /// 同源时间线的网址归一化（`ShotStore.normalizedSourceURL`）纯逻辑单测。
 ///

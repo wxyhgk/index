@@ -1,6 +1,6 @@
 import Foundation
 
-/// Edge Native Messaging host 与 MacShot 之间的磁盘交接协议。
+/// Edge Native Messaging host 与 Index 之间的磁盘交接协议。
 ///
 /// URL 命令只携带 UUID，不接受外部传入的绝对路径；图片和元数据必须位于固定收件箱的
 /// `<UUID>/` 子目录中。这样浏览器扩展不能借 `macshot://` 读取用户磁盘上的任意文件。
@@ -49,7 +49,7 @@ enum BrowserImportInbox {
     static func defaultRootDirectory() -> URL {
         FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MacShot", isDirectory: true)
+            .appendingPathComponent("Index", isDirectory: true)
             .appendingPathComponent("browser-inbox", isDirectory: true)
     }
 
@@ -129,7 +129,7 @@ enum BrowserImportInbox {
                 ofItemAtPath: destination.path
             )
         } catch {
-            NSLog("[MacShot] 无法写入浏览器导入结果: \(error.localizedDescription)")
+            NSLog("[Index] 无法写入浏览器导入结果: \(error.localizedDescription)")
         }
     }
 }

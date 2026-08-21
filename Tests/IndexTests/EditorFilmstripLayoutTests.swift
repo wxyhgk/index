@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class EditorFilmstripLayoutTests: XCTestCase {
     func testVerticalMouseWheelMovesFilmstripHorizontally() {

@@ -11,7 +11,7 @@ import AppKit
 ///
 ///   API 层（`Platform/`）：`Platform.swift` 定义 PAL 协议（`ClipboardWriting` 等），
 ///     `Platform/*.swift` 为 macOS 实现，未来 `Win*` 另实现，`App` 注入具体实现。
-///     详见 `Sources/MacShot/README.md` 的「CSS / API 分层」与 `Platform/Platform.swift` 顶部注释。
+///     详见 `Sources/Index/README.md` 的「CSS / API 分层」与 `Platform/Platform.swift` 顶部注释。
 
 /// 全局设计 token。图库改版期间由并行分支共同遵守的约定，
 /// 间距、圆角、分类色都收敛到这里 —— 视图代码里不再出现魔法数。
@@ -324,7 +324,7 @@ extension DS {
     /// 为了配色去给每个视图加一个环境变量是本末倒置。
     static let insetSurface = Color(nsColor: insetSurfaceColor)
 
-    private static let insetSurfaceColor = NSColor(name: "MacShotInsetSurface") { appearance in
+    private static let insetSurfaceColor = NSColor(name: "IndexInsetSurface") { appearance in
         appearance.isDarkAqua
             ? NSColor(white: 1, alpha: 0.06)
             : NSColor(white: 0, alpha: 0.035)
@@ -565,7 +565,7 @@ extension DS {
 
     /// 窗口底色。深色近黑 `#0D0D0F`（所有浮起面板都比它亮一档），
     /// 浅色用系统窗背景色 —— 浅色侧的层级差由阴影承担，底色不该自己发明一个灰。
-    static let windowBase = NSColor(name: "MacShotWindowBase") { appearance in
+    static let windowBase = NSColor(name: "IndexWindowBase") { appearance in
         appearance.isDarkAqua
             ? NSColor(srgbRed: 0.051, green: 0.051, blue: 0.059, alpha: 1)  // #0D0D0F
             : .windowBackgroundColor
@@ -578,13 +578,13 @@ extension DS {
         Color(nsColor: level == .overlay ? panelFillOverlay : panelFillResting)
     }
 
-    private static let panelFillResting = NSColor(name: "MacShotPanelResting") { appearance in
+    private static let panelFillResting = NSColor(name: "IndexPanelResting") { appearance in
         appearance.isDarkAqua
             ? NSColor(srgbRed: 0.090, green: 0.090, blue: 0.102, alpha: 1)  // #17171A
             : .white
     }
 
-    private static let panelFillOverlay = NSColor(name: "MacShotPanelOverlay") { appearance in
+    private static let panelFillOverlay = NSColor(name: "IndexPanelOverlay") { appearance in
         appearance.isDarkAqua
             ? NSColor(srgbRed: 0.110, green: 0.110, blue: 0.122, alpha: 1)  // #1C1C1F
             : .white

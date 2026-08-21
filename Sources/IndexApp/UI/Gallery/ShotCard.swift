@@ -70,9 +70,9 @@ struct ShotCard: View {
             thumbnail
             caption
         }
+        .background(DS.panelFill(.resting))
         .clipShape(cellShape)
-        // 热区跟着单元格形状走，四个角外的三角区不再吃点击。
-        .contentShape(cellShape)
+        .contentShape(Rectangle())
         // ⚠️ 悬停判定必须挂在形变（scale 1.02 / offset −3）**之前**：
         // 挂在形变之后，卡片一悬停就上移，底边下的指针会掉出热区 →
         // 「悬停→位移→脱离→复位→再悬停」的自激抖动。

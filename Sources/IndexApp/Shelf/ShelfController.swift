@@ -126,7 +126,7 @@ final class ShelfController {
     /// 拖出去的 PNG 都写在这个目录下（每张卡一个子目录，避免同秒截图重名）。
     static var dragFileDirectory: URL {
         FileManager.default.temporaryDirectory
-            .appendingPathComponent("MacShotShelfDrag", isDirectory: true)
+            .appendingPathComponent("IndexShelfDrag", isDirectory: true)
     }
 
     /// 启动时清掉上次会话留下的拖拽临时文件。

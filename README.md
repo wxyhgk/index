@@ -60,7 +60,7 @@ open build/Index.app
 
 版本附件见 [GitHub Releases](https://github.com/wxyhgk/index/releases)；当前 CI 构建为未公证预览版。
 
-SwiftPM target、可执行文件、Bundle ID 和 `~/Library/Application Support/MacShot/` 仍保留内部名称，
+SwiftPM target、可执行文件、Bundle ID 和 `~/Library/Application Support/Index/` 仍保留内部名称，
 以兼容既有授权与数据；用户看到的 App bundle 与显示名称均为 Index。
 
 ## 文档与许可

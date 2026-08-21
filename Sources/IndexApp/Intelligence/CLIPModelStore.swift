@@ -5,10 +5,10 @@ import Foundation
 /// MobileCLIP-S0 模型文件的磁盘位置。纯路径常量，
 /// 单独抽出来是因为编码器在后台 actor 里也要读，不该被主 actor 隔离拦住。
 enum CLIPModelLocation {
-    /// ~/Library/Application Support/MacShot/models/mobileclip-s0/
+    /// ~/Library/Application Support/Index/models/mobileclip-s0/
     static let directory: URL = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("MacShot/models/mobileclip-s0", isDirectory: true)
+        .appendingPathComponent("Index/models/mobileclip-s0", isDirectory: true)
 
     static let compiledImageModel = directory.appendingPathComponent("image.mlmodelc")
     static let compiledTextModel = directory.appendingPathComponent("text.mlmodelc")

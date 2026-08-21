@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 /// 「确认选区后工具回到中性」（2026-08-20 起的行为）：
 /// 不再恢复上次使用的工具 —— 每次截图确认后都是箭头状态，

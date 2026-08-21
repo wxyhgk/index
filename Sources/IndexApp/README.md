@@ -1,6 +1,6 @@
-# MacShot 源码目录
+# Index 源码目录
 
-`Sources/MacShot` 单 target（`swiftLanguageMode(.v5)` + GRDB），按**依赖方向**而非技术类型分层。
+`Sources/Index` 单 target（`swiftLanguageMode(.v5)` + GRDB），按**依赖方向**而非技术类型分层。
 
 ## 依赖方向
 
@@ -57,4 +57,4 @@ Services/Platform + Intelligence + Recording 侧挂
 
 ## 构建
 
-`swift build` / `swift test` / `./scripts/check.sh`（构建+测试+架构纪律），`./build.sh` 会先旁路组装和固定身份签名，旧 Index/MacShot 完全退出后再原子替换 `build/Index.app`，并按原运行状态自动拉起。签名顺序是 `Developer ID → MacShot Dev`；ad-hoc 只允许通过环境变量显式启用。
+`swift build` / `swift test` / `./scripts/check.sh`（构建+测试+架构纪律），`./build.sh` 会先旁路组装和固定身份签名，旧 Index/Index 完全退出后再原子替换 `build/Index.app`，并按原运行状态自动拉起。签名顺序是 `Developer ID → Index Dev`；ad-hoc 只允许通过环境变量显式启用。

@@ -311,7 +311,7 @@ struct RedoControl: ToolbarControl {
 
 // MARK: - 分子来源
 
-/// XYZ 定格图片的来源入口。图标属于 MacShot 界面，不烤进 PNG；普通截图没有
+/// XYZ 定格图片的来源入口。图标属于 Index 界面，不烤进 PNG；普通截图没有
 /// `moleculeSourceActions`，因此不会占工具栏位置。
 struct MoleculeSourceControl: ToolbarControl {
     let id = "molecule.source"

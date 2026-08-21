@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class BrowserImportInboxTests: XCTestCase {
 

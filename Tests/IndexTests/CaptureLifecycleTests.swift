@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import VisionKit
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class CaptureLifecycleTests: XCTestCase {

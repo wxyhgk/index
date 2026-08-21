@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 final class ThumbnailLoadingTests: XCTestCase {
     func testDecodedCostUsesPixelMemoryInsteadOfCompressedByteCount() {

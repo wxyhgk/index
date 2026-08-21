@@ -73,7 +73,7 @@ final class URLCommandRouter {
         guard let scheme = url.scheme?.lowercased(), ["index", "macshot"].contains(scheme) else {
             return
         }
-        NSLog("[MacShot] URL 命令: \(url.absoluteString)")
+        NSLog("[Index] URL 命令: \(url.absoluteString)")
 
         // index://capture → host = "capture"；index://last/copy → host = "last"，path = "/copy"
         let host = url.host?.lowercased() ?? ""
@@ -112,13 +112,13 @@ final class URLCommandRouter {
 
         case ("import", "browser"):
             guard let id = query["id"], !id.isEmpty else {
-                NSLog("[MacShot] 浏览器导入忽略：缺少 id")
+                NSLog("[Index] 浏览器导入忽略：缺少 id")
                 return
             }
             importBrowserItem(id: id)
 
         default:
-            NSLog("[MacShot] 未知的 URL 命令: \(url.absoluteString)")
+            NSLog("[Index] 未知的 URL 命令: \(url.absoluteString)")
         }
     }
 
@@ -128,7 +128,7 @@ final class URLCommandRouter {
     /// 注意 `shots` 受图库搜索词/筛选影响 —— 这是已知局限，够用且行为可解释。
     private func withLastShot(_ body: (Shot, any ShotReading) -> Void) {
         guard let shot = shotStore.shots.first else {
-            NSLog("[MacShot] URL 命令忽略：截图库为空")
+            NSLog("[Index] URL 命令忽略：截图库为空")
             return
         }
         body(shot, shotStore)
@@ -143,7 +143,7 @@ final class URLCommandRouter {
         do {
             item = try BrowserImportInbox.item(id: id, rootDirectory: browserInboxRoot)
         } catch {
-            NSLog("[MacShot] 浏览器导入收件箱无效: \(error.localizedDescription)")
+            NSLog("[Index] 浏览器导入收件箱无效: \(error.localizedDescription)")
             if let itemID = UUID(uuidString: id) {
                 BrowserImportInbox.writeCompletion(
                     .init(ok: false, fileName: nil, error: error.localizedDescription),
@@ -179,7 +179,7 @@ final class URLCommandRouter {
                 rootDirectory: browserInboxRoot
             )
             guard succeeded else {
-                NSLog("[MacShot] Edge 图片导入失败: \(item.metadata.fileName)")
+                NSLog("[Index] Edge 图片导入失败: \(item.metadata.fileName)")
                 return
             }
         }

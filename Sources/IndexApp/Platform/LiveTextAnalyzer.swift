@@ -27,7 +27,7 @@ enum LiveTextAnalyzer {
                 configuration: ImageAnalyzer.Configuration([.text])
             )
         } catch {
-            NSLog("[MacShot] Live Text 分析失败: \(error)")
+            NSLog("[Index] Live Text 分析失败: \(error)")
             return nil
         }
     }

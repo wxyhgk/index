@@ -1,5 +1,5 @@
-const MENU_ID = "save-image-to-macshot";
-const NATIVE_HOST = "com.wxyhgk.macshot.edge";
+const MENU_ID = "save-image-to-index";
+const NATIVE_HOST = "com.wxyhgk.index.edge";
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const SUPPORTED_MIME_TYPES = new Set([
   "image/png",
@@ -25,7 +25,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "open-macshot-gallery") return false;
+  if (message?.type !== "open-index-gallery") return false;
   void sendNativeMessage({ type: "open-gallery" })
     .then((response) => {
       if (!response?.ok) throw new Error(response?.error || "Index 无法打开图库");
@@ -76,7 +76,7 @@ async function importImage(info, tab) {
     await showPageStatus(tab?.id, "success", "已保存到 Index", fileName);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("[MacShot Edge Demo]", message);
+    console.error("[Index Edge Demo]", message);
     await setStatus("!", `保存失败：${message}`);
     await showPageStatus(tab?.id, "failure", "保存失败", message);
   }
@@ -172,11 +172,11 @@ async function showPageStatus(tabId, kind, title, detail) {
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (statusKind, statusTitle, statusDetail) => {
-        const existing = document.getElementById("macshot-browser-import-status");
+        const existing = document.getElementById("index-browser-import-status");
         existing?.remove();
 
         const host = document.createElement("div");
-        host.id = "macshot-browser-import-status";
+        host.id = "index-browser-import-status";
         host.style.cssText = [
           "all:initial",
           "position:fixed",
@@ -319,7 +319,7 @@ async function showPageStatus(tabId, kind, title, detail) {
           view.addEventListener("click", () => {
             view.disabled = true;
             view.textContent = "打开中…";
-            chrome.runtime.sendMessage({ type: "open-macshot-gallery" }, (response) => {
+            chrome.runtime.sendMessage({ type: "open-index-gallery" }, (response) => {
               const error = chrome.runtime.lastError;
               if (error || !response?.ok) {
                 view.disabled = false;

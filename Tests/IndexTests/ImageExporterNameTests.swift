@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 
 @MainActor
 final class ImageExporterNameTests: XCTestCase {

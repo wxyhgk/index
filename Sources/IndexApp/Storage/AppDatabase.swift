@@ -308,6 +308,22 @@ enum AppDatabase {
             try db.execute(sql: "ALTER TABLE clipboardHistory ADD COLUMN isFavorite BOOLEAN NOT NULL DEFAULT 0")
         }
 
+        // 剪贴板条目加入专题收藏集：独立关联表（shotCollectionItem 的 shotID 有外键指向 shot，
+        // 不能复用）。删除剪贴板条目或专题集都级联清理。
+        migrator.registerMigration("v11_clipboard_collection_item") { db in
+            try db.create(table: "clipboardCollectionItem") { t in
+                t.column("collectionID", .integer)
+                    .notNull()
+                    .references("shotCollection", onDelete: .cascade)
+                t.column("clipboardID", .integer)
+                    .notNull()
+                    .references("clipboardHistory", onDelete: .cascade)
+                t.column("addedAt", .datetime).notNull()
+                t.primaryKey(["collectionID", "clipboardID"])
+            }
+            try db.create(indexOn: "clipboardCollectionItem", columns: ["clipboardID"])
+        }
+
         return migrator
     }
 }

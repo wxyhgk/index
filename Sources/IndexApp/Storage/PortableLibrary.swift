@@ -1,14 +1,14 @@
 import Foundation
 import GRDB
 
-/// MacShot 与未来 Windows 客户端之间的便携图库契约。
+/// Index 与未来 Windows 客户端之间的便携图库契约。
 ///
 /// 这不是运行中的 SQLite 副本：导出器从一个数据库 read snapshot 生成只读清单，
 /// 再复制不可变原图与文件附件。Windows 应把它导入自己的本地数据库，不能通过
 /// OneDrive 等同步盘让两个进程共同打开 `index.sqlite` / WAL。
 struct PortableLibraryManifest: Codable, Equatable {
-    static let formatIdentifier = "com.macshot.portable-library"
-    static let currentFormatVersion = 1
+    static let formatIdentifier = "com.index.portable-library"
+    static let currentFormatVersion = 2
 
     let format: String
     let formatVersion: Int
@@ -17,6 +17,7 @@ struct PortableLibraryManifest: Codable, Equatable {
     let producer: PortableLibraryProducer
     let shots: [PortableLibraryShot]
     let collections: [PortableLibraryCollection]
+    let clipboard: [PortableLibraryClipboardItem]
 }
 
 struct PortableLibraryProducer: Codable, Equatable {
@@ -114,12 +115,39 @@ struct PortableLibraryCollection: Codable, Equatable {
     let updatedAt: Date
     let sortOrder: Int
     let items: [PortableLibraryCollectionItem]
+    let clipboardItems: [PortableLibraryClipboardCollectionItem]
 }
 
 struct PortableLibraryCollectionItem: Codable, Equatable {
     let shotID: String
     let addedAt: Date
     let sortOrder: Int
+}
+
+/// 剪贴板条目在便携包中的表示。
+///
+/// 图片/文件条目的落盘文件复制进 `clipboard/` 目录（内容寻址，与图库 originals/ 同算法）；
+/// 文本条目没有文件。文件缺失时 `asset` 为 nil（不中止导出）。
+struct PortableLibraryClipboardItem: Codable, Equatable {
+    /// 仅在本次导出包内稳定，例如 `clipboard-42`。
+    let id: String
+    let kind: String
+    let contentHash: String
+    let text: String?
+    let asset: PortableLibraryFile?
+    let summary: String?
+    let sourceApp: String?
+    let pinned: Bool
+    let capturedAt: Date
+    let lastUsedAt: Date?
+    let title: String?
+    let isFavorite: Bool
+}
+
+/// 剪贴板条目 → 专题收藏集的关联。
+struct PortableLibraryClipboardCollectionItem: Codable, Equatable {
+    let clipboardID: String
+    let addedAt: Date
 }
 
 enum PortableLibraryCoding {
@@ -250,6 +278,8 @@ struct PortableLibraryExporter {
         let assets: [ShotAsset]
         let collections: [ShotCollection]
         let collectionItems: [ShotCollectionItem]
+        let clipboardItems: [ClipboardHistoryItem]
+        let clipboardCollectionItems: [ClipboardCollectionItem]
     }
 
     private func makeSnapshot(
@@ -270,6 +300,12 @@ struct PortableLibraryExporter {
                 collectionItems: try ShotCollectionItem
                     .order(Column("collectionID").asc, Column("sortOrder").asc,
                            Column("addedAt").asc, Column("shotID").asc)
+                    .fetchAll(db),
+                clipboardItems: try ClipboardHistoryItem
+                    .order(Column("capturedAt").asc, Column("id").asc)
+                    .fetchAll(db),
+                clipboardCollectionItems: try ClipboardCollectionItem
+                    .order(Column("collectionID").asc, Column("clipboardID").asc)
                     .fetchAll(db)
             )
         }
@@ -418,6 +454,11 @@ struct PortableLibraryExporter {
             )
         }
 
+        let clipboardItemsByCollection = Dictionary(
+            grouping: databaseSnapshot.clipboardCollectionItems,
+            by: \.collectionID
+        )
+
         let collections = try databaseSnapshot.collections.map { collection in
             guard let collectionID = collection.id else {
                 throw PortableLibraryExportError.invalidRecordID(table: ShotCollection.databaseTableName)
@@ -436,7 +477,49 @@ struct PortableLibraryExporter {
                         addedAt: item.addedAt,
                         sortOrder: item.sortOrder
                     )
+                },
+                clipboardItems: (clipboardItemsByCollection[collectionID] ?? []).map { item in
+                    PortableLibraryClipboardCollectionItem(
+                        clipboardID: Self.clipboardReference(item.clipboardID),
+                        addedAt: item.addedAt
+                    )
                 }
+            )
+        }
+
+        // 剪贴板条目：图片/文件条目复制落盘文件进 clipboard/ 目录，文本条目无文件。
+        // 文件缺失不中止导出（asset 置 nil），和 shot assets 的 missing 标记一致。
+        var copiedClipboardHashes = Set<String>()
+        let clipboard = databaseSnapshot.clipboardItems.compactMap { item -> PortableLibraryClipboardItem? in
+            guard let itemID = item.id else { return nil }
+            var asset: PortableLibraryFile?
+            if let assetPath = item.assetPath {
+                let relativePath = "clipboard/\(assetPath)"
+                let sourceURL = rootDirectory.appendingPathComponent(relativePath)
+                if fileManager.fileExists(atPath: sourceURL.path) {
+                    if copiedClipboardHashes.insert(item.contentHash).inserted {
+                        files.append(FileCopy(source: sourceURL, relativePath: relativePath))
+                    }
+                    asset = PortableLibraryFile(
+                        relativePath: relativePath,
+                        mediaType: "application/octet-stream",
+                        sha256: item.contentHash
+                    )
+                }
+            }
+            return PortableLibraryClipboardItem(
+                id: Self.clipboardReference(itemID),
+                kind: item.kind.rawValue,
+                contentHash: item.contentHash,
+                text: item.text,
+                asset: asset,
+                summary: item.summary,
+                sourceApp: item.sourceApp,
+                pinned: item.pinned,
+                capturedAt: item.capturedAt,
+                lastUsedAt: item.lastUsedAt,
+                title: item.title,
+                isFavorite: item.isFavorite
             )
         }
 
@@ -452,7 +535,8 @@ struct PortableLibraryExporter {
                     platform: "macOS"
                 ),
                 shots: shots,
-                collections: collections
+                collections: collections,
+                clipboard: clipboard
             ),
             files: files
         )
@@ -462,6 +546,7 @@ struct PortableLibraryExporter {
     private static func revisionReference(_ id: Int64) -> String { "revision-\(id)" }
     private static func assetReference(_ id: Int64) -> String { "asset-\(id)" }
     private static func collectionReference(_ id: Int64) -> String { "collection-\(id)" }
+    private static func clipboardReference(_ id: Int64) -> String { "clipboard-\(id)" }
 
     private static func isValidSHA256(_ value: String) -> Bool {
         value.count == 64

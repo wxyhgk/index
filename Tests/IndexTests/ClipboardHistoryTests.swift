@@ -1,5 +1,5 @@
 import XCTest
-@testable import MacShot
+@testable import IndexApp
 import GRDB
 
 final class ClipboardHistoryTests: XCTestCase {
