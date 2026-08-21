@@ -35,6 +35,14 @@ struct ClipboardHistoryItem: Codable, FetchableRecord, MutablePersistableRecord,
     var pinned: Bool
     var capturedAt: Date
     var lastUsedAt: Date?
+    var title: String?
+    var isFavorite: Bool
+
+    /// 展示名：用户起的 title 优先，否则回退 summary。
+    var displayName: String {
+        if let title, !title.isEmpty { return title }
+        return summary ?? "未命名"
+    }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID
@@ -109,7 +117,9 @@ final class ClipboardHistoryStore: @unchecked Sendable {
                 sourceApp: sourceApp,
                 pinned: false,
                 capturedAt: now,
-                lastUsedAt: nil
+                lastUsedAt: nil,
+                title: nil,
+                isFavorite: false
             )
             try item.insert(db)
             return true
@@ -128,7 +138,7 @@ final class ClipboardHistoryStore: @unchecked Sendable {
 
     // MARK: 查询
 
-    /// 按时间倒序取最近 limit 条；query 非空时按 summary/text 模糊过滤。
+    /// 按时间倒序取最近 limit 条；query 非空时按 title/summary/text 模糊过滤。
     func recent(limit: Int = 100, query: String? = nil) throws -> [ClipboardHistoryItem] {
         try writer.read { db in
             var request = ClipboardHistoryItem
@@ -137,10 +147,23 @@ final class ClipboardHistoryStore: @unchecked Sendable {
             if let query, !query.isEmpty {
                 let pattern = "%\(query)%"
                 request = request.filter(
-                    Column("summary").like(pattern) || Column("text").like(pattern)
+                    Column("title").like(pattern)
+                        || Column("summary").like(pattern)
+                        || Column("text").like(pattern)
                 )
             }
             return try request.fetchAll(db)
+        }
+    }
+
+    /// 收藏的条目（收藏 tab 的剪贴板 section 用），按时间倒序。
+    func favorites(limit: Int = 100) throws -> [ClipboardHistoryItem] {
+        try writer.read { db in
+            try ClipboardHistoryItem
+                .filter(Column("isFavorite") == true)
+                .order(Column("capturedAt").desc)
+                .limit(limit)
+                .fetchAll(db)
         }
     }
 
@@ -173,6 +196,23 @@ final class ClipboardHistoryStore: @unchecked Sendable {
         }
     }
 
+    func rename(_ title: String?, for item: ClipboardHistoryItem) {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        try? writer.write { db in
+            var updated = item
+            updated.title = (trimmed?.isEmpty == false) ? trimmed : nil
+            try updated.update(db)
+        }
+    }
+
+    func setFavorite(_ favorite: Bool, for item: ClipboardHistoryItem) {
+        try? writer.write { db in
+            var updated = item
+            updated.isFavorite = favorite
+            try updated.update(db)
+        }
+    }
+
     func delete(_ item: ClipboardHistoryItem) {
         // 图片资产文件一并清理（文本条目没有文件）。
         if let assetPath = item.assetPath {
@@ -186,12 +226,14 @@ final class ClipboardHistoryStore: @unchecked Sendable {
         }
     }
 
-    /// 清理超过 days 天的未固定条目（设置里的保留策略）。
+    /// 清理超过 days 天的未固定、未收藏条目（设置里的保留策略）。
     func prune(olderThanDays days: Int) {
         let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
         try? writer.write { db in
             let stale = try ClipboardHistoryItem
-                .filter(Column("capturedAt") < cutoff && Column("pinned") == false)
+                .filter(Column("capturedAt") < cutoff
+                    && Column("pinned") == false
+                    && Column("isFavorite") == false)
                 .fetchAll(db)
             for item in stale {
                 if let assetPath = item.assetPath {

@@ -120,8 +120,10 @@ final class CaptureCoordinator {
                 // 必须在覆盖层出现前记下来。放在捕获之后记 —— 延时等待期间用户可能切换了 App，
                 // 定格瞬间的前台应用才是截图的真实来源。
                 let previousApp = SystemNavigator.frontmostApplication
+                // 不排除自身 PID：让用户能选中 MacShot 自己的窗口（图库等）截图。
+                // overlay 窗口 layer != 0，不会出现在 layer == 0 的窗口列表里。
                 let windowList = windowListing.onScreenWindows(
-                    excludingPID: ProcessInfo.processInfo.processIdentifier
+                    excludingPID: 0
                 )
 
                 let didBegin = overlay.begin(snapshots: snapshots, windowList: windowList) { [weak self] result in
@@ -178,7 +180,7 @@ final class CaptureCoordinator {
     ) {
         let sourceWindow = result.window ?? windowListing.bestMatch(
             for: result.region,
-            excludingPID: ProcessInfo.processInfo.processIdentifier
+            excludingPID: 0
         )
 
         let metadata = MetadataCollector.collect(

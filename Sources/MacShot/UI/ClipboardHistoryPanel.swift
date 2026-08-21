@@ -65,8 +65,30 @@ final class ClipboardHistoryPanel: NSPanel {
         // 激活 app 让面板成为 key window（LSUIElement 不跳 Dock）
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
+        resetScrollPosition()
         installMonitors()
         onPanelShown?()
+    }
+
+    /// 重置卡片流的横向滚动位置到最左边（关闭再打开时回到初始状态）。
+    private func resetScrollPosition() {
+        guard let content = contentView else { return }
+        for scrollView in allScrollViews(in: content) {
+            guard let docView = scrollView.documentView,
+                  docView.bounds.width > scrollView.contentView.bounds.width + 1
+            else { continue }
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
+    private func allScrollViews(in view: NSView) -> [NSScrollView] {
+        var result: [NSScrollView] = []
+        if let sv = view as? NSScrollView { result.append(sv) }
+        for sub in view.subviews {
+            result.append(contentsOf: allScrollViews(in: sub))
+        }
+        return result
     }
 
     private func installMonitors() {
@@ -74,10 +96,16 @@ final class ClipboardHistoryPanel: NSPanel {
         // 键盘导航：Esc 关闭，←→ 选择，Enter 复制，Delete 删除。
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            switch event.keyCode {
-            case 53: // Esc
+            // Esc 始终关闭面板
+            if event.keyCode == 53 {
                 self.close()
                 return nil
+            }
+            // 焦点在文本输入框内时，放行按键给文本框（退格、方向键等）
+            if let responder = self.firstResponder, responder is NSText {
+                return event
+            }
+            switch event.keyCode {
             case 123: // ←
                 self.viewModel.moveSelection(-1)
                 return nil

@@ -52,6 +52,8 @@ struct ShotCard: View {
     @State private var isHovering = false
     /// 悬停 0.3s 后才浮出尺寸条 —— 快速扫过不打扰。
     @State private var showsDimensions = false
+    /// 来源 App logo（标题栏右上角），异步解析。
+    @State private var appIcon: NSImage?
 
     /// 尺寸浮条的悬停延迟。
     private let hoverDelay: Duration = .milliseconds(300)
@@ -61,29 +63,22 @@ struct ShotCard: View {
     private var thumbnailURL: URL { store.thumbnailURL(for: shot) }
 
     var body: some View {
-        // 单元格 = 缩略图 + 图下方左对齐的两行文字。s2 的间隙：卡面取消之后
-        // 图和字之间没有「卡片内缩」帮忙撑开了，得自己留出这一档。
-        VStack(alignment: .leading, spacing: DS.s2) {
+        // 单元格 = 彩色标题栏 + 缩略图 + 图下方标题。与剪贴板卡片统一：
+        // 顶部一条类型标签 + 时间 + 来源 App logo 的彩条，下面是内容。
+        VStack(spacing: 0) {
+            headerBar
             thumbnail
             caption
         }
+        .clipShape(cellShape)
         // 热区跟着单元格形状走，四个角外的三角区不再吃点击。
         .contentShape(cellShape)
         // ⚠️ 悬停判定必须挂在形变（scale 1.02 / offset −3）**之前**：
         // 挂在形变之后，卡片一悬停就上移，底边下的指针会掉出热区 →
         // 「悬停→位移→脱离→复位→再悬停」的自激抖动。
-        //（以前这条形变在 `spatialCard` 里，现在写在本文件下面几行，约束不变。）
         .onHover { isHovering = $0 }
-        // 选中框包住**整个单元格**（含文字），所以画在这一层而不是缩略图上。
-        // 放在形变之前 = 框跟着卡片一起抬升，不会在悬停时和内容错开。
+        // 选中框包住**整个单元格**（含标题栏和文字），画在这一层。
         .overlay { selectionRing }
-        // 四态形变。缩放只受悬停控制、选中只加框 —— 两者正交，
-        // 「选中」和「鼠标在这张上」必须能同时读出（HIG：焦点与选中各自独立可见）。
-        //
-        // ⚠️ 这里**没有** `.shadow()`：卡片没有卡面，也就没有可投影的表面。
-        // 深色下阴影落在 #0D0D0F 上读不出高度（那是亮度阶梯的活），
-        // 而每卡一次阴影就是每卡一次离屏合成 —— 几百张时这是最贵的一项。
-        // 抬升的可读性由缩略图边缘那条 rim 在悬停时加浓来补（见 `thumbnailRim`）。
         .scaleEffect(scaleValue)
         .offset(y: isHovering && !reduceMotion ? DS.Lift.hoverY : 0)
         .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
@@ -96,9 +91,22 @@ struct ShotCard: View {
             }
             try? await Task.sleep(for: hoverDelay)
             guard !Task.isCancelled else { return }
-            // 浮条出没属于微交互，和角标同档；Reduce Motion 下自动收紧成 easeOut。
             withAnimation(DS.Motion.micro(reduced: reduceMotion)) { showsDimensions = true }
         }
+        // 来源 App logo：异步解析，同一 App 名只查一次（NSCache 去重）。
+        .task(id: shot.appName) {
+            appIcon = await AppIconProvider.shared.icon(forName: shot.appName)
+        }
+    }
+
+    /// 顶部彩色标题栏：截图=蓝 / 录屏=橙，带时间 + 来源 App logo。
+    private var headerBar: some View {
+        CardHeaderBar(
+            label: isRecording ? "录屏" : "截图",
+            time: shot.capturedAt,
+            appIcon: appIcon,
+            barColor: isRecording ? DS.clipboardFileBar : DS.clipboardImageBar
+        )
     }
 
     private var scaleValue: CGFloat {

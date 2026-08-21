@@ -610,11 +610,13 @@ extension DS {
         static let inspectorWidth: CGFloat = 370
         /// 搜索胶囊的最大宽度（设计稿 460）。窗口窄时它先让位。
         static let searchWidth: CGFloat = 460
-        static let searchHeight: CGFloat = 38
+        static let searchHeight: CGFloat = 34
         /// 顶栏右侧图标按钮的边长（设计稿 36×36 圆角方）。
         static let controlSide: CGFloat = 36
         /// 筛选胶囊行的高度（设计稿 34）。
         static let chipHeight: CGFloat = 34
+        /// 底部 bar 高度（搜索框 38 + 上下各 3pt）。
+        static let bottomBarHeight: CGFloat = 44
     }
 
     // MARK: - 悬停 / 容器填充（深浅两值，视图不再现写 white/black opacity）

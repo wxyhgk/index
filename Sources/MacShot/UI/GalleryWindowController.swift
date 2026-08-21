@@ -34,6 +34,11 @@ final class GalleryWindowController: NSWindowController {
         // 编辑模式下还会被换成「标注 — 出处」（见下面那个 sink）。
         window.title = "Index 图库"
         window.setContentSize(NSSize(width: 1240, height: 760))
+        // 与 GalleryView 的 .frame(minWidth: 1000, minHeight: 600) 保持一致。
+        // 显式设置而不是依赖 NSHostingController 的自动推断：
+        // 窗口缩到 72(顶栏)+44(底栏)+12(margin)=128 以下时 VStack 溢出、底栏被裁，
+        // 600 保证中间内容至少有 472pt 可用空间。
+        window.contentMinSize = NSSize(width: 1000, height: 600)
         // 全定制 chrome：内容伸满整窗（含标题栏那一条），标题栏透明、标题不画，
         // 也不挂 NSToolbar —— 窗口上剩下的唯一系统件是红绿灯。
         // 红绿灯位置保留系统默认（不手动摆位），自绘内容靠

@@ -136,9 +136,7 @@ struct GalleryView: View {
 
             VStack(spacing: 0) {
                 GalleryTopBar(
-                    showInspector: $showInspector,
-                    destinationID: $destinationID,
-                    viewModel: viewModel
+                    destinationID: $destinationID
                 )
 
                 // 中间内容 │ 右侧面板 —— 两块都由**选中的那个选项**提供
@@ -163,8 +161,15 @@ struct GalleryView: View {
                     }
                 }
                 .padding(.horizontal, DS.Shell.windowMargin)
+
+                GalleryBottomBar(
+                    showInspector: $showInspector,
+                    destinationID: $destinationID,
+                    viewModel: viewModel
+                )
                 .padding(.bottom, DS.Shell.windowMargin)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
         // 顶栏要自己接管标题栏那一条：窗口是 fullSizeContentView + 透明标题栏，
         // 内容伸到红绿灯底下，避让由 `DS.Shell.trafficLightInset` 在顶栏内部完成。

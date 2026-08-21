@@ -109,6 +109,7 @@ extension GalleryDestinationRegistry {
         registry.register(LibraryDestination())
         registry.register(CollectionsDestination())
         registry.register(RecordingsDestination())
+        registry.register(ClipboardDestination())
         registry.register(AppsDestination())
     }
 }

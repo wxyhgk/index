@@ -71,9 +71,6 @@ final class MacScreenCapturer: ScreenCapturing {
                 for: generation,
                 in: session
             )
-            let ownPID = ProcessInfo.processInfo.processIdentifier
-            let ownApps = content.applications.filter { $0.processID == ownPID }
-
             let startedAt = Date()
             var snapshots: [DisplaySnapshot] = []
             var failedDisplays: [DisplayInfo] = []
@@ -85,9 +82,11 @@ final class MacScreenCapturer: ScreenCapturing {
                     failedDisplays.append(display)
                     continue
                 }
+                // 不排除自身进程：截图是「先冻结、后覆盖」，overlay 不在画面里，
+                // 排除自身会把图库/设置等窗口从画面中挖掉。
                 let filter = SCContentFilter(
                     display: scDisplay,
-                    excludingApplications: ownApps,
+                    excludingApplications: [],
                     exceptingWindows: []
                 )
                 let config = SCStreamConfiguration()

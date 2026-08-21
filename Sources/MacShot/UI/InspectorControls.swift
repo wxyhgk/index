@@ -559,4 +559,52 @@ final class AppIconProvider {
         }
         return image
     }
+
+    /// 按 App **名称**解析图标（剪贴板条目只存了 localizedName，没有 bundleID）。
+    /// 动态查找：正在运行的进程 → 常见安装目录 → 回退。结果进同一个 NSCache。
+    func icon(forName name: String?) async -> NSImage? {
+        guard let name, !name.isEmpty else { return nil }
+        let key = "name:\(name)" as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+
+        let task: Task<AppIconTransfer, Never>
+        if let running = inflight[key as String] {
+            task = running
+        } else {
+            task = Task.detached(priority: .userInitiated) {
+                let path = Self.appPath(forName: name)
+                return AppIconTransfer(image: NSWorkspace.shared.icon(forFile: path))
+            }
+            inflight[key as String] = task
+        }
+
+        let image = await task.value.image
+        inflight[key as String] = nil
+        if let image {
+            cache.setObject(image, forKey: key)
+        }
+        return image
+    }
+
+    /// 名称 → App 路径。运行中进程最可靠（bundleURL 是真实路径），
+    /// 其次按名称扫常见安装目录，最后回退成 `.app` 让 icon(forFile:) 给通用图标。
+    nonisolated private static func appPath(forName name: String) -> String {
+        let workspace = NSWorkspace.shared
+        if let running = workspace.runningApplications.first(where: { $0.localizedName == name }),
+           let url = running.bundleURL {
+            return url.path
+        }
+        let fm = FileManager.default
+        let dirs = [
+            "/Applications",
+            "/System/Applications",
+            "/System/Applications/Utilities",
+            NSHomeDirectory() + "/Applications",
+        ]
+        for dir in dirs {
+            let candidate = "\(dir)/\(name).app"
+            if fm.fileExists(atPath: candidate) { return candidate }
+        }
+        return "\(name).app"
+    }
 }

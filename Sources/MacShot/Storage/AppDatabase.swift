@@ -301,6 +301,13 @@ enum AppDatabase {
             }
         }
 
+        // 剪贴板条目手动命名 + 收藏：title 是用户起的名字（覆盖 summary 展示），
+        // isFavorite 让条目出现在收藏 tab 的剪贴板 section，且豁免保留期清理。
+        migrator.registerMigration("v10_clipboard_title_favorite") { db in
+            try db.execute(sql: "ALTER TABLE clipboardHistory ADD COLUMN title TEXT")
+            try db.execute(sql: "ALTER TABLE clipboardHistory ADD COLUMN isFavorite BOOLEAN NOT NULL DEFAULT 0")
+        }
+
         return migrator
     }
 }
