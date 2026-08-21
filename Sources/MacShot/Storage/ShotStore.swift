@@ -171,16 +171,30 @@ final class ShotStore: ObservableObject {
     /// 保存一张新截图：原图落盘（内容寻址，天然去重）+ 元数据入库 + 建立初始空图层修订。
     @discardableResult
     func save(image: CGImage, metadata: CaptureMetadata) throws -> Shot {
-        guard let png = ImageCodec.pngData(from: image) else {
-            throw StoreError.encodingFailed
+        try save(image: image, metadata: metadata, originalData: nil, originalExtension: nil)
+    }
+
+    /// 保存导入的图片。`originalData` 非空时原图按原始字节落盘（SVG 保留矢量文件），
+    /// 否则编码为 PNG。`originalExtension` 决定原图文件扩展名。
+    @discardableResult
+    func save(image: CGImage, metadata: CaptureMetadata, originalData: Data?, originalExtension: String?) throws -> Shot {
+        let ext = originalExtension ?? "png"
+        let original: Data
+        if let originalData, originalExtension != nil {
+            original = originalData
+        } else {
+            guard let png = ImageCodec.pngData(from: image) else {
+                throw StoreError.encodingFailed
+            }
+            original = png
         }
 
-        let digest = SHA256.hash(data: png)
+        let digest = SHA256.hash(data: original)
         let sha = digest.map { String(format: "%02x", $0) }.joined()
 
-        let originalPath = originalsDirectory.appendingPathComponent("\(sha).png")
+        let originalPath = originalsDirectory.appendingPathComponent("\(sha).\(ext)")
         if !FileManager.default.fileExists(atPath: originalPath.path) {
-            try png.write(to: originalPath, options: .atomic)
+            try original.write(to: originalPath, options: .atomic)
         }
 
         let thumbPath = thumbnailsDirectory.appendingPathComponent("\(sha).jpg")
@@ -209,7 +223,8 @@ final class ShotStore: ObservableObject {
             regionY: metadata.globalRegion.origin.y,
             regionW: metadata.globalRegion.width,
             regionH: metadata.globalRegion.height,
-            ocrText: nil
+            ocrText: nil,
+            originalExtension: ext
         )
 
         shot = try revisionRepository.insertShotWithInitialRevision(shot, note: "原始")

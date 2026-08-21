@@ -31,12 +31,62 @@ enum DS {
     static let s4: CGFloat = 16
     static let s5: CGFloat = 24
 
+    // MARK: - 字号（pt）
+    //
+    // 全项目 83 处裸字号收敛到这里，按 pt 值命名（font13 = 13pt），
+    // 替换无歧义。字重不收敛 —— 字重是语义（.medium/.semibold/.bold），
+    // 由调用处按上下文选，收敛成 token 反而失去表达力。
+    // 比例公式（`side * 0.78`、`rect.height * 0.52`）不收敛，它们不是字号档。
+
+    /// 极小角标（快捷键徽章、状态点文字）。
+    static let font7: CGFloat = 7
+    /// 极小标注（放大镜坐标、角标数字）。
+    static let font9: CGFloat = 9
+    /// 微图标文字（元信息行箭头 / 复制按钮）。
+    static let font10: CGFloat = 10
+    /// 次级小字（时间戳、胶囊、元信息行）。
+    static let font11: CGFloat = 11
+    /// 卡片主行 / 强调小字（caption 档）。
+    static let font12: CGFloat = 12
+    /// 正文（body 档）。
+    static let font13: CGFloat = 13
+    /// 面板标题 / 次级标题。
+    static let font14: CGFloat = 14
+    /// 分组标题（title3 档）。
+    static let font15: CGFloat = 15
+    /// 大标题（sheet 标题、空态标题）。
+    static let font18: CGFloat = 18
+    /// 空态大图标文字。
+    static let font20: CGFloat = 20
+    /// 特大标题（空态大数字）。
+    static let font24: CGFloat = 24
+
+    // MARK: - 线宽（描边 / 发丝线）
+
+    /// 发丝线（卡片分隔、1px 描边）。
+    static let hairline: CGFloat = 1
+    /// 强调描边（选中环、录制角标）。
+    static let strokeEmphasis: CGFloat = 2
+    /// 次级描边（虚线框、工具图标轮廓）。
+    static let strokeSubtle: CGFloat = 1.5
+
+    // MARK: - 共享尺寸（多处重复的视觉常量）
+
+    /// 工具圆点直径（计数工具圆点、工具条参数点，两处逐字重复收敛于此）。
+    static let toolDotSize: CGFloat = 12
+    /// 复制反馈时长（复制后图标变对勾的停留时间）。
+    static let copyFeedbackDelay: Duration = .milliseconds(1500)
+
     // MARK: - 圆角（只有两档）
 
     /// 按钮 / 胶囊等小件。
     static let radiusSmall: CGFloat = 6
     /// 卡片 / 分组块。
     static let radiusCard: CGFloat = 10
+    /// 工具条 / 放大镜 / AI 面板等中型圆角（原散落的 8pt 收敛于此）。
+    static let radiusMedium: CGFloat = 8
+    /// 预览区 / 滚动截图进度面板等（原散落的 12pt 收敛于此）。
+    static let radiusLarge: CGFloat = 12
 
     // MARK: - 分类色
 
@@ -117,6 +167,17 @@ enum DS {
     static let shadowOverlay = Color.black.opacity(0.6)
     static let connectorFill = Color.secondary.opacity(0.3)
     static let dotInactive = Color.secondary.opacity(0.55)
+    /// 图标占位底（剪贴板历史行等，0.12）。
+    static let iconPlaceholderFill = Color.secondary.opacity(0.12)
+
+    // MARK: - 剪贴板历史卡片
+
+    /// 卡片标题栏背景色（按类型）。
+    static let clipboardTextBar = Color(white: 0.22)
+    static let clipboardImageBar = Color.blue
+    static let clipboardFileBar = Color.orange
+    /// 卡片选中边框。
+    static let clipboardSelectedRing = Color.blue
     static let overlayDim = Color.black.opacity(0.45)
     static let hoverBrighten = Color.white.opacity(0.05)
 

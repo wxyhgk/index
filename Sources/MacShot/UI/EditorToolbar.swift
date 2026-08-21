@@ -20,7 +20,7 @@ struct EditorToolbar: View {
             } label: {
                 HStack(spacing: DS.s1 - 1) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DS.font12, weight: .semibold))
                     Text("图库")
                 }
                 .frame(height: 44)
@@ -92,7 +92,7 @@ struct EditorToolbar: View {
         } label: {
             VStack(spacing: DS.s1 - 1) {
                 Image(systemName: tool?.symbolName ?? "cursorarrow")
-                    .font(.system(size: 15))
+                    .font(.system(size: DS.font15))
                     .frame(height: 18)
                 Text(tool?.title ?? "指针")
                     .font(.caption2)
@@ -117,7 +117,7 @@ struct EditorToolbar: View {
         } label: {
             VStack(spacing: DS.s1 - 1) {
                 Image(systemName: "hand.raised")
-                    .font(.system(size: 15))
+                    .font(.system(size: DS.font15))
                     .frame(height: 18)
                 Text("抓手")
                     .font(.caption2)

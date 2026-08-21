@@ -91,7 +91,7 @@ private final class CountdownHUD {
         number.alignment = .center
 
         let hint = NSTextField(labelWithString: "⎋ 取消")
-        hint.font = .systemFont(ofSize: 11)
+        hint.font = .systemFont(ofSize: DS.font11)
         hint.textColor = NSColor.white.withAlphaComponent(0.6)
         hint.alignment = .center
 

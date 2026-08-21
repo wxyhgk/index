@@ -81,7 +81,7 @@ final class ImageImportCoordinator: ObservableObject {
             switch item {
             case .failure(let fileName):
                 failedFileNames.append(fileName)
-            case .success(let image, let request):
+            case .success(let image, let request, let originalData, let originalExtension):
                 var metadata = CaptureMetadata()
                 metadata.scale = 1
                 metadata.globalRegion = CGRect(
@@ -101,7 +101,12 @@ final class ImageImportCoordinator: ObservableObject {
                     metadata.sourceURL = Self.safeWebURL(source.pageURL)
                 }
                 do {
-                    _ = try store.save(image: image, metadata: metadata)
+                    _ = try store.save(
+                        image: image,
+                        metadata: metadata,
+                        originalData: originalData,
+                        originalExtension: originalExtension
+                    )
                     importedCount += 1
                 } catch {
                     failedFileNames.append(request.url.lastPathComponent)
@@ -113,6 +118,7 @@ final class ImageImportCoordinator: ObservableObject {
 
     private nonisolated static let supportedExtensions: Set<String> = [
         "png", "jpg", "jpeg", "heic", "heif", "tif", "tiff",
+        "webp", "gif", "svg",
     ]
 
     private nonisolated static func decode(_ request: ImportRequest) -> DecodedImage {
@@ -122,12 +128,23 @@ final class ImageImportCoordinator: ObservableObject {
         defer {
             if accessed { url.stopAccessingSecurityScopedResource() }
         }
-        guard let data = try? Data(contentsOf: url),
-              let image = ImageCodec.load(from: data)
-        else {
-            return .failure(url.lastPathComponent)
+        let ext = url.pathExtension.lowercased()
+        let image: CGImage?
+        let originalData: Data?
+        if ext == "svg" {
+            // SVG 是矢量格式：用 NSImage 解码（load(from url:) 已处理），
+            // 同时保留原始数据供原图落盘（不栅格化）。
+            image = ImageCodec.load(from: url)
+            originalData = try? Data(contentsOf: url)
+        } else {
+            guard let data = try? Data(contentsOf: url) else {
+                return .failure(url.lastPathComponent)
+            }
+            image = ImageCodec.load(from: data)
+            originalData = nil
         }
-        return .success(image, request)
+        guard let image else { return .failure(url.lastPathComponent) }
+        return .success(image, request, originalData, ext == "svg" ? "svg" : nil)
     }
 
     private nonisolated static func safeWebURL(_ rawValue: String?) -> String? {
@@ -150,8 +167,9 @@ final class ImageImportCoordinator: ObservableObject {
     }
 
     /// CGImage 是不可变 Core Foundation 值；解码完成后只跨 actor 转移所有权。
+    /// `originalData` 非空时原图按原始字节落盘（SVG 保留矢量文件）。
     private enum DecodedImage: @unchecked Sendable {
-        case success(CGImage, ImportRequest)
+        case success(CGImage, ImportRequest, Data?, String?)
         case failure(String)
     }
 }

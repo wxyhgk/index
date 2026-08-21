@@ -323,7 +323,17 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
     // MARK: - ShotWriting
 
     @discardableResult
+    func save(image: CGImage, metadata: CaptureMetadata, originalData: Data?, originalExtension: String?) throws -> Shot {
+        let shot = saveInternal(image: image, metadata: metadata, originalExtension: originalExtension)
+        return shot
+    }
+
+    @discardableResult
     func save(image: CGImage, metadata: CaptureMetadata) throws -> Shot {
+        try save(image: image, metadata: metadata, originalData: nil, originalExtension: nil)
+    }
+
+    private func saveInternal(image: CGImage, metadata: CaptureMetadata, originalExtension: String?) -> Shot {
         // 简化版内容寻址：用时间 + 尺寸生成伪 sha，满足“同内容去重”在 Fake 中不强求。
         // 测试若需去重语义，可直接用 insert(_:image:) 预置相同 sha。
         let sha = fakeSHA(for: image)
@@ -347,7 +357,8 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             regionY: metadata.globalRegion.origin.y,
             regionW: metadata.globalRegion.width,
             regionH: metadata.globalRegion.height,
-            ocrText: nil
+            ocrText: nil,
+            originalExtension: originalExtension
         )
         nextID += 1
         shots.append(shot)

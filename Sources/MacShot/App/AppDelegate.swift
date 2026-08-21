@@ -94,7 +94,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let appSettings = settings as? AppSettings {
             appSettings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
+            appSettings.onClipboardHistoryChanged = { [weak self] in
+                self?.applyClipboardHistorySettings()
+            }
         }
+        applyClipboardHistorySettings()
         RecordingCoordinator.shared.onStateChanged = { [weak self] in
             self?.recordingStateChanged()
         }
@@ -197,6 +201,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         molecule.tag = Tag.moleculePin
         menu.addItem(molecule)
 
+        let clipboardHistory = NSMenuItem(
+            title: "剪贴板历史…",
+            action: #selector(toggleClipboardHistory),
+            keyEquivalent: ""
+        )
+        clipboardHistory.target = self
+        clipboardHistory.tag = Tag.clipboardHistory
+        menu.addItem(clipboardHistory)
+
         // 穿透中的钉图收不到任何鼠标键盘事件（⌘T 按不进去），这里是唯一的解除入口。
         // 平时藏起来，menuNeedsUpdate 里按需显示。
         let liftPassthrough = NSMenuItem(
@@ -238,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         static let liftPassthrough = 6
         static let recordPause = 7
         static let moleculePin = 8
+        static let clipboardHistory = 9
     }
 
     // MARK: - 快捷键
@@ -261,6 +275,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.bind("pin-molecule", to: settings.moleculePinShortcut) { [weak self] in
             self?.pinMoleculeFromClipboard()
         }
+        GlobalHotKeyCenter.shared.bind("clipboard-history", to: settings.clipboardHistoryShortcut) { [weak self] in
+            self?.toggleClipboardHistory()
+        }
     }
 
     private func refreshHotKeys() {
@@ -270,6 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.update("capture-scroll", to: settings.scrollCaptureShortcut)
         GlobalHotKeyCenter.shared.update("gallery", to: settings.galleryShortcut)
         GlobalHotKeyCenter.shared.update("pin-molecule", to: settings.moleculePinShortcut)
+        GlobalHotKeyCenter.shared.update("clipboard-history", to: settings.clipboardHistoryShortcut)
     }
 
     // MARK: - 动作
@@ -313,6 +331,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             moleculePinner.pinMolecule(xyz: molecule.canonicalText, atomCount: molecule.atomCount)
         } catch {
             AppAlert.error("无法创建 3D 分子钉图", error: error)
+        }
+    }
+
+    @objc private func toggleClipboardHistory() {
+        ClipboardHistoryCoordinator.shared.togglePanel()
+    }
+
+    /// 按设置启停剪贴板监听 + 清理过期条目。
+    private func applyClipboardHistorySettings() {
+        if settings.clipboardHistoryEnabled {
+            ClipboardHistoryStore.shared.prune(olderThanDays: settings.clipboardHistoryRetentionDays)
+            ClipboardHistoryCoordinator.shared.start()
+        } else {
+            ClipboardHistoryCoordinator.shared.stop()
         }
     }
 

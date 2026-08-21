@@ -53,6 +53,9 @@ struct ShotCard: View {
     /// 悬停 0.3s 后才浮出尺寸条 —— 快速扫过不打扰。
     @State private var showsDimensions = false
 
+    /// 尺寸浮条的悬停延迟。
+    private let hoverDelay: Duration = .milliseconds(300)
+
     // 刻意不用 @ObservedObject 订阅 store —— 只需要一个文件路径，
     // 订阅了会导致任何 store 变化都重建全部缩略图。
     private var thumbnailURL: URL { store.thumbnailURL(for: shot) }
@@ -91,7 +94,7 @@ struct ShotCard: View {
                 showsDimensions = false
                 return
             }
-            try? await Task.sleep(for: .seconds(0.3))
+            try? await Task.sleep(for: hoverDelay)
             guard !Task.isCancelled else { return }
             // 浮条出没属于微交互，和角标同档；Reduce Motion 下自动收紧成 easeOut。
             withAnimation(DS.Motion.micro(reduced: reduceMotion)) { showsDimensions = true }
@@ -224,7 +227,7 @@ struct ShotCard: View {
     private var selectionBadge: some View {
         if isSelected {
             Image(systemName: "checkmark")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DS.font11, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 22)
                 .background(DS.accent, in: Circle())
@@ -272,7 +275,7 @@ struct ShotCard: View {
     private var annotationBadge: some View {
         if isAnnotated && !showsDimensions {
             Image(systemName: "pencil")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DS.font9, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(DS.s1)
                 .background(.thinMaterial, in: Circle())
@@ -286,7 +289,7 @@ struct ShotCard: View {
     private var recordingBadge: some View {
         if isRecording {
             Image(systemName: "play.fill")
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: DS.font20, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 48, height: 48)
                 .background(.black.opacity(0.58), in: Circle())
@@ -319,7 +322,7 @@ struct ShotCard: View {
                         .fill(.ultraThinMaterial)
                         .frame(width: 24, height: 24)
                     Image(systemName: isFavorite ? "star.fill" : "star")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DS.font12, weight: .semibold))
                         .foregroundStyle(isFavorite ? .yellow : .primary)
                         .symbolEffect(.bounce, value: isFavorite)
                 }
@@ -348,10 +351,10 @@ struct ShotCard: View {
                 shot.customTitle
                     ?? (isRecording ? (shot.windowTitle ?? "录屏") : shot.primaryDisplayName)
             )
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: DS.font12, weight: .medium))
                 .lineLimit(1)
             Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())
-                .font(.system(size: 11))
+                .font(.system(size: DS.font11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }

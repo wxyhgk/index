@@ -195,6 +195,9 @@ struct Shot: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, E
     /// Vision OCR 结果，异步回填，进 FTS5 索引。
     var ocrText: String?
 
+    /// 原图文件扩展名（截图恒为 png；导入的 SVG 保留矢量文件为 svg）。
+    var originalExtension: String? = "png"
+
     mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID
     }
@@ -203,7 +206,7 @@ struct Shot: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, E
 extension Shot {
     static let customTitleMaxLength = 80
 
-    var originalFileName: String { "\(sha256).png" }
+    var originalFileName: String { "\(sha256).\(originalExtension ?? "png")" }
     var thumbnailFileName: String { "\(sha256).jpg" }
 
     /// 图库名称与来源身份分离：用户名称最高，原文件名/窗口标题其次，App 只兜底。

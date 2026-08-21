@@ -131,7 +131,7 @@ struct TimelineSheet: View {
                     // sha256 相同 = 画面完全一致，在相邻两张之间标出来。
                     if index + 1 < shots.count, shots[index + 1].sha256 == item.sha256 {
                         Text("=")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.system(size: DS.font14, weight: .bold, design: .rounded))
                             .foregroundStyle(.secondary)
                             .help("相邻两张画面完全一致（内容哈希相同）")
                     }
@@ -481,7 +481,7 @@ struct DiffView: View {
                             .frame(width: 2)
                             .shadow(color: DS.shadowOverlay, radius: 2)
                         Image(systemName: "arrow.left.and.right.circle.fill")
-                            .font(.system(size: 20))
+                            .font(.system(size: DS.font20))
                             .foregroundStyle(.white)
                             .shadow(color: DS.shadowOverlay, radius: 2)
                     }

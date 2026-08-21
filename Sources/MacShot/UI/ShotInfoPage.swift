@@ -70,14 +70,14 @@ struct ShotInfoPage: View {
         HStack(spacing: DS.s2) {
             Button(action: onBack) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DS.font12, weight: .semibold))
             }
             .buttonStyle(.inspectorCircle)
             .help("返回详情")
             .accessibilityLabel("返回详情")
 
             Text("全部信息")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: DS.font15, weight: .semibold))
 
             Spacer(minLength: 0)
         }
@@ -119,12 +119,7 @@ struct ShotInfoPage: View {
             })
             row("窗口标题", shot.windowTitle)
             if let url = shot.sourceURL {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("网址").font(.caption).foregroundStyle(.secondary)
-                    Link(url, destination: URL(string: url) ?? URL(string: "about:blank")!)
-                        .font(.caption)
-                        .lineLimit(3)
-                }
+                CopyValueRow(label: "网址", value: url)
             }
             row("显示器", shot.displayName)
             row("时间", shot.capturedAt.formatted(date: .complete, time: .standard))
@@ -141,23 +136,16 @@ struct ShotInfoPage: View {
                 format: "x %.0f  y %.0f  %.0f × %.0f",
                 shot.regionX, shot.regionY, shot.regionW, shot.regionH
             ))
-            row("sha256", shot.sha256)
-            VStack(alignment: .leading, spacing: DS.s1) {
-                Text("原图").font(.caption).foregroundStyle(.secondary)
-                Text(store.originalURL(for: shot).path)
+            CopyValueRow(label: "sha256", value: shot.sha256)
+            CopyValueRow(label: "原图", value: store.originalURL(for: shot).path)
+            Button {
+                SystemNavigator.revealInFinder(store.originalURL(for: shot))
+            } label: {
+                Label("在访达中显示", systemImage: "folder")
                     .font(.caption)
-                    .textSelection(.enabled)
-                    .lineLimit(3)
-                    .truncationMode(.middle)
-                Button {
-                    SystemNavigator.revealInFinder(store.originalURL(for: shot))
-                } label: {
-                    Label("在访达中显示", systemImage: "folder")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(DS.accent)
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.accent)
         }
     }
 
@@ -210,11 +198,7 @@ struct ShotInfoPage: View {
         if let path = recordingPath {
             let recording = RecordingAsset(path: path)
             card("录屏") {
-                Text(path)
-                    .font(.caption)
-                    .textSelection(.enabled)
-                    .lineLimit(3)
-                    .truncationMode(.middle)
+                CopyValueRow(label: "文件", value: path)
                 Button {
                     RecordingAssetActions.play(recording)
                 } label: {

@@ -112,6 +112,24 @@ final class GalleryKeyboard {
             }
             return true
 
+        case KeyCode.v where isCommandOnly(flags):
+            // ⌘V：从剪贴板粘贴图片导入图库。
+            // 网页复制的图片（⌘C 后 ⌘V）、访达复制的图片文件都走这里。
+            guard let image = Clipboard.readImage() else { return false }
+            var metadata = CaptureMetadata()
+            metadata.scale = 1
+            metadata.globalRegion = CGRect(
+                x: 0, y: 0,
+                width: image.width, height: image.height
+            )
+            metadata.windowTitle = "粘贴图片"
+            do {
+                _ = try ShotStore.shared.save(image: image, metadata: metadata)
+            } catch {
+                NSLog("[MacShot] 粘贴导入失败: \(error)")
+            }
+            return true
+
         case KeyCode.escape where flags.isEmpty:
             // Esc：多选收拢回主选中单张；没在多选就不拦，留给系统。
             let selection = GallerySelection.shared

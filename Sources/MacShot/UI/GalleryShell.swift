@@ -140,7 +140,7 @@ struct ShellIconButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: DS.font14, weight: .medium))
                 .foregroundStyle(isActive ? DS.accent : Color.primary)
                 .frame(width: side, height: side)
                 .background(fill, in: shape)
@@ -184,7 +184,7 @@ struct PanelCloseButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DS.font10, weight: .bold))
         }
         .buttonStyle(ShellIconButtonStyle(side: 28))
         .clipShape(Circle())

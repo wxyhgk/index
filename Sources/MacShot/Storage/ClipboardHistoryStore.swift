@@ -1,0 +1,207 @@
+import Foundation
+import GRDB
+
+// ============================================================
+// MARK: - 剪贴板历史
+//
+// 记录用户复制过的内容（文本 / 图片 / 文件），供浮动面板快速回取。
+//
+// 设计要点：
+//   · contentHash 唯一索引做去重——同一内容再次复制只刷新 capturedAt，
+//     不新增行（Paste 的核心行为）。
+//   · 图片条目复用 sha256 内容寻址（与图库 originals/ 同算法），
+//     剪贴板里的截图和图库条目天然可关联。
+//   · 图片落盘在 clipboard/ 子目录（不进 originals/，避免和图库去重混淆——
+//     图库的 sha 是「成品图」的哈希，剪贴板的是「原始复制」的哈希）。
+// ============================================================
+
+/// 剪贴板条目的内容种类。
+enum ClipboardHistoryKind: String, Codable {
+    case text
+    case image
+    case file
+}
+
+struct ClipboardHistoryItem: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, Equatable {
+    static let databaseTableName = "clipboardHistory"
+
+    var id: Int64?
+    var kind: ClipboardHistoryKind
+    var contentHash: String
+    var text: String?
+    var assetPath: String?
+    var summary: String?
+    var sourceApp: String?
+    var pinned: Bool
+    var capturedAt: Date
+    var lastUsedAt: Date?
+
+    mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+}
+
+// MARK: - 仓库
+
+/// 剪贴板历史的读写。非 MainActor：写入走 DatabasePool，不阻塞主线程。
+final class ClipboardHistoryStore: @unchecked Sendable {
+
+    static let shared: ClipboardHistoryStore = {
+        do {
+            return try ClipboardHistoryStore()
+        } catch {
+            fatalError("无法打开剪贴板历史存储: \(error)")
+        }
+    }()
+
+    private let writer: any DatabaseWriter
+    /// 图片落盘目录（Application Support/MacShot/clipboard/）。
+    let assetDirectory: URL
+
+    init(writer: (any DatabaseWriter)? = nil) throws {
+        if let writer {
+            self.writer = writer
+        } else {
+            let base = FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("MacShot", isDirectory: true)
+            self.writer = try AppDatabase.makeWriter(at: base.appendingPathComponent("index.sqlite"))
+        }
+        let assetBase = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MacShot", isDirectory: true)
+            .appendingPathComponent("clipboard", isDirectory: true)
+        try FileManager.default.createDirectory(at: assetBase, withIntermediateDirectories: true)
+        self.assetDirectory = assetBase
+    }
+
+    // MARK: 写入（去重）
+
+    /// 记录一条剪贴板内容。相同 contentHash 已存在时只刷新时间，返回 false。
+    /// - Returns: 是否新增了条目（false = 去重命中，仅刷新）。
+    @discardableResult
+    func record(
+        kind: ClipboardHistoryKind,
+        contentHash: String,
+        text: String?,
+        assetPath: String?,
+        summary: String?,
+        sourceApp: String?
+    ) throws -> Bool {
+        try writer.write { db in
+            let existing = try ClipboardHistoryItem
+                .filter(Column("contentHash") == contentHash)
+                .fetchOne(db)
+            let now = Date()
+            if let existing {
+                var updated = existing
+                updated.capturedAt = now
+                try updated.update(db)
+                return false
+            }
+            var item = ClipboardHistoryItem(
+                id: nil,
+                kind: kind,
+                contentHash: contentHash,
+                text: text,
+                assetPath: assetPath,
+                summary: summary,
+                sourceApp: sourceApp,
+                pinned: false,
+                capturedAt: now,
+                lastUsedAt: nil
+            )
+            try item.insert(db)
+            return true
+        }
+    }
+
+    /// 把图片字节落盘到 clipboard/ 目录（内容寻址），返回相对路径。
+    /// 已存在同 sha 文件时不重写。
+    func writeImageAsset(_ data: Data, sha: String) throws -> String {
+        let url = assetDirectory.appendingPathComponent("\(sha).png")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try data.write(to: url, options: .atomic)
+        }
+        return url.lastPathComponent
+    }
+
+    // MARK: 查询
+
+    /// 按时间倒序取最近 limit 条；query 非空时按 summary/text 模糊过滤。
+    func recent(limit: Int = 100, query: String? = nil) throws -> [ClipboardHistoryItem] {
+        try writer.read { db in
+            var request = ClipboardHistoryItem
+                .order(Column("capturedAt").desc)
+                .limit(limit)
+            if let query, !query.isEmpty {
+                let pattern = "%\(query)%"
+                request = request.filter(
+                    Column("summary").like(pattern) || Column("text").like(pattern)
+                )
+            }
+            return try request.fetchAll(db)
+        }
+    }
+
+    /// 某条目的完整内容（文本全文 / 图片文件 URL）。
+    func content(of item: ClipboardHistoryItem) -> (text: String?, assetURL: URL?) {
+        switch item.kind {
+        case .text:
+            return (item.text, nil)
+        case .image, .file:
+            guard let assetPath = item.assetPath else { return (nil, nil) }
+            return (nil, assetDirectory.appendingPathComponent(assetPath))
+        }
+    }
+
+    // MARK: 更新 / 删除
+
+    func markUsed(_ item: ClipboardHistoryItem) {
+        try? writer.write { db in
+            var updated = item
+            updated.lastUsedAt = Date()
+            try updated.update(db)
+        }
+    }
+
+    func setPinned(_ pinned: Bool, for item: ClipboardHistoryItem) {
+        try? writer.write { db in
+            var updated = item
+            updated.pinned = pinned
+            try updated.update(db)
+        }
+    }
+
+    func delete(_ item: ClipboardHistoryItem) {
+        // 图片资产文件一并清理（文本条目没有文件）。
+        if let assetPath = item.assetPath {
+            try? FileManager.default.removeItem(
+                at: assetDirectory.appendingPathComponent(assetPath)
+            )
+        }
+        try? writer.write { db in
+            var mutable = item
+            _ = try mutable.delete(db)
+        }
+    }
+
+    /// 清理超过 days 天的未固定条目（设置里的保留策略）。
+    func prune(olderThanDays days: Int) {
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
+        try? writer.write { db in
+            let stale = try ClipboardHistoryItem
+                .filter(Column("capturedAt") < cutoff && Column("pinned") == false)
+                .fetchAll(db)
+            for item in stale {
+                if let assetPath = item.assetPath {
+                    try? FileManager.default.removeItem(
+                        at: assetDirectory.appendingPathComponent(assetPath)
+                    )
+                }
+                var mutable = item
+                _ = try mutable.delete(db)
+            }
+        }
+    }
+}

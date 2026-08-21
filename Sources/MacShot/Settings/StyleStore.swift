@@ -11,7 +11,7 @@ import Foundation
 protocol StyleStore: AnyObject, ObservableObject,
     CapturePreferences, RecordingPreferences, ExportPreferences,
     LibraryPreferences, AnnotationStylePreferences, IntelligencePreferences,
-    UploadPreferences, ShortcutPreferences {}
+    UploadPreferences, ShortcutPreferences, ClipboardHistoryPreferences {}
 
 extension AppSettings: StyleStore {}
 
@@ -36,6 +36,7 @@ final class FakeStyleStore: ObservableObject, StyleStore,
     @Published var intelligence: IntelligencePrefs
     @Published var upload: UploadPrefs
     @Published var shortcuts: ShortcutPrefs
+    @Published var clipboardHistory: ClipboardHistoryPrefs
 
     init(
         capture: CapturePrefs = .defaults,
@@ -45,7 +46,8 @@ final class FakeStyleStore: ObservableObject, StyleStore,
         annotationStyle: AnnotationStylePrefs = .defaults,
         intelligence: IntelligencePrefs = .defaults,
         upload: UploadPrefs = .defaults,
-        shortcuts: ShortcutPrefs = .defaults
+        shortcuts: ShortcutPrefs = .defaults,
+        clipboardHistory: ClipboardHistoryPrefs = .defaults
     ) {
         self.capture = capture
         self.recording = recording
@@ -55,6 +57,7 @@ final class FakeStyleStore: ObservableObject, StyleStore,
         self.intelligence = intelligence
         self.upload = upload
         self.shortcuts = shortcuts
+        self.clipboardHistory = clipboardHistory
     }
 
     // 转发到领域值（与 AppSettings 同一套窄协议 + StyleStore 契约）
@@ -117,4 +120,8 @@ final class FakeStyleStore: ObservableObject, StyleStore,
     var recordingShortcut: KeyboardShortcut { shortcuts.recordingShortcut }
     var scrollCaptureShortcut: KeyboardShortcut { shortcuts.scrollCaptureShortcut }
     var moleculePinShortcut: KeyboardShortcut { shortcuts.moleculePinShortcut }
+    var clipboardHistoryShortcut: KeyboardShortcut { shortcuts.clipboardHistoryShortcut }
+
+    var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
+    var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }
 }

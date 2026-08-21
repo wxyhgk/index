@@ -183,13 +183,13 @@ private struct CollectionsContent: View {
                 HStack(spacing: DS.s3) {
                     Button { closeDetail() } label: {
                         Label("收藏", systemImage: "chevron.left")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: DS.font13, weight: .medium))
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.escape, modifiers: [])
 
                     Image(systemName: route == .favorites ? "star.fill" : "rectangle.stack.fill")
-                        .font(.system(size: 24, weight: .medium))
+                        .font(.system(size: DS.font24, weight: .medium))
                         .foregroundStyle(route == .favorites ? Color.yellow : Color.accentColor)
                     VStack(alignment: .leading, spacing: DS.s1 / 2) {
                         Text(title(for: route))
@@ -371,7 +371,7 @@ private struct CollectionCardShell: View {
             VStack(alignment: .leading, spacing: DS.s3) {
                 HStack(spacing: DS.s2) {
                     Image(systemName: icon)
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: DS.font18, weight: .semibold))
                         .foregroundStyle(iconColor)
                         .frame(width: 30, height: 30)
                         .background(iconColor.opacity(0.12), in: RoundedRectangle(cornerRadius: DS.radiusChip))

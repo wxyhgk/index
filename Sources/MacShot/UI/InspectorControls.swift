@@ -25,8 +25,8 @@ import AppKit
 /// 详情面板的尺寸表。数值来自设计稿 §6（370 宽的面板上量出来的）。
 enum InspectorMetrics {
 
-    /// 预览区高度（设计稿：约 190）。
-    static let previewHeight: CGFloat = 190
+    /// 预览区高度（紧凑化：150，原 190）。
+    static let previewHeight: CGFloat = 150
 
     /// 预览区圆角（设计稿：12）。
     ///
@@ -41,14 +41,14 @@ enum InspectorMetrics {
     /// 主按钮的最小宽度（设计稿：约 100）。
     static let primaryWidth: CGFloat = 100
 
-    /// 元信息行行高（设计稿：约 38）。
-    static let rowHeight: CGFloat = 38
+    /// 元信息行行高（紧凑化：28，原 38）。
+    static let rowHeight: CGFloat = 28
 
-    /// 元信息行图标位（设计稿：18pt）。
-    static let rowIcon: CGFloat = 18
+    /// 元信息行图标位（压缩后 14pt，原 18pt）。
+    static let rowIcon: CGFloat = 14
 
-    /// 元信息 / 下钻行的文字字号（设计稿：13pt）。
-    static let rowFontSize: CGFloat = 13
+    /// 元信息 / 下钻行的文字字号（压缩后 12pt，原 13pt）。
+    static let rowFontSize: CGFloat = 12
 
     /// 关闭按钮占住的那条巷子：`GalleryInspectorPanel` 在面板右上角画一个
     /// 直径 28 的 ✕、内缩 `DS.s2`(8)，所以它的下沿在 36。面板内容从 40 开始，
@@ -184,7 +184,7 @@ struct InspectorCircleButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: DS.font13, weight: .medium))
                 .foregroundStyle(tint ?? Color.primary)
                 .frame(width: InspectorMetrics.actionSide, height: InspectorMetrics.actionSide)
                 .background(fill, in: Circle())
@@ -247,7 +247,7 @@ struct InspectorCircleMenu<Content: View>: View {
             content()
         } label: {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: DS.font13, weight: .medium))
                 .foregroundStyle(Color.primary)
                 .frame(width: InspectorMetrics.actionSide, height: InspectorMetrics.actionSide)
                 .contentShape(Circle())
@@ -295,6 +295,7 @@ struct InspectorMetaRow: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
+    @State private var copied = false
 
     var body: some View {
         if let action {
@@ -307,7 +308,7 @@ struct InspectorMetaRow: View {
     }
 
     private var row: some View {
-        HStack(spacing: DS.s3) {
+        HStack(spacing: DS.s2) {
             iconView
                 .frame(width: InspectorMetrics.rowIcon, height: InspectorMetrics.rowIcon)
             Text(text)
@@ -315,25 +316,40 @@ struct InspectorMetaRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if action != nil {
-                // 常驻布局、只在悬停时显形：让它跟着 hover 出没会让文字宽度跳动。
-                Image(systemName: "arrow.up.forward")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .opacity(hovering ? 1 : 0)
+            // 右侧：action 箭头 + 复制按钮，hover 时显形。
+            HStack(spacing: DS.s1) {
+                if action != nil {
+                    Image(systemName: "arrow.up.forward")
+                        .font(.system(size: DS.font10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Button {
+                    Clipboard.copy(text: text)
+                    copied = true
+                    Task {
+                        try? await Task.sleep(for: DS.copyFeedbackDelay)
+                        copied = false
+                    }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: DS.font10, weight: .medium))
+                        .foregroundStyle(copied ? Color.green : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(copied ? "已复制" : "复制")
             }
+            .opacity(hovering ? 1 : 0)
         }
         .padding(.horizontal, DS.s2)
         .frame(height: InspectorMetrics.rowHeight)
         .background {
             RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                .fill(hovering && action != nil
-                      ? InspectorMetrics.rowHoverFill(scheme)
-                      : Color.clear)
+                .fill(hovering ? InspectorMetrics.rowHoverFill(scheme) : Color.clear)
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(DS.Motion.micro(reduced: reduceMotion), value: hovering)
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: copied)
     }
 
     @ViewBuilder
@@ -341,11 +357,61 @@ struct InspectorMetaRow: View {
         switch icon {
         case .symbol(let name):
             Image(systemName: name)
-                .font(.system(size: 14))
+                .font(.system(size: DS.font14))
                 .foregroundStyle(.secondary)
         case .appIcon(let bundleID):
             InspectorAppIcon(bundleID: bundleID, side: InspectorMetrics.rowIcon)
         }
+    }
+}
+
+// ============================================================
+// MARK: - 长值复制行
+// ============================================================
+
+/// 长值行：label + 截断摘要 + 复制按钮。
+///
+/// 用于路径 / sha256 / URL 等「完整值太长、不需要常看、但排查时必须能拿到」的字段。
+/// 旧实现是 `textSelection(.enabled)` + `lineLimit(3)` —— 用户得手动拖选才能复制，
+/// 而且长路径把卡片撑高。现在改成单行截断 + 一键复制，复制后图标变 checkmark 1.5s。
+struct CopyValueRow: View {
+
+    let label: String
+    let value: String
+    /// 摘要显示用的截断文本。默认取 value 本身（middle 截断）。
+    var summary: String?
+
+    @State private var copied = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.s2) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
+            Text(summary ?? value)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                Clipboard.copy(text: value)
+                copied = true
+                Task {
+                    try? await Task.sleep(for: DS.copyFeedbackDelay)
+                    copied = false
+                }
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: DS.font11, weight: .medium))
+                    .foregroundStyle(copied ? Color.green : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(copied ? "已复制" : "复制\(label)")
+            .accessibilityLabel(copied ? "已复制" : "复制\(label)")
+        }
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: copied)
     }
 }
 
@@ -370,7 +436,7 @@ struct InspectorDrillRow: View {
                     .font(.system(size: InspectorMetrics.rowFontSize, weight: .medium))
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DS.font11, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, DS.s2)

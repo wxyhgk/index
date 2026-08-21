@@ -100,14 +100,14 @@ struct GalleryView: View {
                         mode.returnToGallery()
                     } label: {
                         Label("图库", systemImage: "chevron.left")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: DS.font13, weight: .medium))
                     }
                     .buttonStyle(.plain)
                     // Esc 也能退，与编辑器一致。
                     .keyboardShortcut(.escape, modifiers: [])
 
                     Text("设置")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DS.font15, weight: .semibold))
 
                     Spacer()
                 }

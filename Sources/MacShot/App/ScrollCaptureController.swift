@@ -191,6 +191,9 @@ private final class ScrollCaptureSession {
     /// （页面动画、半透明浮层），只有持续接不上（真正跳页）才值得打扰用户。
     private static let noOverlapHintThreshold = 3
 
+    /// 滚动提示节流间隔（秒）。
+    private let hintThrottle: TimeInterval = 1.5
+
     private var lastHeightRefreshAt: CFTimeInterval = 0
     private var heightRefreshPending = false
     private var noOverlapStreak = 0
@@ -274,7 +277,7 @@ private final class ScrollCaptureSession {
         case .noOverlap:
             noOverlapStreak += 1
             let now = CACurrentMediaTime()
-            if noOverlapStreak >= Self.noOverlapHintThreshold, now - lastHintAt >= 1.5 {
+            if noOverlapStreak >= Self.noOverlapHintThreshold, now - lastHintAt >= hintThrottle {
                 lastHintAt = now
                 panel.flash("滚慢一点，等画面接上再继续")
             }
@@ -486,15 +489,15 @@ private final class ScrollControlPanel: NSObject {
         let content = NSView(frame: CGRect(origin: .zero, size: size))
         content.wantsLayer = true
         content.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.78).cgColor
-        content.layer?.cornerRadius = 12
+        content.layer?.cornerRadius = DS.radiusLarge
 
         let height = NSTextField(labelWithString: "已拼接 0 px")
-        height.font = .monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
+        height.font = .monospacedDigitSystemFont(ofSize: DS.font14, weight: .semibold)
         height.textColor = .white
         height.alignment = .center
 
         let hint = NSTextField(labelWithString: Self.defaultHint)
-        hint.font = .systemFont(ofSize: 11)
+        hint.font = .systemFont(ofSize: DS.font11)
         hint.textColor = NSColor.white.withAlphaComponent(0.65)
         hint.alignment = .center
         hint.lineBreakMode = .byTruncatingTail
@@ -599,7 +602,7 @@ private final class RegionBorderPanel {
     private final class BorderView: NSView {
         override func draw(_ dirtyRect: NSRect) {
             let path = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
-            path.lineWidth = 2
+            path.lineWidth = DS.strokeEmphasis
             NSColor.controlAccentColor.setStroke()
             path.stroke()
         }

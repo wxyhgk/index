@@ -157,12 +157,12 @@ struct ColorControl: ToolbarControl {
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         let color = AnnotationState.palette[index]
         NSColor(srgbRed: color.r, green: color.g, blue: color.b, alpha: 1).setFill()
-        let dot = NSRect(x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12)
+        let dot = NSRect(x: frame.midX - DS.toolDotSize / 2, y: frame.midY - DS.toolDotSize / 2, width: DS.toolDotSize, height: DS.toolDotSize)
         NSBezierPath(ovalIn: dot).fill()
 
         NSColor.black.withAlphaComponent(0.35).setStroke()
         let ring = NSBezierPath(ovalIn: dot)
-        ring.lineWidth = 1
+        ring.lineWidth = DS.hairline
         ring.stroke()
     }
 

@@ -191,7 +191,7 @@ struct ToolStyleAxisDescriptor {
                 return AnyView(
                     Circle()
                         .fill(DS.whiteOpacity(alpha))
-                        .overlay(Circle().strokeBorder(isSelected ? DS.accent : Color.clear, lineWidth: 1.5))
+                        .overlay(Circle().strokeBorder(isSelected ? DS.accent : Color.clear, lineWidth: DS.strokeSubtle))
                         .frame(width: 12, height: 12)
                         .frame(width: 20, height: 20)
                 )
@@ -265,11 +265,11 @@ struct ToolStyleAxisDescriptor {
                 let steps: [Double] = [0.40, 0.55, 0.75]
                 guard steps.indices.contains(index) else { return }
                 NSColor.black.withAlphaComponent(steps[index]).setFill()
-                let dot = NSRect(x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12)
+                let dot = NSRect(x: frame.midX - DS.toolDotSize / 2, y: frame.midY - DS.toolDotSize / 2, width: DS.toolDotSize, height: DS.toolDotSize)
                 NSBezierPath(ovalIn: dot).fill()
                 NSColor.white.withAlphaComponent(0.5).setStroke()
                 let ring = NSBezierPath(ovalIn: dot)
-                ring.lineWidth = 1
+                ring.lineWidth = DS.hairline
                 ring.stroke()
             },
             editorIcon: { index, isSelected in
@@ -281,10 +281,10 @@ struct ToolStyleAxisDescriptor {
                             .fill(DS.blackOpacity(alpha))
                             .frame(width: 12, height: 12)
                         Circle()
-                            .strokeBorder(DS.whiteOpacity(0.5), lineWidth: 1)
+                            .strokeBorder(DS.whiteOpacity(0.5), lineWidth: DS.hairline)
                             .frame(width: 12, height: 12)
                     }
-                    .overlay(Circle().strokeBorder(isSelected ? DS.accent : Color.clear, lineWidth: 1.5))
+                    .overlay(Circle().strokeBorder(isSelected ? DS.accent : Color.clear, lineWidth: DS.strokeSubtle))
                     .frame(width: 20, height: 20)
                 )
             },

@@ -101,6 +101,7 @@ struct GalleryPageHeader: View {
         if viewModel.isSemanticSearching {
             HStack(spacing: DS.s2) {
                 ProgressView().controlSize(.mini)
+                // 与 GalleryFloatingToolbar 同一文案（语义搜索进行中）。
                 Text("语义搜索中…")
             }
             .font(.caption)
@@ -143,7 +144,7 @@ struct GalleryPageHeader: View {
                 scope.clearTransientState(in: viewModel)
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 15))
+                    .font(.system(size: DS.font15))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)

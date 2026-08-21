@@ -5,32 +5,35 @@ import SwiftUI
 struct ShortcutSettings: View {
     @ObservedObject var settings: AppSettings
 
+    /// 快捷键录制框统一尺寸（与 ShortcutRecorder 的 intrinsicContentSize 对齐）。
+    private let recorderSize = CGSize(width: 130, height: 24)
+
     var body: some View {
         Form {
             Section("全局快捷键") {
                 LabeledContent("截图") {
                     ShortcutRecorder(shortcut: $settings.shortcuts.captureShortcut)
-                        .frame(width: 130, height: 24)
+                        .frame(width: recorderSize.width, height: recorderSize.height)
                 }
                 LabeledContent("延时截图") {
                     ShortcutRecorder(shortcut: $settings.shortcuts.delayedCaptureShortcut)
-                        .frame(width: 130, height: 24)
+                        .frame(width: recorderSize.width, height: recorderSize.height)
                 }
                 LabeledContent("录屏") {
                     ShortcutRecorder(shortcut: $settings.shortcuts.recordingShortcut)
-                        .frame(width: 130, height: 24)
+                        .frame(width: recorderSize.width, height: recorderSize.height)
                 }
                 LabeledContent("滚动截图") {
                     ShortcutRecorder(shortcut: $settings.shortcuts.scrollCaptureShortcut)
-                        .frame(width: 130, height: 24)
+                        .frame(width: recorderSize.width, height: recorderSize.height)
                 }
                 LabeledContent("打开图库") {
                     ShortcutRecorder(shortcut: $settings.shortcuts.galleryShortcut)
-                        .frame(width: 130, height: 24)
+                        .frame(width: recorderSize.width, height: recorderSize.height)
                 }
                 LabeledContent("3D 分子钉图") {
                     ShortcutRecorder(shortcut: $settings.shortcuts.moleculePinShortcut)
-                        .frame(width: 130, height: 24)
+                        .frame(width: recorderSize.width, height: recorderSize.height)
                 }
 
                 HStack {

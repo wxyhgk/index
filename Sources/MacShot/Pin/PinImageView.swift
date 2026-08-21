@@ -491,7 +491,7 @@ final class PinImageView: NSView {
         let frame = bounds
         guard frame.height > 1 else { return }
 
-        let clip = NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6)
+        let clip = NSBezierPath(roundedRect: frame, xRadius: DS.radiusSmall, yRadius: DS.radiusSmall)
         ctx.saveGState()
         clip.addClip()
         ctx.interpolationQuality = .high
@@ -500,7 +500,7 @@ final class PinImageView: NSView {
         ctx.restoreGState()
 
         NSColor.white.withAlphaComponent(0.25).setStroke()
-        clip.lineWidth = 1
+        clip.lineWidth = DS.hairline
         clip.stroke()
 
         // 穿透中：虚线边框代替工具条（工具条窗口那时是收起来的）——
@@ -508,11 +508,11 @@ final class PinImageView: NSView {
         if isPassthrough {
             let dashed = NSBezierPath(
                 roundedRect: frame.insetBy(dx: 1.5, dy: 1.5),
-                xRadius: 6,
-                yRadius: 6
+                xRadius: DS.radiusSmall,
+                yRadius: DS.radiusSmall
             )
             dashed.setLineDash([6, 4], count: 2, phase: 0)
-            dashed.lineWidth = 2
+            dashed.lineWidth = DS.strokeEmphasis
             NSColor.systemOrange.setStroke()
             dashed.stroke()
         }

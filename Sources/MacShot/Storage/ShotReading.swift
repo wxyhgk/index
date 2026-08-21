@@ -44,6 +44,7 @@ protocol ShotReading: AnyObject {
 @MainActor
 protocol ShotWriting: AnyObject {
     @discardableResult func save(image: CGImage, metadata: CaptureMetadata) throws -> Shot
+    @discardableResult func save(image: CGImage, metadata: CaptureMetadata, originalData: Data?, originalExtension: String?) throws -> Shot
     func delete(_ shots: [Shot])
     func delete(_ shot: Shot)
     @discardableResult func appendRevision(shot: Shot, layers: Layers<ImageSpace>, note: String?) -> Revision?

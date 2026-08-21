@@ -32,7 +32,7 @@ struct UploadSettings: View {
                     .frame(height: 60)
                     .autocorrectionDisabled()
                     .overlay(
-                        RoundedRectangle(cornerRadius: 5)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
                             .strokeBorder(DS.focusRingIdle)
                     )
             } header: {

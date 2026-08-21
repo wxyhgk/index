@@ -150,7 +150,7 @@ struct WatermarkSpec: Codable, Equatable {
         layer.text = WatermarkSpec(text: text, mode: mode).encoded
         layer.color = LColor(r: 1, g: 1, b: 1, a: alpha)
         layer.fontSize = max(14, imagePixelWidth * 0.03)
-        layer.lineWidth = 1
+        layer.lineWidth = DS.hairline
         return layer
     }
 }

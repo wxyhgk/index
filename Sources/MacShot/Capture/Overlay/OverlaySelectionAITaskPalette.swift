@@ -76,10 +76,10 @@ enum OverlaySelectionAITaskPalette {
         }) else { return }
 
         DS.toolbarBackground.setFill()
-        let background = NSBezierPath(roundedRect: panel, xRadius: 8, yRadius: 8)
+        let background = NSBezierPath(roundedRect: panel, xRadius: DS.radiusMedium, yRadius: DS.radiusMedium)
         background.fill()
         DS.toolbarStroke.setStroke()
-        background.lineWidth = 1
+        background.lineWidth = DS.hairline
         background.stroke()
 
         for slot in slots {
@@ -104,7 +104,7 @@ enum OverlaySelectionAITaskPalette {
         let title = title(for: slot.kind)
         if slot.showsTitle {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                .font: NSFont.systemFont(ofSize: DS.font11, weight: .medium),
                 .foregroundColor: DS.toolbarForeground
             ]
             let size = (title as NSString).size(withAttributes: attrs)
@@ -139,7 +139,7 @@ enum OverlaySelectionAITaskPalette {
 
     private static func drawStatus(_ text: String, isError: Bool, below panel: CGRect) {
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .font: NSFont.systemFont(ofSize: DS.font11, weight: .medium),
             .foregroundColor: isError ? NSColor.systemRed : DS.toolbarForeground
         ]
         let maxWidth: CGFloat = 320
@@ -155,7 +155,7 @@ enum OverlaySelectionAITaskPalette {
             height: size.height + 8
         )
         DS.toolbarBackground.setFill()
-        NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
+        NSBezierPath(roundedRect: box, xRadius: DS.radiusSmall, yRadius: DS.radiusSmall).fill()
         (text as NSString).draw(
             in: box.insetBy(dx: 7, dy: 4),
             withAttributes: attrs

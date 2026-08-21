@@ -17,10 +17,10 @@ enum ToolbarRenderer {
         for row in ToolbarLayout.rowFrames(of: slots) {
             let bg = row
             DS.toolbarBackground.setFill()
-            let path = NSBezierPath(roundedRect: bg, xRadius: 8, yRadius: 8)
+            let path = NSBezierPath(roundedRect: bg, xRadius: DS.radiusMedium, yRadius: DS.radiusMedium)
             path.fill()
             DS.toolbarStroke.setStroke()
-            path.lineWidth = 1
+            path.lineWidth = DS.hairline
             path.stroke()
         }
 
@@ -56,7 +56,7 @@ enum ToolbarRenderer {
                     xRadius: 5,
                     yRadius: 5
                 )
-                focus.lineWidth = 2
+                focus.lineWidth = DS.strokeEmphasis
                 focus.stroke()
             }
 

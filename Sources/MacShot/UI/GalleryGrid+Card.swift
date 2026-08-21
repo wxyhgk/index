@@ -214,6 +214,7 @@ extension GalleryGrid {
             && shotIDs.allSatisfy(selection.selectedIDs.contains)
         Menu {
             if collectionSummaries.isEmpty {
+                // 与 ShotDetailPane / MultiSelectionPane 同一文案（空专题集引导）。
                 Text("尚无专题集，请先到“收藏”页创建")
             } else {
                 ForEach(collectionSummaries) { collection in

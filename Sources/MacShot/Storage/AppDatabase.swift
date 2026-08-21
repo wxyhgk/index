@@ -277,6 +277,30 @@ enum AppDatabase {
             }
         }
 
+        // 原图扩展名：导入的 SVG 保留矢量文件（<sha>.svg），截图仍是 <sha>.png。
+        // 不进 FTS（不是搜索字段），不需要重建虚表。
+        migrator.registerMigration("v8_original_extension") { db in
+            try db.execute(sql: "ALTER TABLE shot ADD COLUMN originalExtension TEXT DEFAULT 'png'")
+        }
+
+        // 剪贴板历史：独立于 shot（文本/链接/颜色条目没有对应截图行）。
+        // contentHash 唯一索引做去重——同一内容再次复制只更新时间，不新增行。
+        // 图片条目复用 sha256 内容寻址，与图库天然互通。
+        migrator.registerMigration("v9_clipboard_history") { db in
+            try db.create(table: "clipboardHistory") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("kind", .text).notNull()          // text / image / file
+                t.column("contentHash", .text).notNull().unique()
+                t.column("text", .text)                    // kind=text 时的内容
+                t.column("assetPath", .text)               // kind=image/file 时的落盘路径（相对）
+                t.column("summary", .text)                 // 列表展示用摘要（文本截断/文件名）
+                t.column("sourceApp", .text)               // 复制来源 App 名
+                t.column("pinned", .boolean).notNull().defaults(to: false)
+                t.column("capturedAt", .datetime).notNull().indexed()
+                t.column("lastUsedAt", .datetime)
+            }
+        }
+
         return migrator
     }
 }

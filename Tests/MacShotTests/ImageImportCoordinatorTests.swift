@@ -72,8 +72,11 @@ final class ImageImportCoordinatorTests: XCTestCase {
         XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.heic")))
         XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.heif")))
         XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.tiff")))
-        XCTAssertFalse(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.gif")))
+        XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.webp")))
+        XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.gif")))
+        XCTAssertTrue(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.svg")))
         XCTAssertFalse(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.pdf")))
+        XCTAssertFalse(ImageImportCoordinator.supports(URL(fileURLWithPath: "/tmp/a.mp4")))
     }
 
     private func temporaryDirectory(_ suffix: String) -> URL {

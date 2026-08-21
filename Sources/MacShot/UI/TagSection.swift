@@ -202,12 +202,12 @@ private struct TagChip: View {
             // 设计稿 §6.5：小号胶囊、灰字。标签是「这张图属于哪几堆」的补充信息，
             // 不该和元信息列表的正文抢同一档对比度。
             Text(name)
-                .font(.system(size: 12))
+                .font(.system(size: DS.font12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: DS.font9))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)

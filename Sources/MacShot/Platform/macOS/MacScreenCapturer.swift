@@ -8,6 +8,8 @@ final class MacScreenCapturer: ScreenCapturing {
     static let shared = MacScreenCapturer()
 
     private static let topologyRetryDelayNanoseconds: UInt64 = 150_000_000
+    /// 拓扑变化时最多重试一次（共 2 次尝试）。
+    private let maxAttempts = 2
     private var topologyGeneration: UInt64 = 0
     private var cachedDisplayContent: (generation: UInt64, content: SCShareableContent)?
     private var screenParametersObserver: NSObjectProtocol?
@@ -56,7 +58,7 @@ final class MacScreenCapturer: ScreenCapturing {
             }
         }
 
-        for attempt in 0..<2 {
+        for attempt in 0..<maxAttempts {
             try Task.checkCancellation()
 
             let generation = topologyGeneration

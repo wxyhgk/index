@@ -11,6 +11,29 @@ enum Clipboard {
         NSPasteboard.general.string(forType: .string)
     }
 
+    /// 读取剪贴板中的图片（PNG / TIFF / 文件 URL）。
+    /// 网页复制的图片通常是 TIFF 或 PNG；从访达复制文件则是 file URL。
+    static func readImage() -> CGImage? {
+        let pasteboard = NSPasteboard.general
+        // 优先 PNG（MacShot 自己复制的、多数网页截图）
+        if let data = pasteboard.data(forType: .png),
+           let image = ImageCodec.load(from: data) {
+            return image
+        }
+        // TIFF（从预览、Pages、Keynote 等复制的）
+        if let data = pasteboard.data(forType: .tiff),
+           let image = ImageCodec.load(from: data) {
+            return image
+        }
+        // 文件 URL（从访达复制图片文件）
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+           let url = urls.first(where: { ImageImportCoordinator.supports($0) }),
+           let image = ImageCodec.load(from: url) {
+            return image
+        }
+        return nil
+    }
+
     static func copy(text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

@@ -28,7 +28,8 @@ final class RecorderView: NSView {
         didSet { needsDisplay = true }
     }
 
-    override var intrinsicContentSize: NSSize { NSSize(width: 120, height: 24) }
+    /// 与 SettingsShortcuts 的 recorderSize（130×24）保持一致。
+    override var intrinsicContentSize: NSSize { NSSize(width: 130, height: 24) }
     override var acceptsFirstResponder: Bool { true }
 
     override func mouseDown(with event: NSEvent) {
@@ -71,7 +72,7 @@ final class RecorderView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let box = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let path = NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5)
+        let path = NSBezierPath(roundedRect: box, xRadius: DS.radiusSmall, yRadius: DS.radiusSmall)
 
         (isRecording
             ? NSColor.controlAccentColor.withAlphaComponent(0.15)
@@ -79,7 +80,7 @@ final class RecorderView: NSView {
         path.fill()
 
         (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
-        path.lineWidth = isRecording ? 2 : 1
+        path.lineWidth = isRecording ? DS.strokeEmphasis : DS.hairline
         path.stroke()
 
         let text = isRecording ? "按下新的组合键…" : shortcut.displayString

@@ -87,14 +87,14 @@ enum OverlaySelectionAIResultPanel {
         copied: SelectionAIExportFormat?
     ) {
         DS.toolbarBackground.setFill()
-        let panel = NSBezierPath(roundedRect: layout.frame, xRadius: 12, yRadius: 12)
+        let panel = NSBezierPath(roundedRect: layout.frame, xRadius: DS.radiusLarge, yRadius: DS.radiusLarge)
         panel.fill()
         DS.toolbarStroke.setStroke()
-        panel.lineWidth = 1
+        panel.lineWidth = DS.hairline
         panel.stroke()
 
         let titleAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: DS.font14, weight: .semibold),
             .foregroundColor: DS.toolbarForeground
         ]
         (title(for: document.kind) as NSString).draw(
@@ -104,8 +104,8 @@ enum OverlaySelectionAIResultPanel {
 
         let bodyAttributes: [NSAttributedString.Key: Any] = [
             .font: document.kind == .formulaToLaTeX
-                ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-                : NSFont.systemFont(ofSize: 12),
+                ? NSFont.monospacedSystemFont(ofSize: DS.font12, weight: .regular)
+                : NSFont.systemFont(ofSize: DS.font12),
             .foregroundColor: DS.toolbarForeground
         ]
         (document.preview as NSString).draw(
@@ -117,7 +117,7 @@ enum OverlaySelectionAIResultPanel {
         for slot in layout.actionSlots {
             let active = hovered == slot.action || pressed == slot.action
             (active ? DS.toolbarHover : DS.toolbarStroke).setFill()
-            NSBezierPath(roundedRect: slot.frame, xRadius: 6, yRadius: 6).fill()
+            NSBezierPath(roundedRect: slot.frame, xRadius: DS.radiusSmall, yRadius: DS.radiusSmall).fill()
 
             let label: String
             switch slot.action {

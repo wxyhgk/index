@@ -44,6 +44,9 @@ enum UploadError: LocalizedError {
 /// 不做 S3 等云厂商签名 —— 那类接口请套一层 Workers / PicGo 兼容网关。
 enum ImageUploader {
 
+    /// 上传请求超时（秒）。
+    private static let uploadTimeout: TimeInterval = 30
+
     /// 上传一张 PNG，返回图床链接。
     static func upload(png: Data, filename: String, config: UploadConfig) async throws -> String {
         let endpoint = config.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -52,7 +55,7 @@ enum ImageUploader {
             throw UploadError.invalidEndpoint(endpoint)
         }
 
-        var request = URLRequest(url: url, timeoutInterval: 30)
+        var request = URLRequest(url: url, timeoutInterval: uploadTimeout)
         request.httpMethod = "POST"
         for (key, value) in parseHeaders(config.headersText) {
             request.setValue(value, forHTTPHeaderField: key)

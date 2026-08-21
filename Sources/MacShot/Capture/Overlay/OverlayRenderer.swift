@@ -216,7 +216,7 @@ enum OverlayRenderer {
     private static func drawHint(in bounds: CGRect) {
         let text = "拖拽选区 · 单击窗口 · ⌥ 单击完整窗口 · ESC 取消"
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 15, weight: .medium),
+            .font: NSFont.systemFont(ofSize: DS.font15, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(0.85)
         ]
         let size = (text as NSString).size(withAttributes: attrs)
@@ -229,7 +229,7 @@ enum OverlayRenderer {
     /// 选区下方的确认提示（plain 模式代替工具条）。放不下就挪到选区上方。
     private static func drawConfirmHint(_ text: String, near local: CGRect, in bounds: CGRect) {
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .font: NSFont.systemFont(ofSize: DS.font12, weight: .medium),
             .foregroundColor: NSColor.white
         ]
         let textSize = (text as NSString).size(withAttributes: attrs)
@@ -268,7 +268,7 @@ enum OverlayRenderer {
         }
 
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: DS.font12, weight: .medium),
             .foregroundColor: NSColor.white
         ]
         let textSize = (text as NSString).size(withAttributes: attrs)
@@ -312,7 +312,7 @@ enum OverlayRenderer {
             NSColor.white.setFill()
             path.fill()
             NSColor.black.withAlphaComponent(0.45).setStroke()
-            path.lineWidth = 1
+            path.lineWidth = DS.hairline
             path.stroke()
         }
     }

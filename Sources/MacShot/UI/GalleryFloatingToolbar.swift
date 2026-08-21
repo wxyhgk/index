@@ -88,7 +88,7 @@ struct GalleryFloatingToolbar: View {
     private var zoomSlider: some View {
         HStack(spacing: DS.s2) {
             Image(systemName: "square.grid.3x3")
-                .font(.system(size: 10))
+                .font(.system(size: DS.font10))
                 .foregroundStyle(.tertiary)
             // maxWidth 而不是 width：窗口窄到中栏只剩几百点时，滑杆先让位，
             // 而不是把分段控件挤出胶囊。
@@ -97,7 +97,7 @@ struct GalleryFloatingToolbar: View {
                 .controlSize(.small)
                 .accessibilityLabel("缩略图大小")
             Image(systemName: "square.grid.2x2")
-                .font(.system(size: 13))
+                .font(.system(size: DS.font13))
                 .foregroundStyle(.tertiary)
         }
         .help("缩略图大小")

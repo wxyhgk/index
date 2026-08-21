@@ -118,6 +118,10 @@ final class AppSettings: ObservableObject {
         static let recordingShortcut = "recordingShortcut"
         static let scrollCaptureShortcut = "scrollCaptureShortcut"
         static let moleculePinShortcut = "moleculePinShortcut"
+        static let clipboardHistoryShortcut = "clipboardHistoryShortcut"
+
+        static let clipboardHistoryEnabled = "clipboardHistoryEnabled"
+        static let clipboardHistoryRetentionDays = "clipboardHistoryRetentionDays"
     }
 
     private let defaults = UserDefaults.standard
@@ -208,9 +212,21 @@ final class AppSettings: ObservableObject {
             store(shortcuts.recordingShortcut, forKey: Keys.recordingShortcut)
             store(shortcuts.scrollCaptureShortcut, forKey: Keys.scrollCaptureShortcut)
             store(shortcuts.moleculePinShortcut, forKey: Keys.moleculePinShortcut)
+            store(shortcuts.clipboardHistoryShortcut, forKey: Keys.clipboardHistoryShortcut)
             onShortcutsChanged?()
         }
     }
+
+    @Published var clipboardHistory: ClipboardHistoryPrefs {
+        didSet {
+            defaults.set(clipboardHistory.enabled, forKey: Keys.clipboardHistoryEnabled)
+            defaults.set(clipboardHistory.retentionDays, forKey: Keys.clipboardHistoryRetentionDays)
+            onClipboardHistoryChanged?()
+        }
+    }
+
+    /// 由 AppDelegate 装上：剪贴板历史开关/保留策略变化时启停监听、清理。
+    var onClipboardHistoryChanged: (() -> Void)?
 
     /// 由 AppDelegate 装上：快捷键一改就重新注册。
     var onShortcutsChanged: (() -> Void)?
@@ -262,7 +278,10 @@ final class AppSettings: ObservableObject {
             Keys.uploadFieldName: UploadPrefs.defaults.uploadFieldName,
             Keys.uploadHeaders: UploadPrefs.defaults.uploadHeaders,
             Keys.uploadResponsePath: UploadPrefs.defaults.uploadResponsePath,
-            Keys.uploadLinkFormat: UploadPrefs.defaults.uploadLinkFormat.rawValue
+            Keys.uploadLinkFormat: UploadPrefs.defaults.uploadLinkFormat.rawValue,
+
+            Keys.clipboardHistoryEnabled: ClipboardHistoryPrefs.defaults.enabled,
+            Keys.clipboardHistoryRetentionDays: ClipboardHistoryPrefs.defaults.retentionDays
         ])
 
         capture = CapturePrefs(
@@ -326,7 +345,12 @@ final class AppSettings: ObservableObject {
             delayedCaptureShortcut: Self.load(Keys.delayedCaptureShortcut, from: defaults) ?? .delayedCaptureDefault,
             recordingShortcut: Self.load(Keys.recordingShortcut, from: defaults) ?? .recordingDefault,
             scrollCaptureShortcut: Self.load(Keys.scrollCaptureShortcut, from: defaults) ?? .scrollCaptureDefault,
-            moleculePinShortcut: Self.load(Keys.moleculePinShortcut, from: defaults) ?? .moleculePinDefault
+            moleculePinShortcut: Self.load(Keys.moleculePinShortcut, from: defaults) ?? .moleculePinDefault,
+            clipboardHistoryShortcut: Self.load(Keys.clipboardHistoryShortcut, from: defaults) ?? .clipboardHistoryDefault
+        )
+        clipboardHistory = ClipboardHistoryPrefs(
+            enabled: defaults.bool(forKey: Keys.clipboardHistoryEnabled),
+            retentionDays: defaults.integer(forKey: Keys.clipboardHistoryRetentionDays)
         )
     }
 
@@ -422,4 +446,8 @@ extension AppSettings: CapturePreferences, RecordingPreferences, ExportPreferenc
     var recordingShortcut: KeyboardShortcut { shortcuts.recordingShortcut }
     var scrollCaptureShortcut: KeyboardShortcut { shortcuts.scrollCaptureShortcut }
     var moleculePinShortcut: KeyboardShortcut { shortcuts.moleculePinShortcut }
+    var clipboardHistoryShortcut: KeyboardShortcut { shortcuts.clipboardHistoryShortcut }
+
+    var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
+    var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }
 }

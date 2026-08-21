@@ -200,7 +200,7 @@ struct GalleryTopBar: View {
             TextField("搜索", text: $viewModel.searchText, prompt: Text(searchPrompt))
                 .textFieldStyle(.plain)
                 .labelsHidden()
-                .font(.system(size: 13))
+                .font(.system(size: DS.font13))
                 .focused($searchFocused)
                 .onSubmit {
                     // 语义搜索是「一次编码 + 全库比对」，只在回车时跑。
@@ -213,7 +213,7 @@ struct GalleryTopBar: View {
                     viewModel.searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: DS.font12))
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
@@ -246,9 +246,9 @@ struct GalleryTopBar: View {
             } label: {
                 HStack(spacing: 1) {
                     Image(systemName: scopeSymbol)
-                        .font(.system(size: 13))
+                        .font(.system(size: DS.font13))
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: DS.font7, weight: .bold))
                 }
                 .foregroundStyle(viewModel.semanticMode ? AnyShapeStyle(DS.accent)
                                                     : AnyShapeStyle(HierarchicalShapeStyle.secondary))
@@ -260,7 +260,7 @@ struct GalleryTopBar: View {
             .help("精确：全文匹配文字与元数据；语义：用自然语言描述画面，按回车搜索")
         } else {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
+                .font(.system(size: DS.font13))
                 .foregroundStyle(.secondary)
         }
     }
@@ -271,7 +271,7 @@ struct GalleryTopBar: View {
 
     private var shortcutBadge: some View {
         Text("⌘K")
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: DS.font11, weight: .medium))
             .foregroundStyle(.tertiary)
             .padding(.horizontal, DS.s1 + 1)
             .padding(.vertical, DS.s1 / 2)
@@ -336,7 +336,7 @@ struct GalleryTopBar: View {
             CaptureCoordinator.shared.begin()
         } label: {
             Label("截图", systemImage: "viewfinder")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DS.font13, weight: .semibold))
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.regular)
@@ -355,7 +355,7 @@ struct GalleryTopBar: View {
                     .controlSize(.small)
             } else {
                 Label("导入", systemImage: "square.and.arrow.down")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: DS.font13, weight: .medium))
             }
         }
         .buttonStyle(.bordered)
@@ -463,9 +463,9 @@ private struct DestinationTab: View {
         Button(action: action) {
             HStack(spacing: DS.s1) {
                 Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: DS.font12, weight: .medium))
                 Text(title)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .font(.system(size: DS.font13, weight: isSelected ? .medium : .regular))
             }
             .foregroundStyle(isSelected ? Color.primary : Color.secondary)
             .padding(.horizontal, DS.s3)

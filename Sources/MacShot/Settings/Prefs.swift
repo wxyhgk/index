@@ -143,7 +143,21 @@ struct UploadPrefs: Equatable {
     )
 }
 
-/// 全局快捷键：六个可重绑的组合键。
+/// 剪贴板历史：开关 + 保留天数。
+struct ClipboardHistoryPrefs: Equatable {
+    var enabled: Bool
+    var retentionDays: Int
+
+    /// 保留天数可选值（UI 用）。
+    static let retentionChoices = [7, 30, 90]
+
+    static let defaults = ClipboardHistoryPrefs(
+        enabled: true,
+        retentionDays: 30
+    )
+}
+
+/// 全局快捷键：七个可重绑的组合键。
 struct ShortcutPrefs: Equatable {
     var captureShortcut: KeyboardShortcut
     var galleryShortcut: KeyboardShortcut
@@ -151,6 +165,7 @@ struct ShortcutPrefs: Equatable {
     var recordingShortcut: KeyboardShortcut
     var scrollCaptureShortcut: KeyboardShortcut
     var moleculePinShortcut: KeyboardShortcut
+    var clipboardHistoryShortcut: KeyboardShortcut
 
     static let defaults = ShortcutPrefs(
         captureShortcut: .captureDefault,
@@ -158,6 +173,7 @@ struct ShortcutPrefs: Equatable {
         delayedCaptureShortcut: .delayedCaptureDefault,
         recordingShortcut: .recordingDefault,
         scrollCaptureShortcut: .scrollCaptureDefault,
-        moleculePinShortcut: .moleculePinDefault
+        moleculePinShortcut: .moleculePinDefault,
+        clipboardHistoryShortcut: .clipboardHistoryDefault
     )
 }

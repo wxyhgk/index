@@ -50,16 +50,16 @@ enum MagnifierRenderer {
 
     private static func drawBackground(_ frame: CGRect) {
         NSColor(calibratedWhite: 0.11, alpha: 0.95).setFill()
-        let path = NSBezierPath(roundedRect: frame, xRadius: 8, yRadius: 8)
+        let path = NSBezierPath(roundedRect: frame, xRadius: DS.radiusMedium, yRadius: DS.radiusMedium)
         path.fill()
         NSColor.white.withAlphaComponent(0.18).setStroke()
-        path.lineWidth = 1
+        path.lineWidth = DS.hairline
         path.stroke()
     }
 
     private static func drawZoom(_ sample: PixelSample, in box: CGRect, ctx: CGContext) {
         ctx.saveGState()
-        NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).addClip()
+        NSBezierPath(roundedRect: box, xRadius: DS.radiusSmall, yRadius: DS.radiusSmall).addClip()
 
         // 关掉插值，才能看到一格一格的像素 —— 这正是放大镜的意义。
         ctx.interpolationQuality = .none
@@ -91,11 +91,11 @@ enum MagnifierRenderer {
         )
         NSColor.black.withAlphaComponent(0.9).setStroke()
         let outer = NSBezierPath(rect: center.insetBy(dx: -1, dy: -1))
-        outer.lineWidth = 1
+        outer.lineWidth = DS.hairline
         outer.stroke()
         NSColor.white.setStroke()
         let inner = NSBezierPath(rect: center)
-        inner.lineWidth = 1
+        inner.lineWidth = DS.hairline
         inner.stroke()
 
         ctx.restoreGState()
@@ -107,11 +107,11 @@ enum MagnifierRenderer {
         NSBezierPath(roundedRect: swatch, xRadius: 3, yRadius: 3).fill()
         NSColor.white.withAlphaComponent(0.3).setStroke()
         let ring = NSBezierPath(roundedRect: swatch, xRadius: 3, yRadius: 3)
-        ring.lineWidth = 1
+        ring.lineWidth = DS.hairline
         ring.stroke()
 
         let hexAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold),
+            .font: NSFont.monospacedSystemFont(ofSize: DS.font11, weight: .semibold),
             .foregroundColor: NSColor.white
         ]
         (sample.color.hexString as NSString).draw(
@@ -120,7 +120,7 @@ enum MagnifierRenderer {
         )
 
         let coordAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: DS.font9, weight: .regular),
             .foregroundColor: NSColor.white.withAlphaComponent(0.55)
         ]
         let coords = "\(Int(sample.pixelPoint.x)), \(Int(sample.pixelPoint.y))"

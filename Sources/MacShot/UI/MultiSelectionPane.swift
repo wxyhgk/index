@@ -35,6 +35,9 @@ struct MultiSelectionPane: View {
     @State private var collectionMembershipCounts: [Int64: Int] = [:]
     @State private var collectionSnapshotGeneration = -1
 
+    /// 导出结果提示的停留时长。
+    private let exportSummaryDelay: Duration = .seconds(4)
+
     private var selectedIDs: [Int64] { selection.orderedSelectedIDs }
     private var selectedCount: Int { selectedIDs.count }
 
@@ -124,6 +127,7 @@ struct MultiSelectionPane: View {
 
             Menu {
                 if collectionSummaries.isEmpty {
+                    // 与 ShotDetailPane / GalleryGrid+Card 同一文案（空专题集引导）。
                     Text("尚无专题集，请先到“收藏”页创建")
                 } else {
                     ForEach(collectionSummaries) { collection in
@@ -201,7 +205,7 @@ struct MultiSelectionPane: View {
                     ? "已导出 \(exported)/\(ids.count) 张"
                     : "已导出 \(exported) 张"
             }
-            try? await Task.sleep(for: .seconds(4))
+            try? await Task.sleep(for: exportSummaryDelay)
             withAnimation(DS.Motion.micro(reduced: reduceMotion)) { exportSummary = nil }
         }
     }

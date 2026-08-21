@@ -53,8 +53,8 @@ enum SystemNavigator {
         return panel.url
     }
 
-    /// 选择一张或多张要导入图库的静态图片。第一版只开放常见格式，避免把视频、
-    /// PDF 或动画图片悄悄压成首帧；用户取消返回 nil。
+    /// 选择一张或多张要导入图库的图片。支持常见位图格式 + WebP + GIF（压首帧）
+    /// + SVG（保留矢量原图）；视频、PDF 仍排除。用户取消返回 nil。
     static func chooseImageFiles(
         message: String = "选择要导入图库的图片",
         prompt: String = "导入"
@@ -63,7 +63,9 @@ enum SystemNavigator {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff]
+        let svgType = UTType("public.svg-image")
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .webP, .gif]
+            + (svgType.map { [$0] } ?? [])
         panel.message = message
         panel.prompt = prompt
 

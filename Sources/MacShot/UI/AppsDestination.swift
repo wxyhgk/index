@@ -193,7 +193,7 @@ private struct AppsContent: View {
                 HStack(spacing: DS.s3) {
                     Button { closeDrill() } label: {
                         Label("应用", systemImage: "chevron.left")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: DS.font13, weight: .medium))
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.escape, modifiers: [])
@@ -409,7 +409,7 @@ private struct AppCardIdentity: View {
             InspectorAppIcon(bundleID: app.bundleID, side: iconSide)
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.name)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: DS.font13, weight: .medium))
                     .lineLimit(1)
                 Text("\(app.captureCount) 张")
                     .font(.caption)

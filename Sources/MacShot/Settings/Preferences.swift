@@ -79,4 +79,10 @@ protocol ShortcutPreferences: AnyObject {
     var recordingShortcut: KeyboardShortcut { get }
     var scrollCaptureShortcut: KeyboardShortcut { get }
     var moleculePinShortcut: KeyboardShortcut { get }
+    var clipboardHistoryShortcut: KeyboardShortcut { get }
+}
+
+protocol ClipboardHistoryPreferences: AnyObject {
+    var clipboardHistoryEnabled: Bool { get }
+    var clipboardHistoryRetentionDays: Int { get }
 }

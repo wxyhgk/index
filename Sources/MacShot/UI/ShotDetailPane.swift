@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// 空态提示：尚无专题集时的引导文案（ShotDetailPane / MultiSelectionPane / GalleryGrid+Card 三处共用）。
+private let emptyCollectionHint = "尚无专题集，请先到“收藏”页创建"
+
 // MARK: - 右侧详情（单选）
 //
 // 设计稿 §6 的那块浮动卡片，自上而下：
@@ -62,6 +65,7 @@ struct ShotDetailPane: View {
     @State private var collectionSummaries: [ShotCollectionSummary] = []
     @State private var collectionIDs: Set<Int64> = []
     @State private var customTitleDraft = ""
+    @State private var isEditingName = false
 
     var body: some View {
         content
@@ -111,7 +115,7 @@ struct ShotDetailPane: View {
 
     private var summary: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DS.s3) {
+            VStack(alignment: .leading, spacing: DS.s2) {
                 preview
                 nameEditor
                 actionRow
@@ -120,31 +124,28 @@ struct ShotDetailPane: View {
                 }
                 metaList
                 TagSection(shot: shot)
-                // 信息密度区的分隔线是功能不是装饰（规格 §4.3）：
-                // 它把「这一张的属性」和「下钻入口」分开。
                 Divider()
                 InspectorDrillRow(title: "查看全部信息") { showingAllInfo = true }
             }
             .padding(.horizontal, DS.s4)
-            // 顶部这条巷子留给外层面板画的 ✕。
             .padding(.top, InspectorMetrics.closeButtonLane)
             .padding(.bottom, DS.s4)
         }
     }
 
     /// 图库名称是独立元数据；这里编辑不会触碰内容寻址原图或来源标题。
+    /// 紧凑化：平时显示名称 + 铅笔图标，点击才变输入框，去掉标签和说明文字。
     private var nameEditor: some View {
-        VStack(alignment: .leading, spacing: DS.s1) {
-            Text("图库名称")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            HStack(spacing: DS.s1) {
+        HStack(spacing: DS.s2) {
+            if isEditingName {
                 TextField(
                     "自动：\(shot.windowTitle ?? shot.appName ?? "未知来源")",
                     text: $customTitleDraft
                 )
                 .textFieldStyle(.roundedBorder)
+                .font(.system(size: DS.font14, weight: .medium))
                 .onSubmit { commitCustomTitle() }
+                .onExitCommand { isEditingName = false }
 
                 Button {
                     commitCustomTitle()
@@ -158,16 +159,37 @@ struct ShotDetailPane: View {
                     Button {
                         customTitleDraft = ""
                         store.setCustomTitle(nil, for: shot)
+                        isEditingName = false
                     } label: {
                         Image(systemName: "arrow.uturn.backward")
                     }
                     .buttonStyle(.borderless)
                     .help("恢复自动名称")
                 }
+            } else {
+                Text(shot.primaryDisplayName)
+                    .font(.system(size: DS.font14, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        customTitleDraft = shot.customTitle ?? ""
+                        isEditingName = true
+                    }
+                    .help("点击编辑图库名称")
+
+                Button {
+                    customTitleDraft = shot.customTitle ?? ""
+                    isEditingName = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: DS.font11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("编辑图库名称")
             }
-            Text("只修改图库显示，真实原图名称保持不变")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
     }
 
@@ -175,6 +197,7 @@ struct ShotDetailPane: View {
         let normalized = Shot.normalizedCustomTitle(customTitleDraft)
         customTitleDraft = normalized ?? ""
         store.setCustomTitle(normalized, for: shot)
+        isEditingName = false
     }
 
     // MARK: - 预览
@@ -285,7 +308,7 @@ struct ShotDetailPane: View {
         InspectorCircleMenu(systemImage: "ellipsis", label: "更多动作") {
             Menu {
                 if collectionSummaries.isEmpty {
-                    Text("尚无专题集，请先到“收藏”页创建")
+                    Text(emptyCollectionHint)
                 } else {
                     ForEach(collectionSummaries) { collection in
                         let isMember = collectionIDs.contains(collection.id)

@@ -79,7 +79,7 @@ private struct EditorLayersPanel: View {
                 VStack(alignment: .leading, spacing: DS.s2) {
                     Text("文字内容").font(.caption).foregroundStyle(.secondary)
                     TextEditor(text: textBinding(for: selectedID))
-                        .font(.system(size: 12))
+                        .font(.system(size: DS.font12))
                         .frame(height: DS.s5 * 2 + DS.s3)
                         .border(DS.borderDefault)
                         .focused(textFieldFocused)

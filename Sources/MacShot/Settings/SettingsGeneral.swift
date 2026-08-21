@@ -5,6 +5,9 @@ import SwiftUI
 struct GeneralSettings: View {
     @ObservedObject var settings: AppSettings
 
+    /// 滑块百分比标签宽度（对齐用）。
+    private let labelWidth: CGFloat = 84
+
     /// 麦克风权限被明确拒绝。开着「录制麦克风」却没权限时给出去系统设置的入口。
     @State private var microphoneDenied = false
 
@@ -117,7 +120,7 @@ struct GeneralSettings: View {
                             Slider(value: $settings.annotationStyle.backdropShadowAlpha, in: 0.05...0.8)
                             Text("\(Int(settings.annotationStyle.backdropShadowAlpha * 100))%")
                                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                                .frame(width: 84, alignment: .trailing)
+                                .frame(width: labelWidth, alignment: .trailing)
                         }
                     }
 
@@ -262,7 +265,7 @@ struct GeneralSettings: View {
                 Slider(value: value, in: range)
                 Text("\(value.wrappedValue * 100, specifier: "%.1f")% · \(Int(value.wrappedValue * 1000))px")
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                    .frame(width: 84, alignment: .trailing)
+                    .frame(width: labelWidth, alignment: .trailing)
             }
         }
     }

@@ -5,7 +5,7 @@ import AppKit
 final class ShelfCardView: NSView, NSDraggingSource {
 
     static let barHeight: CGFloat = 26
-    private static let cornerRadius: CGFloat = 10
+    private static let cornerRadius: CGFloat = DS.radiusCard
     /// 位移超过这个距离才算拖拽，避免手抖把点击吃掉。
     private static let dragThreshold: CGFloat = 4
 
@@ -197,7 +197,7 @@ final class ShelfCardView: NSView, NSDraggingSource {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         let text = NSAttributedString(string: caption, attributes: [
-            .font: NSFont.systemFont(ofSize: 11),
+            .font: NSFont.systemFont(ofSize: DS.font11),
             .foregroundColor: NSColor.secondaryLabelColor,
             .paragraphStyle: paragraph
         ])
@@ -211,7 +211,7 @@ final class ShelfCardView: NSView, NSDraggingSource {
 
         // 和钉图一致的细描边，把卡片从背景里提出来。
         NSColor.white.withAlphaComponent(0.25).setStroke()
-        card.lineWidth = 1
+        card.lineWidth = DS.hairline
         card.stroke()
     }
 }
