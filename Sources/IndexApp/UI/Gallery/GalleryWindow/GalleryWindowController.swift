@@ -18,6 +18,8 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     let keyboard = GalleryKeyboard()
     /// 空格 Quick Look。窗口级控制器，生命周期跟随窗口。
     let quickLook = QuickLookController()
+    /// 跨页批量复制/导出的单飞状态。窗口级会话状态，生命周期跟随窗口。
+    let batchActivity = GalleryBatchActivity()
 
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
@@ -151,7 +153,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         // 不再以 firstResponder/keyWindow 守卫，文本框有选区时 NSTextView 先响应，冒泡到这里时自然是图片路径。
         guard mode.mode == .library else { return }
         guard !selection.selectedIDs.isEmpty else { return }
-        guard !GalleryBatchActivity.shared.isBusy else { return }
+        guard !batchActivity.isBusy else { return }
         if let shots = GalleryBatch.loadedSelectedShots(
             displayedShots: GalleryViewModel.shared.displayShots
         ) {

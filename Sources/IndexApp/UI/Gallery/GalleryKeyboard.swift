@@ -97,7 +97,7 @@ final class GalleryKeyboard {
             // 搜索框、标签输入、重命名弹窗聚焦时首响应者是 NSTextView，
             // 那里直接返回 .none，⌘C 原样交给系统去复制文字，不会被这里劫走。
             guard !GalleryWindowController.shared.selection.selectedIDs.isEmpty else { return false }
-            guard !GalleryBatchActivity.shared.isBusy else { return true }
+            guard !GalleryWindowController.shared.batchActivity.isBusy else { return true }
             if let shots = GalleryBatch.loadedSelectedShots(
                 displayedShots: displayedShots(),
                 reader: store
@@ -138,7 +138,7 @@ final class GalleryKeyboard {
             // 由 GalleryGrid 上唯一的 confirmationDialog 出确认框（和右键同一套）。
             let selection = GalleryWindowController.shared.selection
             guard !selection.selectedIDs.isEmpty else { return false }
-            guard !GalleryBatchActivity.shared.isBusy else { return true }
+            guard !GalleryWindowController.shared.batchActivity.isBusy else { return true }
             selection.pendingDeleteIDs = orderedSelectedIDs()
             return true
 

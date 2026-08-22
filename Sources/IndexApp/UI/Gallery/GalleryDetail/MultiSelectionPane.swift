@@ -21,7 +21,7 @@ struct MultiSelectionPane: View {
     // 订阅 store 是为了收藏态实时刷新（批量收藏后按钮文案要翻转）。
     @ObservedObject private var store: ShotStore
     @ObservedObject private var selection = GalleryWindowController.shared.selection
-    @ObservedObject private var batchActivity = GalleryBatchActivity.shared
+    @ObservedObject private var batchActivity = GalleryWindowController.shared.batchActivity
 
     init(shots: [Shot], store: ShotStore = .shared) {
         self.shots = shots

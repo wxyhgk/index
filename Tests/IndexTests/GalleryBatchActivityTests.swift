@@ -74,7 +74,7 @@ final class GalleryBatchActivityTests: XCTestCase {
     }
 
     func testAsyncCopyDeduplicatesIDsAndReleasesGlobalGate() async throws {
-        let activity = GalleryBatchActivity.shared
+        let activity = GalleryBatchActivity()
         if let token = activity.state?.token { activity.finish(token: token) }
         defer {
             if let token = activity.state?.token { activity.finish(token: token) }

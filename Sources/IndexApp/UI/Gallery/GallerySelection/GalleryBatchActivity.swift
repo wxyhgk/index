@@ -8,7 +8,6 @@ import Foundation
 /// 误伤下一次操作。
 @MainActor
 final class GalleryBatchActivity: ObservableObject {
-    static let shared = GalleryBatchActivity()
 
     enum Kind: Equatable {
         case copy

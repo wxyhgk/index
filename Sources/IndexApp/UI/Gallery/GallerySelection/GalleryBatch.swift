@@ -121,7 +121,7 @@ enum GalleryBatch {
         clipboard: ClipboardWriting
     ) async -> Int {
         let orderedIDs = unique(ids)
-        let activity = GalleryBatchActivity.shared
+        let activity = GalleryWindowController.shared.batchActivity
         guard let token = activity.begin(kind: .copy, total: orderedIDs.count) else { return 0 }
         defer { activity.finish(token: token) }
 
@@ -179,7 +179,7 @@ enum GalleryBatch {
     }
 
     static func exportAll(ids: [Int64], reader: ShotReading) async -> Int {
-        guard !GalleryBatchActivity.shared.isBusy else { return 0 }
+        guard !GalleryWindowController.shared.batchActivity.isBusy else { return 0 }
         guard let directory = SystemNavigator.chooseDirectory(
             message: "选择 \(ids.count) 张截图的导出目录",
             prompt: "导出到此处",
@@ -192,7 +192,7 @@ enum GalleryBatch {
 
     static func exportAll(ids: [Int64], reader: ShotReading, directory: URL) async -> Int {
         let orderedIDs = unique(ids)
-        let activity = GalleryBatchActivity.shared
+        let activity = GalleryWindowController.shared.batchActivity
         guard let token = activity.begin(kind: .export, total: orderedIDs.count) else { return 0 }
         defer { activity.finish(token: token) }
 

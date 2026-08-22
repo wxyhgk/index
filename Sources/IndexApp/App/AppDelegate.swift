@@ -608,7 +608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard GalleryWindowController.shared.mode.mode == .library else { return }
         guard !GalleryWindowController.shared.selection.selectedIDs.isEmpty else { return }
-        guard !GalleryBatchActivity.shared.isBusy else { return }
+        guard !GalleryWindowController.shared.batchActivity.isBusy else { return }
         let displayed = GalleryViewModel.displayShots(for: shotStore)
         if let shots = GalleryBatch.loadedSelectedShots(
             displayedShots: displayed,
