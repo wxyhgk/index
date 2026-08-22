@@ -607,7 +607,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return // 交由 NSTextView 自身的 copy: 处理
         }
         guard GalleryWindowController.shared.mode.mode == .library else { return }
-        guard !GallerySelection.shared.selectedIDs.isEmpty else { return }
+        guard !GalleryWindowController.shared.selection.selectedIDs.isEmpty else { return }
         guard !GalleryBatchActivity.shared.isBusy else { return }
         let displayed = GalleryViewModel.displayShots(for: shotStore)
         if let shots = GalleryBatch.loadedSelectedShots(
@@ -628,7 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard GalleryWindowController.shared.mode.mode == .library else { return }
         Task { [shotStore] in
             let ids = await GalleryViewModel.allMatchingIDs(for: shotStore)
-            GallerySelection.shared.selectAll(ids)
+            GalleryWindowController.shared.selection.selectAll(ids)
         }
     }
 
@@ -638,7 +638,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.selectedRange().length > 0 {
                 return true
             }
-            return GalleryWindowController.shared.mode.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+            return GalleryWindowController.shared.mode.mode == .library && !GalleryWindowController.shared.selection.selectedIDs.isEmpty
         case #selector(NSResponder.selectAll(_:)):
             if NSApp.keyWindow?.firstResponder is NSTextView { return true }
             return GalleryWindowController.shared.mode.mode == .library
@@ -654,7 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.selectedRange().length > 0 {
                     return true
                 }
-                return GalleryWindowController.shared.mode.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+                return GalleryWindowController.shared.mode.mode == .library && !GalleryWindowController.shared.selection.selectedIDs.isEmpty
             case #selector(NSResponder.selectAll(_:)):
                 if NSApp.keyWindow?.firstResponder is NSTextView { return true }
                 return GalleryWindowController.shared.mode.mode == .library

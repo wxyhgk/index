@@ -71,7 +71,7 @@ final class QuickLookController: NSObject {
             }
         }
         // 网格里点选 / 键盘导航 → 面板跟着换页。多选时面板预览主选中那张。
-        selectionCancellable = GallerySelection.shared.primaryIDPublisher
+        selectionCancellable = GalleryWindowController.shared.selection.primaryIDPublisher
             .removeDuplicates()
             .sink { [weak self] _ in self?.syncPanelIndex() }
         // 搜索会话变化与库存快照是两条定向信号；不再依赖 ViewModel 转发所有 Store 写入。
@@ -95,7 +95,7 @@ final class QuickLookController: NSObject {
     // MARK: - 双向同步
 
     private func selectedIndex() -> Int? {
-        shots.firstIndex { $0.id == GallerySelection.shared.primaryID }
+        shots.firstIndex { $0.id == GalleryWindowController.shared.selection.primaryID }
     }
 
     /// 面板换页 → 网格选中跟随（滚动定位由网格监听 primaryID 完成）。
@@ -104,7 +104,7 @@ final class QuickLookController: NSObject {
         guard !isSyncing, shots.indices.contains(index) else { return }
         isSyncing = true
         defer { isSyncing = false }
-        GallerySelection.shared.select(only: shots[index].id)
+        GalleryWindowController.shared.selection.select(only: shots[index].id)
     }
 
     /// 网格选中变化 → 面板换页。

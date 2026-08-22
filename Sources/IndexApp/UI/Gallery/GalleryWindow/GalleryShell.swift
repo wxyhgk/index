@@ -209,7 +209,7 @@ struct GalleryInspectorPanel: View {
 
     @ObservedObject private var store: ShotStore
     @ObservedObject private var viewModel: GalleryViewModel
-    @ObservedObject private var selection = GallerySelection.shared
+    @ObservedObject private var selection = GalleryWindowController.shared.selection
 
     init(
         isPresented: Binding<Bool>,

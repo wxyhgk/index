@@ -25,7 +25,7 @@ enum GalleryBatch {
     }
 
     static func loadedSelectedShots(displayedShots: [Shot]?, reader: ShotReading) -> [Shot]? {
-        let ids = GallerySelection.shared.orderedSelectedIDs
+        let ids = GalleryWindowController.shared.selection.orderedSelectedIDs
         guard !ids.isEmpty else { return nil }
         var byID: [Int64: Shot] = [:]
         for shot in (displayedShots ?? []) + reader.shots {
@@ -85,7 +85,7 @@ enum GalleryBatch {
     @discardableResult
     static func copySelectedImages() async -> Int {
         await copyImages(
-            ids: GallerySelection.shared.orderedSelectedIDs,
+            ids: GalleryWindowController.shared.selection.orderedSelectedIDs,
             reader: ShotStore.shared,
             clipboard: MacClipboard.shared
         )
@@ -94,7 +94,7 @@ enum GalleryBatch {
     @discardableResult
     static func copySelectedImages(reader: ShotReading) async -> Int {
         await copyImages(
-            ids: GallerySelection.shared.orderedSelectedIDs,
+            ids: GalleryWindowController.shared.selection.orderedSelectedIDs,
             reader: reader,
             clipboard: MacClipboard.shared
         )
@@ -103,7 +103,7 @@ enum GalleryBatch {
     @discardableResult
     static func copySelectedImages(reader: ShotReading, clipboard: ClipboardWriting) async -> Int {
         await copyImages(
-            ids: GallerySelection.shared.orderedSelectedIDs,
+            ids: GalleryWindowController.shared.selection.orderedSelectedIDs,
             reader: reader,
             clipboard: clipboard
         )

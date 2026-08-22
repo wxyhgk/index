@@ -12,6 +12,8 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
 
     /// 窗口模式（图库 / 编辑器 / 设置）。窗口级会话状态，生命周期跟随窗口。
     let mode = GalleryWindowMode()
+    /// 选中状态。窗口级会话状态，生命周期跟随窗口。
+    let selection = GallerySelection()
 
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
@@ -144,7 +146,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         // 仅在图库模式且有选中时复制成品（与右键/⌘C monitor 同一渲染口径）。
         // 不再以 firstResponder/keyWindow 守卫，文本框有选区时 NSTextView 先响应，冒泡到这里时自然是图片路径。
         guard mode.mode == .library else { return }
-        guard !GallerySelection.shared.selectedIDs.isEmpty else { return }
+        guard !selection.selectedIDs.isEmpty else { return }
         guard !GalleryBatchActivity.shared.isBusy else { return }
         if let shots = GalleryBatch.loadedSelectedShots(
             displayedShots: GalleryViewModel.shared.displayShots
@@ -159,14 +161,14 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         guard mode.mode == .library else { return }
         Task {
             let ids = await GalleryViewModel.shared.allMatchingIDs()
-            GallerySelection.shared.selectAll(ids)
+            selection.selectAll(ids)
         }
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(NSText.copy(_:)):
-            return mode.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+            return mode.mode == .library && !selection.selectedIDs.isEmpty
         case #selector(selectAll(_:)):
             return mode.mode == .library
         default:
@@ -178,7 +180,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         if let menuItem = item as? NSMenuItem {
             switch menuItem.action {
             case #selector(NSText.copy(_:)):
-                return mode.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+                return mode.mode == .library && !selection.selectedIDs.isEmpty
             case #selector(selectAll(_:)):
                 return mode.mode == .library
             default: break
@@ -195,7 +197,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         ThumbnailLoader.shared.resume()
         if let shot {
             // 定位类场景：清空多选后单选目标。
-            GallerySelection.shared.select(only: shot.id)
+            selection.select(only: shot.id)
         }
         WindowRegistry.shared.present(self, dockIcon: true)
         // 窗口先响应用户，再在 DatabasePool 的读连接上建立当前查询观察。

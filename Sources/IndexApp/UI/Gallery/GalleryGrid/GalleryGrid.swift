@@ -29,7 +29,7 @@ struct GalleryGrid: View {
     let viewModel: GalleryViewModel
     @StateObject var presentation: GalleryGridPresentation
     @ObservedObject private var imageImporter: ImageImportCoordinator
-    @ObservedObject var selection = GallerySelection.shared
+    @ObservedObject var selection = GalleryWindowController.shared.selection
     @ObservedObject var batchActivity = GalleryBatchActivity.shared
     private let scope: GalleryContentScope
     private let chrome: GalleryGridChrome

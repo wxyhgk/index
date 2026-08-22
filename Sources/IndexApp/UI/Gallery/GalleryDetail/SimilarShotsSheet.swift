@@ -93,7 +93,7 @@ struct SimilarShotsSheet: View {
                             SimilarShotCard(shot: result, store: store)
                                 .onTapGesture {
                                     // 定位类场景：清空多选后单选目标。
-                                    GallerySelection.shared.select(only: result.id)
+                                    GalleryWindowController.shared.selection.select(only: result.id)
                                     dismiss()
                                 }
                         }

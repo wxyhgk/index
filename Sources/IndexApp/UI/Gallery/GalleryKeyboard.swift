@@ -76,7 +76,7 @@ final class GalleryKeyboard {
 
         case KeyCode.f2 where flags.isEmpty:
             guard let id = selectedShot()?.id else { return false }
-            GallerySelection.shared.pendingRenameID = id
+            GalleryWindowController.shared.selection.pendingRenameID = id
             return true
 
         case KeyCode.a where isCommandOnly(flags):
@@ -88,7 +88,7 @@ final class GalleryKeyboard {
             let matchingIDs = self.matchingIDs
             Task {
                 let ids = await matchingIDs()
-                GallerySelection.shared.selectAll(ids)
+                GalleryWindowController.shared.selection.selectAll(ids)
             }
             return true
 
@@ -98,7 +98,7 @@ final class GalleryKeyboard {
             // 让位判定已经在入口那道 `GalleryKeyContext` 里做过了 ——
             // 搜索框、标签输入、重命名弹窗聚焦时首响应者是 NSTextView，
             // 那里直接返回 .none，⌘C 原样交给系统去复制文字，不会被这里劫走。
-            guard !GallerySelection.shared.selectedIDs.isEmpty else { return false }
+            guard !GalleryWindowController.shared.selection.selectedIDs.isEmpty else { return false }
             guard !GalleryBatchActivity.shared.isBusy else { return true }
             if let shots = GalleryBatch.loadedSelectedShots(
                 displayedShots: displayedShots(),
@@ -130,7 +130,7 @@ final class GalleryKeyboard {
 
         case KeyCode.escape where flags.isEmpty:
             // Esc：多选收拢回主选中单张；没在多选就不拦，留给系统。
-            let selection = GallerySelection.shared
+            let selection = GalleryWindowController.shared.selection
             guard selection.isMultiple else { return false }
             selection.collapseToPrimary()
             return true
@@ -138,7 +138,7 @@ final class GalleryKeyboard {
         case KeyCode.delete where isCommandOnly(flags):
             // ⌘⌫ 删除所有选中。不直接弹 NSAlert —— 写 pendingDeleteIDs，
             // 由 GalleryGrid 上唯一的 confirmationDialog 出确认框（和右键同一套）。
-            let selection = GallerySelection.shared
+            let selection = GalleryWindowController.shared.selection
             guard !selection.selectedIDs.isEmpty else { return false }
             guard !GalleryBatchActivity.shared.isBusy else { return true }
             selection.pendingDeleteIDs = orderedSelectedIDs()
@@ -175,7 +175,7 @@ final class GalleryKeyboard {
     func moveSelection(by delta: Int) {
         let shots = displayedShots()
         guard !shots.isEmpty else { return }
-        let selection = GallerySelection.shared
+        let selection = GalleryWindowController.shared.selection
         guard let current = shots.firstIndex(where: { $0.id == selection.primaryID }) else {
             // 还没有选中：任何方向键都从第一张开始。
             selection.select(only: shots.first?.id)
@@ -190,7 +190,7 @@ final class GalleryKeyboard {
     func extendSelection(by delta: Int) {
         let shots = displayedShots()
         guard !shots.isEmpty else { return }
-        let selection = GallerySelection.shared
+        let selection = GalleryWindowController.shared.selection
         guard let current = shots.firstIndex(where: { $0.id == selection.primaryID }) else {
             selection.select(only: shots.first?.id)
             return
@@ -207,8 +207,8 @@ final class GalleryKeyboard {
     }
 
     private func selectedShot() -> Shot? {
-        return displayedShots().first { $0.id == GallerySelection.shared.primaryID }
-            ?? store.shots.first { $0.id == GallerySelection.shared.primaryID }
+        return displayedShots().first { $0.id == GalleryWindowController.shared.selection.primaryID }
+            ?? store.shots.first { $0.id == GalleryWindowController.shared.selection.primaryID }
     }
 
     private func recordingAsset(for shot: Shot) -> RecordingAsset {
@@ -217,7 +217,7 @@ final class GalleryKeyboard {
 
     /// 选中集合按展示顺序排好（删除确认框逐条列数、顺移选中都依赖顺序）。
     private func orderedSelectedIDs() -> [Int64] {
-        GallerySelection.shared.orderedSelectedIDs
+        GalleryWindowController.shared.selection.orderedSelectedIDs
     }
 
     /// 仅含 ⌘ 的判定（忽略 CapsLock/Function 等与意图无关的位）。

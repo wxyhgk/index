@@ -8,7 +8,6 @@ import Foundation
 
 @MainActor
 final class GallerySelection: ObservableObject {
-    static let shared = GallerySelection()
 
     private struct SelectionState: Equatable {
         var selectedIDs: Set<Int64> = []
