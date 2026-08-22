@@ -32,6 +32,9 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         let hosting = NSHostingController(
             rootView: GalleryView(styleStore: AppSettings.shared)
                 .environmentObject(mode)
+                .environmentObject(selection)
+                .environmentObject(batchActivity)
+                .environment(\.galleryKeyboard, keyboard)
         )
 
         let window = NSWindow(contentViewController: hosting)

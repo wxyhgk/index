@@ -29,8 +29,9 @@ struct GalleryGrid: View {
     let viewModel: GalleryViewModel
     @StateObject var presentation: GalleryGridPresentation
     @ObservedObject private var imageImporter: ImageImportCoordinator
-    @ObservedObject var selection = GalleryWindowController.shared.selection
-    @ObservedObject var batchActivity = GalleryWindowController.shared.batchActivity
+    @EnvironmentObject var selection: GallerySelection
+    @EnvironmentObject var batchActivity: GalleryBatchActivity
+    @Environment(\.galleryKeyboard) private var keyboard
     private let scope: GalleryContentScope
     private let chrome: GalleryGridChrome
 
@@ -273,7 +274,7 @@ struct GalleryGrid: View {
         // 列数是键盘导航（上下键 = ±列数）唯一需要知道的东西，网格算好直接喂。
         // 空列表时网格不渲染，这里也照样上报（值无害，且列表回来时不用等首帧）。
         .onChange(of: keyboardColumnCount, initial: true) { _, count in
-            GalleryWindowController.shared.keyboard.gridColumnCount = count
+            keyboard?.gridColumnCount = count
         }
         .task(id: GalleryGridSnapshotKey(
             sessionGeneration: sessionLifecycle.generation,

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// 图库键盘导航：方向键走格、⇧方向键扩选、⌘A 全选、Esc 收拢多选、
 /// 回车编辑（录屏则播放）、F2 重命名、空格 Quick Look、⌘⌫ 删除选中。
@@ -222,5 +223,18 @@ final class GalleryKeyboard {
     /// 用交集精确匹配替代 `== .command`，大小写锁定打开时仍命中。
     nonisolated func isCommandOnly(_ flags: NSEvent.ModifierFlags) -> Bool {
         flags.intersection([.command, .shift, .control, .option]) == .command
+    }
+}
+
+// MARK: - Environment 注入
+
+private struct GalleryKeyboardKey: EnvironmentKey {
+    static let defaultValue: GalleryKeyboard? = nil
+}
+
+extension EnvironmentValues {
+    var galleryKeyboard: GalleryKeyboard? {
+        get { self[GalleryKeyboardKey.self] }
+        set { self[GalleryKeyboardKey.self] = newValue }
     }
 }
