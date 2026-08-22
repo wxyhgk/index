@@ -25,8 +25,8 @@ import AppKit
 
 struct GalleryView: View {
 
-    /// 窗口模式（图库 / 编辑器），整窗切换的依据。
-    @ObservedObject private var mode = GalleryWindowMode.shared
+    /// 窗口模式（图库 / 编辑器），整窗切换的依据。由 controller 注入。
+    @EnvironmentObject var mode: GalleryWindowMode
 
     /// 存储订阅：编辑中的 shot 被删时退回图库。注入式，默认走 ShotStore.shared。
     @ObservedObject private var store: ShotStore

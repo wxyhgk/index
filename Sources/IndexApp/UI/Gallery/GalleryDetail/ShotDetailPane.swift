@@ -234,7 +234,7 @@ struct ShotDetailPane: View {
     private var actionRow: some View {
         HStack(spacing: DS.s2) {
             Button {
-                GalleryWindowMode.shared.openEditor(shotID: shot.id)
+                GalleryWindowController.shared.mode.openEditor(shotID: shot.id)
             } label: {
                 Label("编辑", systemImage: "pencil")
             }

@@ -10,6 +10,9 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
 
     var hostWindow: NSWindow? { window }
 
+    /// 窗口模式（图库 / 编辑器 / 设置）。窗口级会话状态，生命周期跟随窗口。
+    let mode = GalleryWindowMode()
+
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
     private var closeObserver: NSObjectProtocol?
@@ -20,6 +23,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         // 顶栏（logo / 搜索 / 控件组）整条由 SwiftUI 自绘，见 GalleryTopBar。
         let hosting = NSHostingController(
             rootView: GalleryView(styleStore: AppSettings.shared)
+                .environmentObject(mode)
         )
 
         let window = NSWindow(contentViewController: hosting)
@@ -72,7 +76,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         // 编辑器有自己的空格语义，面板留着只会盖住画布。
         // 模式模型只存 ID，来源摘要按 ID 现查（$mode 发布的是新值，
         // 此刻属性本身还没写入，不能经由 resolveEditingShot 取）。
-        editingCancellable = GalleryWindowMode.shared.$mode
+        editingCancellable = mode.$mode
             .sink { [weak self] mode in
                 switch mode {
                 case .library:
@@ -98,8 +102,8 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
                     exitView: {
                         // 编辑器的正常退出路径会在 onDisappear 立即 flushSave。
                         // 不先切回图库就 suspend 缩略图，会把资源回收抢在落库前面。
-                        if GalleryWindowMode.shared.isEditing {
-                            GalleryWindowMode.shared.returnToGallery()
+                        if controller.mode.isEditing {
+                            controller.mode.returnToGallery()
                         }
                     },
                     releaseThumbnails: {
@@ -139,7 +143,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     @objc func copy(_ sender: Any?) {
         // 仅在图库模式且有选中时复制成品（与右键/⌘C monitor 同一渲染口径）。
         // 不再以 firstResponder/keyWindow 守卫，文本框有选区时 NSTextView 先响应，冒泡到这里时自然是图片路径。
-        guard GalleryWindowMode.shared.mode == .library else { return }
+        guard mode.mode == .library else { return }
         guard !GallerySelection.shared.selectedIDs.isEmpty else { return }
         guard !GalleryBatchActivity.shared.isBusy else { return }
         if let shots = GalleryBatch.loadedSelectedShots(
@@ -152,7 +156,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     }
 
     @objc override func selectAll(_ sender: Any?) {
-        guard GalleryWindowMode.shared.mode == .library else { return }
+        guard mode.mode == .library else { return }
         Task {
             let ids = await GalleryViewModel.shared.allMatchingIDs()
             GallerySelection.shared.selectAll(ids)
@@ -162,9 +166,9 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(NSText.copy(_:)):
-            return GalleryWindowMode.shared.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+            return mode.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
         case #selector(selectAll(_:)):
-            return GalleryWindowMode.shared.mode == .library
+            return mode.mode == .library
         default:
             return true
         }
@@ -174,9 +178,9 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         if let menuItem = item as? NSMenuItem {
             switch menuItem.action {
             case #selector(NSText.copy(_:)):
-                return GalleryWindowMode.shared.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+                return mode.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
             case #selector(selectAll(_:)):
-                return GalleryWindowMode.shared.mode == .library
+                return mode.mode == .library
             default: break
             }
         }
@@ -205,11 +209,11 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     /// 弹出图库窗口并直接进入编辑器模式。
     func showEditor(for shot: Shot) {
         show(selecting: shot)
-        GalleryWindowMode.shared.openEditor(shotID: shot.id)
+        mode.openEditor(shotID: shot.id)
     }
 
     /// 进入编辑器（按 ID）。窗口未打开时仅切换模式。
     func openEditor(shotID: Int64?) {
-        GalleryWindowMode.shared.openEditor(shotID: shotID)
+        mode.openEditor(shotID: shotID)
     }
 }

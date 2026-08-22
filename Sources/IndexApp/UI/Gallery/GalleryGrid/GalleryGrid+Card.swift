@@ -197,7 +197,7 @@ extension GalleryGrid {
         if let id = shot.id {
             collectionMenu(for: [id])
         }
-        Button("编辑标注") { GalleryWindowMode.shared.openEditor(shotID: shot.id) }
+        Button("编辑标注") { GalleryWindowController.shared.mode.openEditor(shotID: shot.id) }
         Button("钉在桌面") { pin(shot) }
         Button("复制图片") { copy(shot) }
             .disabled(batchActivity.isBusy)

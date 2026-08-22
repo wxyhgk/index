@@ -62,7 +62,7 @@ struct EditorModeView: View {
     private func switchEditor(to target: Shot) {
         guard target.id != shot.id else { return }
         sessionRelay.flush(shotID: shot.id)
-        GalleryWindowMode.shared.openEditor(shotID: target.id)
+        GalleryWindowController.shared.mode.openEditor(shotID: target.id)
     }
 }
 

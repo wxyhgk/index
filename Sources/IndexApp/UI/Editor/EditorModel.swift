@@ -220,6 +220,6 @@ final class EditorModel: ObservableObject {
 
     func requestReturnToGallery() {
         flushSave()
-        GalleryWindowMode.shared.returnToGallery()
+        GalleryWindowController.shared.mode.returnToGallery()
     }
 }

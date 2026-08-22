@@ -10,8 +10,6 @@ import Combine
 @MainActor
 final class GalleryWindowMode: ObservableObject {
 
-    static let shared = GalleryWindowMode()
-
     /// 窗口整体处于哪个视图。三者互斥，整窗切换（不是 sheet）。
     /// 设置也在这里 —— 它此前是一个独立窗口，与「单窗口多模式」的设计不一致，
     /// 用起来也割裂（改个默认颜色要跳出去再跳回来）。
@@ -24,7 +22,7 @@ final class GalleryWindowMode: ObservableObject {
 
     @Published private(set) var mode: Mode = .library
 
-    private init() {}
+    init() {}
 
     var isEditing: Bool { editingShotID != nil }
     var isSettings: Bool { mode == .settings }
@@ -89,7 +87,7 @@ enum GalleryKeyContext {
               !(window.firstResponder is NSTextView)
         else { return .none }
 
-        switch GalleryWindowMode.shared.mode {
+        switch GalleryWindowController.shared.mode.mode {
         case .library:  return .library
         case .editing:  return .editor
         // 设置页里全是输入控件，空格/方向键/回车都该留给它们 ——

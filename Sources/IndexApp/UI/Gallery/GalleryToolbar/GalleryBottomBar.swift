@@ -223,6 +223,6 @@ struct GalleryBottomBar: View {
     }
 
     private func openSettings() {
-        GalleryWindowMode.shared.openSettings()
+        GalleryWindowController.shared.mode.openSettings()
     }
 }

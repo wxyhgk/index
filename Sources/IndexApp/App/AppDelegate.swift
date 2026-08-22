@@ -558,7 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 与「单窗口多模式」的整体设计一致，也省掉一个要管生命周期的窗口。
     @objc private func openSettings() {
         GalleryWindowController.shared.show()
-        GalleryWindowMode.shared.openSettings()
+        GalleryWindowController.shared.mode.openSettings()
     }
 
     // MARK: - 主菜单（Edit → Copy / Select All 走 responder chain）
@@ -606,7 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            textView.selectedRange().length > 0 {
             return // 交由 NSTextView 自身的 copy: 处理
         }
-        guard GalleryWindowMode.shared.mode == .library else { return }
+        guard GalleryWindowController.shared.mode.mode == .library else { return }
         guard !GallerySelection.shared.selectedIDs.isEmpty else { return }
         guard !GalleryBatchActivity.shared.isBusy else { return }
         let displayed = GalleryViewModel.displayShots(for: shotStore)
@@ -625,7 +625,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func selectAll(_ sender: Any?) {
         // 文本框内有焦点时让其自行全选
         if NSApp.keyWindow?.firstResponder is NSTextView { return }
-        guard GalleryWindowMode.shared.mode == .library else { return }
+        guard GalleryWindowController.shared.mode.mode == .library else { return }
         Task { [shotStore] in
             let ids = await GalleryViewModel.allMatchingIDs(for: shotStore)
             GallerySelection.shared.selectAll(ids)
@@ -638,10 +638,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.selectedRange().length > 0 {
                 return true
             }
-            return GalleryWindowMode.shared.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+            return GalleryWindowController.shared.mode.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
         case #selector(NSResponder.selectAll(_:)):
             if NSApp.keyWindow?.firstResponder is NSTextView { return true }
-            return GalleryWindowMode.shared.mode == .library
+            return GalleryWindowController.shared.mode.mode == .library
         default:
             return true
         }
@@ -654,10 +654,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.selectedRange().length > 0 {
                     return true
                 }
-                return GalleryWindowMode.shared.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
+                return GalleryWindowController.shared.mode.mode == .library && !GallerySelection.shared.selectedIDs.isEmpty
             case #selector(NSResponder.selectAll(_:)):
                 if NSApp.keyWindow?.firstResponder is NSTextView { return true }
-                return GalleryWindowMode.shared.mode == .library
+                return GalleryWindowController.shared.mode.mode == .library
             default: break
             }
         }
