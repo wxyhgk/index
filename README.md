@@ -38,6 +38,7 @@
   </tr>
   <tr>
     <td width="50%"><img src="docs/images/index-apps.png" alt="Index 应用"><br><b>应用</b> — 按来源 App 浏览截图。</td>
+    <td width="50%"><img src="docs/images/index-ai.png" alt="Index AI 对话"><br><b>AI 对话</b> — 自然语言搜索截图、打开图片、管理插件，历史持久化。</td>
   </tr>
 </table>
 
