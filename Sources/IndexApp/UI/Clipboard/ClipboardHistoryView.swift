@@ -155,8 +155,11 @@ private struct ClipboardHistoryScrollBridge: NSViewRepresentable {
 
         private func handle(_ event: NSEvent) -> NSEvent? {
             guard let view, let window = view.window, event.window === window else { return event }
-            let point = view.convert(event.locationInWindow, from: nil)
-            guard view.bounds.contains(point) else { return event }
+            // bridge 是 ScrollView 的 .background()（兄弟视图），自身 bounds 不可靠，
+            // 改为检查鼠标是否在窗口内容区域内。
+            guard let content = window.contentView,
+                  content.bounds.contains(content.convert(event.locationInWindow, from: nil))
+            else { return event }
 
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard modifiers.isEmpty else { return event }
@@ -166,7 +169,7 @@ private struct ClipboardHistoryScrollBridge: NSViewRepresentable {
             // 横向为主（trackpad 横滑）或纵向为主（鼠标滚轮 / trackpad 纵滑）都转横向
             guard (abs(deltaX) > abs(deltaY) && deltaX != 0)
                 || (abs(deltaY) > abs(deltaX) && deltaY != 0),
-                let scrollView = enclosingHorizontalScrollView(from: view),
+                let scrollView = findHorizontalScrollView(in: window.contentView),
                 let documentView = scrollView.documentView
             else { return event }
 
@@ -182,26 +185,15 @@ private struct ClipboardHistoryScrollBridge: NSViewRepresentable {
             return nil
         }
 
-        private func enclosingHorizontalScrollView(from view: NSView) -> NSScrollView? {
-            if let scrollView = view.enclosingScrollView,
-               hasHorizontalOverflow(scrollView) {
-                return scrollView
-            }
-            var ancestor = view.superview
-            while let candidate = ancestor {
-                if let scrollView = firstHorizontalScrollView(in: candidate) { return scrollView }
-                ancestor = candidate.superview
-            }
-            return nil
-        }
-
-        private func firstHorizontalScrollView(in root: NSView) -> NSScrollView? {
+        /// 从窗口 contentView 递归找第一个有横向 overflow 的 NSScrollView。
+        private func findHorizontalScrollView(in root: NSView?) -> NSScrollView? {
+            guard let root else { return nil }
             for child in root.subviews {
                 if let scrollView = child as? NSScrollView,
                    hasHorizontalOverflow(scrollView) {
                     return scrollView
                 }
-                if let nested = firstHorizontalScrollView(in: child) { return nested }
+                if let nested = findHorizontalScrollView(in: child) { return nested }
             }
             return nil
         }

@@ -19,13 +19,8 @@ final class GalleryKeyboard {
 
     init(store: ShotReading = ShotStore.shared) {
         self.store = store
-        if let concrete = store as? ShotStore, concrete === ShotStore.shared {
-            displayedShots = { GalleryViewModel.shared.displayShots }
-            matchingIDs = { await GalleryViewModel.shared.allMatchingIDs() }
-        } else {
-            displayedShots = { store.shots }
-            matchingIDs = { await store.allMatchingIDs(query: "", filter: .all) }
-        }
+        displayedShots = { GalleryViewModel.displayShots(for: store) ?? store.shots }
+        matchingIDs = { await GalleryViewModel.allMatchingIDs(for: store) }
     }
 
     /// 网格**实际使用**的列数，由 GalleryGrid 算好上报（`columnCount()` 的唯一来源）。

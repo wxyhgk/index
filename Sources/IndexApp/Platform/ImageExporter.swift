@@ -11,6 +11,10 @@ enum ImageExporter {
         var errorDescription: String? { "无法编码为 PNG" }
     }
 
+    /// 文件名模板提供者。装配层（AppDelegate）启动时注入，
+    /// Platform 层不直接引用 AppSettings。
+    static var nameTemplateProvider: () -> String = { "{dateCompact}-{timeCompact}" }
+
     /// 弹面板让用户选位置。用户取消不算错误，返回 false。
     ///
     /// 两种呈现，取决于**当下有没有一个能挂的窗口**（与 `AppAlert` 同一形状）：
@@ -86,7 +90,7 @@ enum ImageExporter {
     /// 按用户模板渲染的建议文件名（含 .png 后缀）。
     /// 存盘面板、图库导出、自动副本全走这一个入口 —— 改模板处处生效。
     static func suggestedName(for shot: Shot?) -> String {
-        suggestedName(for: shot, template: AppSettings.shared.exportNameTemplate)
+        suggestedName(for: shot, template: nameTemplateProvider())
     }
 
     /// 可注入版本：便于单测与预览无需触碰 UserDefaults。

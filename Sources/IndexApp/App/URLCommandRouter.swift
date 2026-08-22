@@ -39,23 +39,22 @@ final class URLCommandRouter {
     ) {
         let resolvedStore = shotStore ?? ShotStore.shared
         self.shotStore = resolvedStore
-        if let galleryViewModel {
-            self.galleryViewModel = galleryViewModel
-        } else if let concrete = resolvedStore as? ShotStore, concrete === ShotStore.shared {
-            self.galleryViewModel = .shared
-        } else {
-            self.galleryViewModel = nil
-        }
-        self.captureCoordinator = captureCoordinator ?? CaptureCoordinator.shared
-        if let imageImporter {
-            self.imageImporter = imageImporter
-        } else if let concrete = resolvedStore as? ShotStore {
-            self.imageImporter = concrete === ShotStore.shared ? .shared : ImageImportCoordinator(store: concrete)
-        } else {
-            self.imageImporter = .shared
-        }
+        self.galleryViewModel = galleryViewModel ?? Self.resolveViewModel(for: resolvedStore)
+        self.captureCoordinator = captureCoordinator ?? .shared
+        self.imageImporter = imageImporter ?? Self.resolveImporter(for: resolvedStore)
         self.browserInboxRoot = browserInboxRoot
         self.showGallery = showGallery
+    }
+
+    /// shared store 返回共享 ViewModel，非 shared（Fake 等）返回 nil。
+    private static func resolveViewModel(for store: any ShotReading) -> GalleryViewModel? {
+        guard let concrete = store as? ShotStore, concrete === ShotStore.shared else { return nil }
+        return .shared
+    }
+
+    private static func resolveImporter(for store: any ShotReading) -> ImageImportCoordinator {
+        guard let concrete = store as? ShotStore else { return .shared }
+        return .resolve(for: concrete)
     }
 
     /// 预览可用 Fake

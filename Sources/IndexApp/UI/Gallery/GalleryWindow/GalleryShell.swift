@@ -219,7 +219,7 @@ struct GalleryInspectorPanel: View {
         self._isPresented = isPresented
         self._store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
-            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+            ?? .resolve(for: store)
         self._viewModel = ObservedObject(wrappedValue: resolvedViewModel)
     }
 

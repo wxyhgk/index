@@ -42,7 +42,7 @@ struct GalleryView: View {
     ) {
         _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
-            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+            ?? .resolve(for: store)
         self.viewModel = resolvedViewModel
         self.styleStore = styleStore
     }

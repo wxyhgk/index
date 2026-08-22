@@ -44,7 +44,7 @@ private struct AppsContent: View {
     init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
         _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
-            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+            ?? .resolve(for: store)
         _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
     }
 

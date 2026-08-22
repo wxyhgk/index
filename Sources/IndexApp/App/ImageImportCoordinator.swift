@@ -24,6 +24,11 @@ final class ImageImportCoordinator: ObservableObject {
 
     static let shared = ImageImportCoordinator(store: .shared)
 
+    /// 工厂：shared store 返回共享实例，否则新建。
+    static func resolve(for store: ShotStore) -> ImageImportCoordinator {
+        store === ShotStore.shared ? .shared : ImageImportCoordinator(store: store)
+    }
+
     @Published private(set) var isImporting = false
 
     private let store: ShotStore

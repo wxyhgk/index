@@ -82,7 +82,7 @@ final class AgentPlugin: Plugin {
                 parameters: [:],
                 execute: { _ in
                     await MainActor.run {
-                        let plugins = PluginManager.shared.activePlugins
+                        let plugins = ctx.pluginManager.activePlugins
                         return plugins.map { "\($0.id) (\($0.displayName) v\($0.version))" }.joined(separator: "\n")
                     }
                 }
@@ -112,9 +112,9 @@ final class AgentPlugin: Plugin {
                 parameters: [:],
                 execute: { _ in
                     await MainActor.run {
-                        let kinds = PluginRegistry.shared.registeredKinds
+                        let kinds = ctx.pluginRegistry.registeredKinds
                         return kinds.map { kind in
-                            let mode = PluginRegistry.shared.mode(for: kind)
+                            let mode = ctx.pluginRegistry.mode(for: kind)
                             return "\(kind.rawValue): label=\(mode.label) doubleClick=\(mode.doubleClick) keymap=\(mode.keymap.keys.sorted())"
                         }.joined(separator: "\n")
                     }

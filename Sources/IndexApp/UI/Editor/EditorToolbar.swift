@@ -182,17 +182,79 @@ struct EditorToolbar: View {
             annotation.setStyleIndex(index, for: axis)
             annotation.applyStyleToSelection(axis)
         } label: {
-            if let icon = axis.descriptor.editorIcon {
-                icon(index, selected)
-            } else {
-                Circle()
-                    .fill(selected ? DS.accent : DS.dimPrimary)
-                    .frame(width: 5 + CGFloat(index) * 4, height: 5 + CGFloat(index) * 4)
-                    .frame(width: 20, height: 20)
-            }
+            axisIcon(axis, index: index, selected: selected)
         }
         .buttonStyle(.plain)
         .help("\(axis.title) \(index + 1)")
+    }
+
+    /// 样式轴图标（UI 层负责，领域层不持有 SwiftUI 闭包）。
+    @ViewBuilder
+    private func axisIcon(_ axis: ToolStyleAxis, index: Int, selected: Bool) -> some View {
+        switch axis {
+        case .width:
+            let steps: [Double] = [2, 4, 8]
+            let radius = steps.indices.contains(index) ? CGFloat(steps[index]) / 2 + 1.5 : 3.5
+            let diameter = radius * 2
+            Circle()
+                .fill(selected ? DS.accent : DS.primaryOpacity(0.55))
+                .frame(width: diameter, height: diameter)
+                .frame(width: 20, height: 20)
+
+        case .fontSize:
+            let size = 9 + CGFloat(index) * 3
+            Text("A")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(selected ? DS.accent : DS.primaryOpacity(0.85))
+                .frame(width: 20, height: 20)
+
+        case .opacity:
+            let steps: [Double] = [0.25, 0.40, 0.60]
+            let alpha = steps.indices.contains(index) ? steps[index] : 0.40
+            Circle()
+                .fill(DS.whiteOpacity(alpha))
+                .overlay(Circle().strokeBorder(selected ? DS.accent : Color.clear, lineWidth: DS.strokeSubtle))
+                .frame(width: 12, height: 12)
+                .frame(width: 20, height: 20)
+
+        case .blockSize:
+            let counts = [4, 3, 2]
+            let n = counts[min(index, counts.count - 1)]
+            ZStack {
+                ForEach(0..<n, id: \.self) { row in
+                    ForEach(0..<n, id: \.self) { col in
+                        if (row + col) % 2 == 0 {
+                            Rectangle()
+                                .fill(selected ? DS.accent : DS.primaryOpacity(0.85))
+                                .frame(width: 12 / CGFloat(n), height: 12 / CGFloat(n))
+                                .offset(x: CGFloat(col) * 12 / CGFloat(n) - 6 + 6 / CGFloat(n),
+                                        y: CGFloat(row) * 12 / CGFloat(n) - 6 + 6 / CGFloat(n))
+                        }
+                    }
+                }
+            }
+            .frame(width: 20, height: 20)
+
+        case .dim:
+            let steps: [Double] = [0.40, 0.55, 0.75]
+            let alpha = steps.indices.contains(index) ? steps[index] : 0.55
+            ZStack {
+                Circle()
+                    .fill(DS.blackOpacity(alpha))
+                    .frame(width: 12, height: 12)
+                Circle()
+                    .strokeBorder(DS.whiteOpacity(0.5), lineWidth: DS.hairline)
+                    .frame(width: 12, height: 12)
+            }
+            .overlay(Circle().strokeBorder(selected ? DS.accent : Color.clear, lineWidth: DS.strokeSubtle))
+            .frame(width: 20, height: 20)
+
+        default:
+            Circle()
+                .fill(selected ? DS.accent : DS.dimPrimary)
+                .frame(width: 5 + CGFloat(index) * 4, height: 5 + CGFloat(index) * 4)
+                .frame(width: 20, height: 20)
+        }
     }
 
     private func selectTool(_ tool: AnnotationTool?) {

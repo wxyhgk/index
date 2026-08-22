@@ -34,7 +34,7 @@ final class QuickLookController: NSObject {
 
     init(store: ShotStore) {
         self.store = store
-        self.viewModel = store === ShotStore.shared ? .shared : GalleryViewModel(store: store)
+        self.viewModel = .resolve(for: store)
         super.init()
     }
 

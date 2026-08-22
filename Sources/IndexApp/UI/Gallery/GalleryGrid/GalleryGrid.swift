@@ -45,12 +45,10 @@ struct GalleryGrid: View {
         _store = ObservedObject(wrappedValue: store)
         _sessionLifecycle = ObservedObject(wrappedValue: sessionLifecycle ?? .shared)
         let resolvedViewModel = viewModel
-            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+            ?? .resolve(for: store)
         self.viewModel = resolvedViewModel
         _presentation = StateObject(wrappedValue: GalleryGridPresentation(viewModel: resolvedViewModel))
-        _imageImporter = ObservedObject(wrappedValue:
-            store === ShotStore.shared ? .shared : ImageImportCoordinator(store: store)
-        )
+        _imageImporter = ObservedObject(wrappedValue: .resolve(for: store))
         _settings = ObservedObject(wrappedValue: settings)
         self.scope = scope
         self.chrome = chrome

@@ -18,9 +18,12 @@ final class PluginRegistry {
 
     private var modes: [ContentKind: ContentMode] = [:]
 
-    init() {
-        registerMode(Self.imageMode)
-        registerMode(Self.markdownMode)
+    init() {}
+
+    /// 装配层调用：注册内置内容模式（image + markdown）。
+    static func registerBuiltins() {
+        shared.registerMode(Self.imageMode)
+        shared.registerMode(Self.markdownMode)
     }
 
     // MARK: - 注册 / 查找
@@ -46,7 +49,7 @@ final class PluginRegistry {
     static let imageMode = ContentMode(
         kind: .image,
         label: "截图",
-        barColor: DS.clipboardImageBar,
+        barColor: .blue,
         icon: nil,
         caption: { shot in
             (shot.customTitle ?? shot.primaryDisplayName,

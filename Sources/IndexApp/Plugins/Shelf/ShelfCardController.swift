@@ -15,6 +15,7 @@ final class ShelfCardController: NSWindowController {
     private let shot: Shot?
     /// 仅在用户真的开始文件拖拽时解析全尺寸成品。普通的 15 秒展示期只持有缩略图。
     private let fullImageProvider: @MainActor () -> CGImage?
+    private let galleryPresenter: any GalleryPresenting
     private var autoCloseTimer: Timer?
     private var isHovering = false
     private var isDragging = false
@@ -25,11 +26,13 @@ final class ShelfCardController: NSWindowController {
     init(
         previewImage: CGImage,
         shot: Shot?,
-        fullImageProvider: @escaping @MainActor () -> CGImage?
+        fullImageProvider: @escaping @MainActor () -> CGImage?,
+        galleryPresenter: (any GalleryPresenting)? = nil
     ) {
         self.previewImage = previewImage
         self.shot = shot
         self.fullImageProvider = fullImageProvider
+        self.galleryPresenter = galleryPresenter ?? GalleryWindowController.shared
 
         // 卡片宽度固定，缩略图高度按图片比例走，过宽/过高的截图夹在合理区间里。
         let aspect = CGFloat(previewImage.height) / CGFloat(max(previewImage.width, 1))
@@ -137,7 +140,7 @@ final class ShelfCardController: NSWindowController {
     // MARK: - 交互
 
     private func openInGallery() {
-        GalleryWindowController.shared.show(selecting: shot)
+        galleryPresenter.show(selecting: shot)
     }
 
     /// 拖拽发起时把合成图写成临时 PNG。文件名与「保存」动作一致（ImageExporter），

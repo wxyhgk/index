@@ -21,8 +21,9 @@ struct PluginContext {
     let pipeline: CapturePipeline
     let actionRegistry: CaptureActionRegistry
     let toolbarRegistry: ToolbarRegistry
-    let destinationRegistry: GalleryDestinationRegistry
     let hotKeyCenter: GlobalHotKeyCenter
+    let pluginManager: PluginManager
+    let pluginRegistry: PluginRegistry
 }
 
 /// 插件协议。一个动作包 = 一个 Plugin 实现。

@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// 图库里一个 Shot 对应的录屏资产状态。
 ///
@@ -53,44 +53,44 @@ enum RecordingPlaybackAction: Equatable {
 /// 录屏资产动作的统一执行器。状态判定保持纯值；系统打开、访达和弹窗仍只经 Platform 门面。
 @MainActor
 enum RecordingAssetActions {
-    static func performPrimary(_ asset: RecordingAsset, shotID: Int64?) {
+    static func performPrimary(_ asset: RecordingAsset, shotID: Int64?, hostWindow: NSWindow? = nil) {
         switch asset.playbackAction {
         case .editCover:
             GalleryWindowMode.shared.openEditor(shotID: shotID)
         case let .play(url):
             SystemNavigator.open(url: url)
         case let .reportMissing(url):
-            reportMissing(url)
+            reportMissing(url, hostWindow: hostWindow)
         }
     }
 
-    static func play(_ asset: RecordingAsset) {
+    static func play(_ asset: RecordingAsset, hostWindow: NSWindow? = nil) {
         switch asset.playbackAction {
         case let .play(url):
             SystemNavigator.open(url: url)
         case let .reportMissing(url):
-            reportMissing(url)
+            reportMissing(url, hostWindow: hostWindow)
         case .editCover:
             break
         }
     }
 
-    static func reveal(_ asset: RecordingAsset) {
+    static func reveal(_ asset: RecordingAsset, hostWindow: NSWindow? = nil) {
         switch asset {
         case let .available(url):
             SystemNavigator.revealInFinder(url)
         case let .missing(url):
-            reportMissing(url)
+            reportMissing(url, hostWindow: hostWindow)
         case .screenshot:
             break
         }
     }
 
-    private static func reportMissing(_ url: URL) {
+    private static func reportMissing(_ url: URL, hostWindow: NSWindow?) {
         AppAlert.error(
             "找不到录屏文件",
             message: "这条录屏仍保留在图库中，但原始 MP4 已被移动或删除。\n\n原位置：\(url.path)",
-            host: GalleryWindowController.shared.window
+            host: hostWindow
         )
     }
 }

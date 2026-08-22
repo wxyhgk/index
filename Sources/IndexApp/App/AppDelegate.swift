@@ -63,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CaptureActionRegistry.registerBuiltins(into: .shared, styleStore: settings)
         ToolbarRegistry.registerBuiltins(into: .shared)
         GalleryDestinationRegistry.registerBuiltins(into: .shared)
+        PluginRegistry.registerBuiltins()
+        ImageExporter.nameTemplateProvider = { AppSettings.shared.export.exportNameTemplate }
 
         // 插件激活：截图/录屏/钉图/暂存架各是一个动作包。
         // 截图后处理器（OCR/分类/Markdown 生成...）由 CapturePlugin 注册到 pipeline。
@@ -72,8 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pipeline: pipeline,
             actionRegistry: .shared,
             toolbarRegistry: .shared,
-            destinationRegistry: .shared,
-            hotKeyCenter: .shared
+            hotKeyCenter: .shared,
+            pluginManager: .shared,
+            pluginRegistry: .shared
         )
         // 插件激活：按 enabledPluginIDs 过滤（空列表 = 全部启用）。
         let pluginManager = PluginManager.shared
@@ -590,9 +593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard GalleryWindowMode.shared.mode == .library else { return }
         guard !GallerySelection.shared.selectedIDs.isEmpty else { return }
         guard !GalleryBatchActivity.shared.isBusy else { return }
-        let displayed = (shotStore as? ShotStore).flatMap { concrete in
-            concrete === ShotStore.shared ? GalleryViewModel.shared.displayShots : nil
-        }
+        let displayed = GalleryViewModel.displayShots(for: shotStore)
         if let shots = GalleryBatch.loadedSelectedShots(
             displayedShots: displayed,
             reader: shotStore
@@ -610,12 +611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if NSApp.keyWindow?.firstResponder is NSTextView { return }
         guard GalleryWindowMode.shared.mode == .library else { return }
         Task { [shotStore] in
-            let ids: [Int64]
-            if let concrete = shotStore as? ShotStore, concrete === ShotStore.shared {
-                ids = await GalleryViewModel.shared.allMatchingIDs()
-            } else {
-                ids = await shotStore.allMatchingIDs(query: "", filter: .all)
-            }
+            let ids = await GalleryViewModel.allMatchingIDs(for: shotStore)
             GallerySelection.shared.selectAll(ids)
         }
     }

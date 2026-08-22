@@ -11,6 +11,26 @@ final class GalleryViewModel: ObservableObject {
 
     static let shared = GalleryViewModel(store: .shared)
 
+    /// 工厂：shared store 返回共享实例，否则新建。
+    /// 收敛 8 处 `store === ShotStore.shared ? .shared : GalleryViewModel(store:)` 重复判断。
+    static func resolve(for store: ShotStore) -> GalleryViewModel {
+        store === ShotStore.shared ? .shared : GalleryViewModel(store: store)
+    }
+
+    /// shared store 返回共享实例的 displayShots，否则 nil（调用方 fallback 到 store.shots）。
+    static func displayShots(for store: ShotReading) -> [Shot]? {
+        guard let concrete = store as? ShotStore, concrete === ShotStore.shared else { return nil }
+        return shared.displayShots
+    }
+
+    /// shared store 走共享实例的 allMatchingIDs（含当前搜索词/筛选），否则走 store 全量查询。
+    static func allMatchingIDs(for store: ShotReading) async -> [Int64] {
+        guard let concrete = store as? ShotStore, concrete === ShotStore.shared else {
+            return await store.allMatchingIDs(query: "", filter: .all)
+        }
+        return await shared.allMatchingIDs()
+    }
+
     let store: ShotStore
 
     @Published var searchText = ""

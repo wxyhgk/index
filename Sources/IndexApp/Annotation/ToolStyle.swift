@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-import SwiftUI
 
 // MARK: - 工具样式契约
 //
@@ -62,9 +61,6 @@ struct ToolStyleAxisDescriptor {
     /// nil 表示不走数值图标（如颜色走 ColorControl）。
     let toolbarDraw: ((CGRect, Int) -> Void)?
 
-    /// SwiftUI 编辑器工具栏的图标。
-    let editorIcon: ((Int, Bool) -> AnyView)?
-
     /// 把当前样式应用到已选图层。返回是否生效（blockSize 固定 false）。
     /// strokeScale 仅 width / fontSize 需要。
     let applyToLayer: ((inout Layer, ToolStyle, Double) -> Bool)?
@@ -84,7 +80,6 @@ struct ToolStyleAxisDescriptor {
             codingKey: "colorIndex",
             keyPath: \ToolStyle.colorIndex,
             toolbarDraw: nil,
-            editorIcon: nil,
             applyToLayer: { layer, style, _ in
                 let idx = style.colorIndex
                 let palette = AnnotationState.palette
@@ -116,17 +111,6 @@ struct ToolStyleAxisDescriptor {
                     width: radius * 2, height: radius * 2
                 )).fill()
             },
-            editorIcon: { index, isSelected in
-                let steps: [Double] = [2, 4, 8]
-                let radius = steps.indices.contains(index) ? CGFloat(steps[index]) / 2 + 1.5 : 3.5
-                let diameter = radius * 2
-                return AnyView(
-                    Circle()
-                        .fill(isSelected ? DS.accent : DS.primaryOpacity(0.55))
-                        .frame(width: diameter, height: diameter)
-                        .frame(width: 20, height: 20)
-                )
-            },
             applyToLayer: { layer, style, strokeScale in
                 layer.lineWidth = style.value(for: .width) * strokeScale
                 return true
@@ -154,15 +138,6 @@ struct ToolStyleAxisDescriptor {
                     withAttributes: attrs
                 )
             },
-            editorIcon: { index, isSelected in
-                let size = 9 + CGFloat(index) * 3
-                return AnyView(
-                    Text("A")
-                        .font(.system(size: size, weight: .semibold))
-                        .foregroundStyle(isSelected ? DS.accent : DS.primaryOpacity(0.85))
-                        .frame(width: 20, height: 20)
-                )
-            },
             applyToLayer: { layer, style, strokeScale in
                 layer.fontSize = style.value(for: .fontSize) * strokeScale
                 return true
@@ -184,17 +159,6 @@ struct ToolStyleAxisDescriptor {
                 NSBezierPath(ovalIn: NSRect(
                     x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12
                 )).fill()
-            },
-            editorIcon: { index, isSelected in
-                let steps: [Double] = [0.25, 0.40, 0.60]
-                let alpha = steps.indices.contains(index) ? steps[index] : 0.40
-                return AnyView(
-                    Circle()
-                        .fill(DS.whiteOpacity(alpha))
-                        .overlay(Circle().strokeBorder(isSelected ? DS.accent : Color.clear, lineWidth: DS.strokeSubtle))
-                        .frame(width: 12, height: 12)
-                        .frame(width: 20, height: 20)
-                )
             },
             applyToLayer: { layer, style, _ in
                 layer.color.a = style.value(for: .opacity)
@@ -228,26 +192,6 @@ struct ToolStyleAxisDescriptor {
                     }
                 }
             },
-            editorIcon: { index, isSelected in
-                let counts = [4, 3, 2]
-                let n = counts[min(index, counts.count - 1)]
-                return AnyView(
-                    ZStack {
-                        ForEach(0..<n, id: \.self) { row in
-                            ForEach(0..<n, id: \.self) { col in
-                                if (row + col) % 2 == 0 {
-                                    Rectangle()
-                                        .fill(isSelected ? DS.accent : DS.primaryOpacity(0.85))
-                                        .frame(width: 12 / CGFloat(n), height: 12 / CGFloat(n))
-                                        .offset(x: CGFloat(col) * 12 / CGFloat(n) - 6 + 6 / CGFloat(n),
-                                                y: CGFloat(row) * 12 / CGFloat(n) - 6 + 6 / CGFloat(n))
-                                }
-                            }
-                        }
-                    }
-                    .frame(width: 20, height: 20)
-                )
-            },
             applyToLayer: { _, _, _ in false },
             bakeToLayer: { layer, style in
                 layer.blockScale = style.value(for: .blockSize)
@@ -271,22 +215,6 @@ struct ToolStyleAxisDescriptor {
                 let ring = NSBezierPath(ovalIn: dot)
                 ring.lineWidth = DS.hairline
                 ring.stroke()
-            },
-            editorIcon: { index, isSelected in
-                let steps: [Double] = [0.40, 0.55, 0.75]
-                let alpha = steps.indices.contains(index) ? steps[index] : 0.55
-                return AnyView(
-                    ZStack {
-                        Circle()
-                            .fill(DS.blackOpacity(alpha))
-                            .frame(width: 12, height: 12)
-                        Circle()
-                            .strokeBorder(DS.whiteOpacity(0.5), lineWidth: DS.hairline)
-                            .frame(width: 12, height: 12)
-                    }
-                    .overlay(Circle().strokeBorder(isSelected ? DS.accent : Color.clear, lineWidth: DS.strokeSubtle))
-                    .frame(width: 20, height: 20)
-                )
             },
             applyToLayer: { layer, style, _ in
                 layer.dim = style.value(for: .dim)

@@ -29,7 +29,7 @@ struct GalleryPageHeader: View {
         style: GalleryPageHeaderStyle = .standard
     ) {
         let resolvedViewModel = viewModel
-            ?? (store === ShotStore.shared ? .shared : GalleryViewModel(store: store))
+            ?? .resolve(for: store)
         _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
         self.scope = scope
         self.style = style

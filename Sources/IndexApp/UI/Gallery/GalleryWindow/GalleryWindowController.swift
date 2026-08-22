@@ -4,9 +4,11 @@ import Quartz
 import SwiftUI
 
 @MainActor
-final class GalleryWindowController: NSWindowController {
+final class GalleryWindowController: NSWindowController, GalleryPresenting {
 
     static let shared = GalleryWindowController()
+
+    var hostWindow: NSWindow? { window }
 
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?

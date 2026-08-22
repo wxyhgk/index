@@ -81,9 +81,11 @@ fi
 
 section "纪律二：依赖只向下，下层不认识界面层"
 layer_hits=""
-for dir in Capture Render Annotation Storage Toolbar Actions Pipeline Intelligence; do
+for dir in Capture Render Annotation Storage Toolbar Actions Pipeline Intelligence Plugins Plugin; do
     hits=$(grep -rn "GalleryView\|EditorView\|GalleryGrid\|ShotDetailPane\|GalleryWindowController" \
         --include="*.swift" "Sources/IndexApp/$dir" 2>/dev/null | code_only || true)
+    # 排除 init 默认值兜底（`?? GalleryWindowController.shared`）—— 那是装配逻辑，不是业务引用
+    hits=$(printf "%s" "$hits" | grep -v '?? GalleryWindowController\.shared' || true)
     [ -n "$hits" ] && layer_hits="${layer_hits}${hits}"$'\n'
 done
 if [ -z "${layer_hits// }" ]; then
@@ -176,6 +178,18 @@ if [ -z "$sck_entry_hits" ]; then
 else
     printf "%s\n" "$sck_entry_hits" | sed 's/^/    /'
     bad "不得绕过 MacScreenCaptureBroker 直接枚举、截图或启动 SCStream"
+fi
+
+section "纪律九：插件框架层不引用设计令牌"
+# Plugin/ 是插件框架（注册表 + 协议 + 上下文），不得引用 DS 设计令牌 ——
+# 那些是 UI 层的事。具体插件的视图放 UI/ 或 Plugins/。
+plugin_ui_hits=$(grep -rn "DS\." \
+    --include="*.swift" Sources/IndexApp/Plugin 2>/dev/null | code_only || true)
+if [ -z "$plugin_ui_hits" ]; then
+    ok "Plugin/ 框架层无 DS 设计令牌引用"
+else
+    printf "%s\n" "$plugin_ui_hits" | sed 's/^/    /'
+    bad "Plugin/ 框架层引用了 DS —— 设计令牌走 UI 层注入"
 fi
 
 # -------------------------------------------------------------------- 可选：打包

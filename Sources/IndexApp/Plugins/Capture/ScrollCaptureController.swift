@@ -18,6 +18,7 @@ final class ScrollCaptureController {
     private let overlay: SelectionOverlayController
     private let shotStore: any ShotReading & ShotWriting
     private let pipeline: CapturePipeline
+    private let galleryPresenter: any GalleryPresenting
     private var session: ScrollCaptureSession?
 
     /// 采集期间临时监听 ⎋ 用的绑定名（参考延时截图的 bindTransient 用法）。
@@ -26,7 +27,8 @@ final class ScrollCaptureController {
     init(
         styleStore: (any StyleStore)? = nil,
         shotStore: (any ShotReading & ShotWriting)? = nil,
-        pipeline: CapturePipeline? = nil
+        pipeline: CapturePipeline? = nil,
+        galleryPresenter: (any GalleryPresenting)? = nil
     ) {
         let resolvedStyleStore = styleStore ?? AppSettings.shared
         self.overlay = SelectionOverlayController(
@@ -35,6 +37,7 @@ final class ScrollCaptureController {
         )
         self.shotStore = shotStore ?? ShotStore.shared
         self.pipeline = pipeline ?? CapturePipeline.shared
+        self.galleryPresenter = galleryPresenter ?? GalleryWindowController.shared
     }
 
     /// 预览可用 Fake
@@ -155,7 +158,7 @@ final class ScrollCaptureController {
 
             // 长图直接开编辑器 —— 入库 + 标注比钉一整条长图实用。
             // 编辑器活在图库窗口内（单窗口双模式）：弹图库并直接进编辑模式。
-            GalleryWindowController.shared.showEditor(for: shot)
+            galleryPresenter.showEditor(for: shot)
         } catch {
             NSLog("[Index] 滚动截图保存失败: \(error)")
         }
