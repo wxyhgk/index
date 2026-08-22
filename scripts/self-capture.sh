@@ -1,5 +1,5 @@
 #!/bin/bash
-# Index 自截图：打开指定面板 → 按窗口区域截图（自动吸附，无需裁剪）
+# Index 自截图：打开指定面板 → 按窗口 ID 截图（自动吸附窗口边界）
 #
 # 用法：
 #   ./scripts/self-capture.sh              # 截内容库（默认）
@@ -33,29 +33,21 @@ EOF
 # 3. 等窗口渲染稳定
 sleep 1.5
 
-# 4. 获取窗口位置和尺寸
-REGION=$(osascript <<'EOF'
-tell application "System Events"
-    tell process "Index"
-        if (count of windows) > 0 then
-            set p to position of window 1
-            set s to size of window 1
-            return (item 1 of p) & "," & (item 2 of p) & "," & (item 1 of s) & "," & (item 2 of s)
-        end if
-    end tell
-end tell
-EOF
-)
+# 4. 获取 Index 主窗口的 CGWindowID（layer 0）
+WINDOW_ID=$(swift -e '
+import CoreGraphics
+let wins = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)! as! [[String: Any]]
+for w in wins where w["kCGWindowOwnerName"] as? String == "Index" && (w["kCGWindowLayer"] as? Int) == 0 {
+    print(w["kCGWindowNumber"]!)
+    break
+}')
 
-# osascript 返回 "1660, ,, 823, ,, 240, ,, 176"，去掉所有空格变 "1660,823,240,176"
-REGION=$(echo "$REGION" | tr -d ' ')
-
-if [ -z "$REGION" ]; then
+if [ -z "$WINDOW_ID" ]; then
     echo "错误：找不到 Index 窗口"
     exit 1
 fi
 
-# 5. 按窗口区域截图（-R x,y,w,h，自动吸附窗口边界）
-screencapture -R "$REGION" -o "$OUT"
-echo "完成: $OUT (区域: $REGION)"
+# 5. 按窗口 ID 截图（自动吸附窗口边界，-o 去掉阴影）
+screencapture -l "$WINDOW_ID" -o "$OUT"
+echo "完成: $OUT (窗口 ID: $WINDOW_ID)"
 sips -g pixelWidth -g pixelHeight "$OUT" 2>/dev/null | tail -2
