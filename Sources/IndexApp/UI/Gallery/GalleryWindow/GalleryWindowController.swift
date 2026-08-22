@@ -16,6 +16,8 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     let selection = GallerySelection()
     /// 键盘导航。窗口级控制器，生命周期跟随窗口。
     let keyboard = GalleryKeyboard()
+    /// 空格 Quick Look。窗口级控制器，生命周期跟随窗口。
+    let quickLook = QuickLookController()
 
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
@@ -90,7 +92,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
                 case .editing(let id):
                     let summary = GalleryWindowMode.resolveShot(id: id)?.sourceSummary
                     self?.window?.title = summary.map { "标注 — \($0)" } ?? "Index 图库"
-                    QuickLookController.shared.close()
+                    self?.quickLook.close()
                 }
             }
 
@@ -135,11 +137,11 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     }
 
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        QuickLookController.shared.attach(to: panel)
+        quickLook.attach(to: panel)
     }
 
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        QuickLookController.shared.detach(from: panel)
+        quickLook.detach(from: panel)
     }
 
     // MARK: - Edit 菜单（⌘C/⌘A 走 responder chain）

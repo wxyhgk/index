@@ -16,8 +16,6 @@ import Quartz
 @MainActor
 final class QuickLookController: NSObject {
 
-    static let shared = QuickLookController()
-
     /// 面板打开时的列表快照，与 currentPreviewItemIndex 一一对应。
     /// 面板开着时数据变化（删除、筛选）会重建快照并 reloadData。
     private var shots: [Shot] = []
@@ -30,7 +28,7 @@ final class QuickLookController: NSObject {
     var store: ShotStore = .shared
     private var viewModel: GalleryViewModel = .shared
 
-    private override init() { super.init() }
+    override init() { super.init() }
 
     init(store: ShotStore) {
         self.store = store
@@ -67,7 +65,7 @@ final class QuickLookController: NSObject {
         // 面板自带的前后翻页按钮改 currentPreviewItemIndex → 反向同步网格选中。
         indexObservation = panel.observe(\.currentPreviewItemIndex) { panel, _ in
             MainActor.assumeIsolated {
-                QuickLookController.shared.syncSelection(toPanelIndex: panel.currentPreviewItemIndex)
+                GalleryWindowController.shared.quickLook.syncSelection(toPanelIndex: panel.currentPreviewItemIndex)
             }
         }
         // 网格里点选 / 键盘导航 → 面板跟着换页。多选时面板预览主选中那张。

@@ -60,7 +60,7 @@ final class GalleryKeyboard {
 
         switch keyCode {
         case KeyCode.space where flags.isEmpty:
-            QuickLookController.shared.toggle()
+            GalleryWindowController.shared.quickLook.toggle()
             return true
 
         case KeyCode.returnKey where flags.isEmpty,

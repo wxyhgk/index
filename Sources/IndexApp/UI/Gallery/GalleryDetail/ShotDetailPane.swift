@@ -221,7 +221,7 @@ struct ShotDetailPane: View {
             .clipShape(shape)
             .shadow(color: sh.color, radius: sh.radius, y: sh.y)
             .contentShape(Rectangle())
-            .onTapGesture { QuickLookController.shared.present() }
+            .onTapGesture { GalleryWindowController.shared.quickLook.present() }
             .help("点击（或按空格）用 Quick Look 预览原图")
             .accessibilityLabel("预览：\(shot.primaryDisplayName)")
     }
