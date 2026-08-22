@@ -11,7 +11,8 @@ import Foundation
 protocol StyleStore: AnyObject, ObservableObject,
     CapturePreferences, RecordingPreferences, ExportPreferences,
     LibraryPreferences, AnnotationStylePreferences, IntelligencePreferences,
-    UploadPreferences, ShortcutPreferences, ClipboardHistoryPreferences {}
+    UploadPreferences, ShortcutPreferences, ClipboardHistoryPreferences,
+    PluginPreferences {}
 
 extension AppSettings: StyleStore {}
 
@@ -26,7 +27,7 @@ extension AppSettings: StyleStore {}
 final class FakeStyleStore: ObservableObject, StyleStore,
     CapturePreferences, RecordingPreferences, ExportPreferences,
     LibraryPreferences, AnnotationStylePreferences, IntelligencePreferences,
-    UploadPreferences, ShortcutPreferences {
+    UploadPreferences, ShortcutPreferences, PluginPreferences {
 
     @Published var capture: CapturePrefs
     @Published var recording: RecordingPrefs
@@ -37,6 +38,7 @@ final class FakeStyleStore: ObservableObject, StyleStore,
     @Published var upload: UploadPrefs
     @Published var shortcuts: ShortcutPrefs
     @Published var clipboardHistory: ClipboardHistoryPrefs
+    @Published var plugin: PluginPrefs
 
     init(
         capture: CapturePrefs = .defaults,
@@ -47,7 +49,8 @@ final class FakeStyleStore: ObservableObject, StyleStore,
         intelligence: IntelligencePrefs = .defaults,
         upload: UploadPrefs = .defaults,
         shortcuts: ShortcutPrefs = .defaults,
-        clipboardHistory: ClipboardHistoryPrefs = .defaults
+        clipboardHistory: ClipboardHistoryPrefs = .defaults,
+        plugin: PluginPrefs = .defaults
     ) {
         self.capture = capture
         self.recording = recording
@@ -58,6 +61,7 @@ final class FakeStyleStore: ObservableObject, StyleStore,
         self.upload = upload
         self.shortcuts = shortcuts
         self.clipboardHistory = clipboardHistory
+        self.plugin = plugin
     }
 
     // 转发到领域值（与 AppSettings 同一套窄协议 + StyleStore 契约）
@@ -122,7 +126,14 @@ final class FakeStyleStore: ObservableObject, StyleStore,
     var moleculePinShortcut: KeyboardShortcut { shortcuts.moleculePinShortcut }
     var clipboardHistoryShortcut: KeyboardShortcut { shortcuts.clipboardHistoryShortcut }
     var searchPanelShortcut: KeyboardShortcut { shortcuts.searchPanelShortcut }
+    var quickNoteShortcut: KeyboardShortcut { shortcuts.quickNoteShortcut }
 
     var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
     var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }
+
+    var enabledPluginIDs: [String] { plugin.enabledPluginIDs }
+    var agentEnabled: Bool { plugin.agentEnabled }
+    var agentBaseURL: String { plugin.agentBaseURL }
+    var agentModel: String { plugin.agentModel }
+    var agentAPIKey: String { plugin.agentAPIKey }
 }

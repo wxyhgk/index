@@ -17,6 +17,7 @@ final class BoundedPostProcessScheduler {
         let shotID: Int64
         let originalURL: URL
         let appBundleID: String?
+        let metadata: ShotMetadata
         let processors: [any CapturePostProcessor]
     }
 
@@ -39,6 +40,7 @@ final class BoundedPostProcessScheduler {
         shotID: Int64,
         originalURL: URL,
         appBundleID: String?,
+        metadata: ShotMetadata,
         processors: [any CapturePostProcessor]
     ) {
         guard !processors.isEmpty else { return }
@@ -46,6 +48,7 @@ final class BoundedPostProcessScheduler {
             shotID: shotID,
             originalURL: originalURL,
             appBundleID: appBundleID,
+            metadata: metadata,
             processors: processors
         )
 
@@ -93,7 +96,8 @@ final class BoundedPostProcessScheduler {
             let input = PostProcessInput(
                 shotID: work.shotID,
                 image: image,
-                appBundleID: work.appBundleID
+                appBundleID: work.appBundleID,
+                metadata: work.metadata
             )
             await withTaskGroup(of: Void.self) { group in
                 for processor in work.processors {

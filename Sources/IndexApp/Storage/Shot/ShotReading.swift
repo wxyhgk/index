@@ -38,6 +38,9 @@ protocol ShotReading: AnyObject {
     func allTags() -> [(name: String, count: Int)]
     func shotsMissingAttribute(key: String) -> [Shot]
     var totalCount: Int { get }
+    /// 取 shot 的 Markdown 源码（收口三步查询：content → contentID → markdownContent）。
+    /// 没有存储的 Markdown 时返回 nil，调用方自行决定兜底策略。
+    func markdownSource(for shot: Shot) -> String?
 }
 
 /// 写侧：保存、删除、修订、收藏、标签。
@@ -61,7 +64,7 @@ protocol ShotWriting: AnyObject {
     func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws
     func attachRecording(at url: URL, to shot: Shot) throws
     func writeAttribute(shotID: Int64, key: String, value: AttributeValue)
-    func saveContent(for shotID: Int64, kind: ContentKind, markdownSource: String?, updateKind: Bool) throws
+    func saveContent(for shotID: Int64, kind: ContentKind, payload: ContentPayload, updateKind: Bool) throws
     @discardableResult func createMarkdownShot(title: String, source: String) throws -> Shot
 }
 

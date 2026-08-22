@@ -24,12 +24,12 @@ let package = Package(
             path: "Sources/IndexApp",
             exclude: [
                 "README.md",
-                "Capture/README.md",
-                "Capture/Magnifier/README.md",
-                "Capture/Metadata/README.md",
-                "Capture/Overlay/README.md",
-                "Capture/Selection/README.md",
-                "Capture/Snapshot/README.md",
+                "Plugins/Capture/README.md",
+                "Plugins/Capture/Magnifier/README.md",
+                "Plugins/Capture/Metadata/README.md",
+                "Plugins/Capture/Overlay/README.md",
+                "Plugins/Capture/Selection/README.md",
+                "Plugins/Capture/Snapshot/README.md",
                 "Platform/README.md",
                 "Toolbar/README.md"
             ],

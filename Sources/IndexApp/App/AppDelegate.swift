@@ -61,9 +61,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = shotStore          // 提前建库，避免第一次截图时卡顿
         CaptureActionRegistry.registerBuiltins(into: .shared, styleStore: settings)
-        CapturePipeline.registerBuiltins(into: pipeline, styleStore: settings)
         ToolbarRegistry.registerBuiltins(into: .shared)
         GalleryDestinationRegistry.registerBuiltins(into: .shared)
+
+        // 插件激活：截图/录屏/钉图/暂存架各是一个动作包。
+        // 截图后处理器（OCR/分类/Markdown 生成...）由 CapturePlugin 注册到 pipeline。
+        let pluginCtx = PluginContext(
+            settings: settings,
+            shotStore: shotStore,
+            pipeline: pipeline,
+            actionRegistry: .shared,
+            toolbarRegistry: .shared,
+            destinationRegistry: .shared,
+            hotKeyCenter: .shared
+        )
+        // 插件激活：按 enabledPluginIDs 过滤（空列表 = 全部启用）。
+        let pluginManager = PluginManager.shared
+        let allPlugins: [any Plugin] = [
+            CapturePlugin(),
+            RecordingPlugin(),
+            PinPlugin(),
+            ShelfPlugin(),
+            AgentPlugin.shared,
+        ]
+        let enabledIDs = settings.enabledPluginIDs
+        for plugin in allPlugins {
+            if enabledIDs.isEmpty || enabledIDs.contains(plugin.id) {
+                pluginManager.activate(plugin, ctx: pluginCtx)
+            }
+        }
 
         // 3D 窗口只负责产生当前相机视角；图片落库、来源附件与普通钉图的编排
         // 留在 App 层，避免 Platform 反向依赖 Storage / Pin。
@@ -116,6 +142,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let queued = pendingURLs
         pendingURLs = []
         queued.forEach { urlRouter.handle($0) }
+
+        // Hook 事件（= Emacs after-init-hook）：插件挂 appLaunch 就能响应。
+        Task {
+            await HookRegistry.shared.fire(
+                .appLaunch,
+                context: HookContext(event: .appLaunch, shotID: nil, image: nil, metadata: nil, writer: nil)
+            )
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Hook 事件（= Emacs before-quit-hook）：插件挂 appWillQuit 就能响应。
+        Task {
+            await HookRegistry.shared.fire(
+                .appWillQuit,
+                context: HookContext(event: .appWillQuit, shotID: nil, image: nil, metadata: nil, writer: nil)
+            )
+        }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -281,6 +325,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.bind("search-panel", to: settings.searchPanelShortcut) { [weak self] in
             self?.toggleSearchPanel()
         }
+        GlobalHotKeyCenter.shared.bind("quick-note", to: settings.quickNoteShortcut) { [weak self] in
+            self?.toggleQuickNote()
+        }
     }
 
     private func refreshHotKeys() {
@@ -292,6 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.update("pin-molecule", to: settings.moleculePinShortcut)
         GlobalHotKeyCenter.shared.update("clipboard-history", to: settings.clipboardHistoryShortcut)
         GlobalHotKeyCenter.shared.update("search-panel", to: settings.searchPanelShortcut)
+        GlobalHotKeyCenter.shared.update("quick-note", to: settings.quickNoteShortcut)
     }
 
     // MARK: - 动作
@@ -346,6 +394,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SearchPanelCoordinator.shared.togglePanel()
     }
 
+    @objc private func toggleQuickNote() {
+        QuickNoteCoordinator.shared.toggle()
+    }
+
     /// 按设置启停剪贴板监听 + 清理过期条目。
     private func applyClipboardHistorySettings() {
         if settings.clipboardHistoryEnabled {
@@ -397,7 +449,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pipeline.run(
                 shotID: shotID,
                 originalURL: shotStore.originalURL(for: shot),
-                appBundleID: metadata.appBundleID
+                appBundleID: metadata.appBundleID,
+                metadata: ShotMetadata(from: shot)
             )
         }
         PinWindowController.pin(

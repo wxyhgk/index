@@ -148,7 +148,8 @@ final class ScrollCaptureController {
                 pipeline.run(
                     shotID: id,
                     originalURL: shotStore.originalURL(for: shot),
-                    appBundleID: metadata.appBundleID
+                    appBundleID: metadata.appBundleID,
+                    metadata: ShotMetadata(from: shot)
                 )
             }
 

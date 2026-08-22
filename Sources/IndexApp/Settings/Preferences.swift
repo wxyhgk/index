@@ -81,9 +81,18 @@ protocol ShortcutPreferences: AnyObject {
     var moleculePinShortcut: KeyboardShortcut { get }
     var clipboardHistoryShortcut: KeyboardShortcut { get }
     var searchPanelShortcut: KeyboardShortcut { get }
+    var quickNoteShortcut: KeyboardShortcut { get }
 }
 
 protocol ClipboardHistoryPreferences: AnyObject {
     var clipboardHistoryEnabled: Bool { get }
     var clipboardHistoryRetentionDays: Int { get }
+}
+
+protocol PluginPreferences: AnyObject {
+    var enabledPluginIDs: [String] { get }
+    var agentEnabled: Bool { get }
+    var agentBaseURL: String { get }
+    var agentModel: String { get }
+    var agentAPIKey: String { get }
 }

@@ -159,7 +159,8 @@ enum AttributeBackfill {
         let input = PostProcessInput(
             shotID: item.shotID,
             image: image,
-            appBundleID: item.bundleID
+            appBundleID: item.bundleID,
+            metadata: .empty
         )
         for index in item.jobIndexes {
             guard !Task.isCancelled else { break }

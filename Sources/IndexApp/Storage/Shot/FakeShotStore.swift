@@ -314,6 +314,11 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
 
     var totalCount: Int { shots.count }
 
+    func markdownSource(for shot: Shot) -> String? {
+        // 内存版不维护 contentMarkdown 表，调用方兜底生成。
+        nil
+    }
+
     // MARK: - 额外读辅助（供 GalleryBatch 以外调用方）
 
     func tags(shotID: Int64) -> [String] {
@@ -509,7 +514,7 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         objectWillChange.send()
     }
 
-    func saveContent(for shotID: Int64, kind: ContentKind, markdownSource: String?, updateKind: Bool) throws {
+    func saveContent(for shotID: Int64, kind: ContentKind, payload: ContentPayload, updateKind: Bool) throws {
         if let idx = shots.firstIndex(where: { $0.id == shotID }) {
             if updateKind {
                 shots[idx].contentKind = kind.rawValue

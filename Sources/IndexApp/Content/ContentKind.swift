@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 // MARK: - 内容类型（合成任意软件的方向）
 //
@@ -33,16 +34,27 @@ enum ContentKind: String, Codable, CaseIterable, Sendable {
     /// 化学/数学公式。
     case formula
 
-    /// 顶部 bar 的标签文字。
-    var label: String {
-        switch self {
-        case .image: "截图"
-        case .text: "文本"
-        case .code: "代码"
-        case .markdown: "Markdown"
-        case .table: "表格"
-        case .pdf: "PDF"
-        case .formula: "公式"
-        }
-    }
+}
+
+// MARK: - 内容载荷
+//
+// saveContent 的类型无关 payload。新增类型 = 加一个 case，
+// 协议签名不变，ShotStore 内部 switch 写对应扩展表。
+
+enum ContentPayload: Sendable {
+    case markdown(String)
+    case code(String, language: String?)
+    case pdf(Data)
+}
+
+// MARK: - 卡片双击动作
+//
+// 每种内容类型双击卡片时的行为。由 ContentMode 持有（= Emacs major mode），
+// GalleryGrid 的双击分发从 PluginRegistry 的 mode 里取。
+
+enum CardDoubleClickAction: Equatable {
+    /// 无特殊动作（走默认的录屏/预览逻辑）。
+    case none
+    /// 打开 Markdown 编辑器。
+    case openMarkdownEditor
 }

@@ -67,8 +67,9 @@ extension GalleryGrid {
             TapGesture(count: 2).onEnded {
                 // 带修饰键的双击只是两次修饰点击（toggle / 范围），不进编辑器。
                 guard currentModifiers().isEmpty else { return }
-                // Markdown 卡片：双击打开 Typora 风格编辑器
-                if shot.contentKind == "markdown" {
+                // 双击动作由 ContentMode 描述（= Emacs major mode），从 PluginRegistry 取。
+                let mode = PluginRegistry.shared.mode(for: ContentKind(rawValue: shot.contentKind) ?? .image)
+                if mode.doubleClick == .openMarkdownEditor {
                     openMarkdownEditor(shot)
                     return
                 }
@@ -137,17 +138,11 @@ extension GalleryGrid {
     private func openMarkdownEditor(_ shot: Shot) {
         guard let shotID = shot.id else { return }
         let store = ShotStore.shared
-        let source: String
-        if let content = try? store.content(for: shotID),
-           let contentID = content.id,
-           let md = try? store.markdownContent(for: contentID) {
-            source = md.source
-        } else {
-            source = MarkdownGenerator.generate(for: shot)
-        }
+        // 收口读取：三步查询由 store 内部完成，没有存储的 Markdown 就现场生成。
+        let source = store.markdownSource(for: shot) ?? MarkdownGenerator.generate(for: shot)
         let title = shot.windowTitle ?? "Markdown"
         MarkdownEditorWindowController.shared.show(title: title, source: source) { newSource in
-            try? store.saveContent(for: shotID, kind: .markdown, markdownSource: newSource, updateKind: false)
+            try? store.saveContent(for: shotID, kind: .markdown, payload: .markdown(newSource), updateKind: false)
             store.reload(query: "", filter: .all)
         }
     }

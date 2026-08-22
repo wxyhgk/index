@@ -58,11 +58,15 @@ struct ShotCard: View {
     /// 尺寸浮条的悬停延迟。
     private let hoverDelay: Duration = .milliseconds(300)
 
-    /// 中间内容区的渲染器。按 shot.contentKind 分发到对应渲染器，
-    /// 未注册的类型退回图片渲染器（兜底）。
+    /// 中间内容区的渲染器。从 PluginRegistry 的 ContentMode 取（= Emacs major mode）。
     private var contentRenderer: any ContentRenderer {
         let kind = ContentKind(rawValue: shot.contentKind) ?? .image
-        return ContentRendererRegistry.shared.renderer(for: kind)
+        return PluginRegistry.shared.mode(for: kind).renderer
+    }
+
+    /// 卡片外观（header + caption 样式），按类型分发，ShotCard 不判断类型。
+    private var appearance: CardAppearance {
+        CardAppearance.forShot(shot, isRecording: isRecording, appIcon: appIcon)
     }
 
     // 刻意不用 @ObservedObject 订阅 store —— 只需要一个文件路径，
@@ -106,13 +110,13 @@ struct ShotCard: View {
         }
     }
 
-    /// 顶部彩色标题栏：截图=蓝 / 录屏=橙，带时间 + 来源 App logo。
+    /// 顶部彩色标题栏，样式由 CardAppearance 按类型提供。
     private var headerBar: some View {
         CardHeaderBar(
-            label: isRecording ? "录屏" : "截图",
+            label: appearance.headerLabel,
             time: shot.capturedAt,
-            appIcon: appIcon,
-            barColor: isRecording ? DS.clipboardFileBar : DS.clipboardImageBar
+            appIcon: appearance.headerIcon,
+            barColor: appearance.barColor
         )
     }
 
@@ -304,7 +308,7 @@ struct ShotCard: View {
 
     @ViewBuilder
     private var recordingBadge: some View {
-        if isRecording {
+        if appearance.showsRecordingBadge {
             Image(systemName: "play.fill")
                 .font(.system(size: DS.font20, weight: .semibold))
                 .foregroundStyle(.white)
@@ -364,13 +368,10 @@ struct ShotCard: View {
     /// 半个像素 —— 这是光学对齐想要的结果，再加 padding 就成了明显的缩进。
     private var caption: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(
-                shot.customTitle
-                    ?? (isRecording ? (shot.windowTitle ?? "录屏") : shot.primaryDisplayName)
-            )
+            Text(appearance.captionTitle)
                 .font(.system(size: DS.font12, weight: .medium))
                 .lineLimit(1)
-            Text(shot.capturedAt, format: .dateTime.month().day().hour().minute())
+            Text(appearance.captionSubtitle)
                 .font(.system(size: DS.font11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

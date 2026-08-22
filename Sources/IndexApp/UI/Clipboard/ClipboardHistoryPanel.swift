@@ -70,7 +70,12 @@ final class ClipboardHistoryPanel: NSPanel {
         let mouseLocation = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouseLocation) } ?? NSScreen.main
         // 优先用上次保存的相对位置（比例），在目标屏幕上还原。
-        if let screen, let relative = savedRelativePosition {
+        // clamp 到 [0.1, 0.9] 防止拖到屏幕外后无法找回。
+        if let screen, let raw = savedRelativePosition {
+            let relative = CGPoint(
+                x: min(max(raw.x, 0.1), 0.9),
+                y: min(max(raw.y, 0.1), 0.9)
+            )
             let origin = NSPoint(
                 x: screen.frame.minX + relative.x * screen.frame.width - frame.width / 2,
                 y: screen.frame.minY + relative.y * screen.frame.height - frame.height / 2

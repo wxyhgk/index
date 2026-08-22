@@ -265,19 +265,22 @@ final class CaptureCoordinator {
                 pipeline.run(
                     shotID: id,
                     originalURL: shotStore.originalURL(for: shot),
-                    appBundleID: metadata.appBundleID
+                    appBundleID: metadata.appBundleID,
+                    metadata: ShotMetadata(from: shot)
                 )
 
-                // 自动生成 Markdown 附加数据（不改变 contentKind，卡片仍显示图片）。
-                // 用户后续可切换为 Markdown 视图或导出 .md 文件。
-                let shotForMD = shot
-                Task { @MainActor in
-                    let source = MarkdownGenerator.generate(for: shotForMD)
-                    try? shotStore.saveContent(
-                        for: id,
-                        kind: .markdown,
-                        markdownSource: source,
-                        updateKind: false
+                // Hook 事件（= Emacs after-save-hook）：插件挂 afterCapture 就能响应。
+                let shotMeta = ShotMetadata(from: shot)
+                Task {
+                    await HookRegistry.shared.fire(
+                        .afterCapture,
+                        context: HookContext(
+                            event: .afterCapture,
+                            shotID: id,
+                            image: image,
+                            metadata: shotMeta,
+                            writer: nil
+                        )
                     )
                 }
             }

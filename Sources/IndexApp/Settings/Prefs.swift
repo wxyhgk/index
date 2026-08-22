@@ -157,6 +157,31 @@ struct ClipboardHistoryPrefs: Equatable {
     )
 }
 
+/// 插件管理：启停 + agent 配置。
+///
+/// 启用的插件 id 列表（不在列表里的插件不激活）。
+/// agent 的 LLM 端点 / 模型 / API key（key 走 Keychain，这里只存引用名）。
+struct PluginPrefs: Equatable {
+    /// 已启用的插件 id（空 = 全部启用，内置默认）。
+    var enabledPluginIDs: [String]
+    /// agent 是否启用。
+    var agentEnabled: Bool
+    /// agent LLM 端点（OpenAI 兼容 /v1/chat/completions）。
+    var agentBaseURL: String
+    /// agent 模型名。
+    var agentModel: String
+    /// agent API key（当前明文存 UserDefaults，后续迁 Keychain）。
+    var agentAPIKey: String
+
+    static let defaults = PluginPrefs(
+        enabledPluginIDs: [],
+        agentEnabled: false,
+        agentBaseURL: "https://ai-api.wxyhgk.com/v1",
+        agentModel: "gpt-5.6-luna",
+        agentAPIKey: ""
+    )
+}
+
 /// 全局快捷键：可重绑的组合键。
 struct ShortcutPrefs: Equatable {
     var captureShortcut: KeyboardShortcut
@@ -167,6 +192,7 @@ struct ShortcutPrefs: Equatable {
     var moleculePinShortcut: KeyboardShortcut
     var clipboardHistoryShortcut: KeyboardShortcut
     var searchPanelShortcut: KeyboardShortcut
+    var quickNoteShortcut: KeyboardShortcut
 
     static let defaults = ShortcutPrefs(
         captureShortcut: .captureDefault,
@@ -176,6 +202,7 @@ struct ShortcutPrefs: Equatable {
         scrollCaptureShortcut: .scrollCaptureDefault,
         moleculePinShortcut: .moleculePinDefault,
         clipboardHistoryShortcut: .clipboardHistoryDefault,
-        searchPanelShortcut: .searchPanelDefault
+        searchPanelShortcut: .searchPanelDefault,
+        quickNoteShortcut: .quickNoteDefault
     )
 }

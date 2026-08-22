@@ -11,17 +11,8 @@ struct MarkdownContentRenderer: ContentRenderer {
 
     @MainActor
     func render(shot: Shot, height: CGFloat, store: ShotStore, isHovering: Bool) -> AnyView {
-        // 取 Markdown 源码
-        let source: String
-        if let shotID = shot.id,
-           let content = try? store.content(for: shotID),
-           let contentID = content.id,
-           let md = try? store.markdownContent(for: contentID) {
-            source = md.source
-        } else {
-            // 兜底：没有存储的 Markdown 就现场生成
-            source = MarkdownGenerator.generate(for: shot)
-        }
+        // 收口读取：三步查询由 store 内部完成，没有存储的 Markdown 就现场生成。
+        let source = store.markdownSource(for: shot) ?? MarkdownGenerator.generate(for: shot)
 
         return AnyView(
             ScrollView(.vertical, showsIndicators: false) {

@@ -18,7 +18,8 @@ final class PipelineLifecycleTests: XCTestCase {
             pipeline.run(
                 shotID: try XCTUnwrap(shot.id),
                 originalURL: store.originalURL(for: shot),
-                appBundleID: nil
+                appBundleID: nil,
+                metadata: ShotMetadata(from: shot)
             )
         }
 
@@ -50,7 +51,8 @@ final class PipelineLifecycleTests: XCTestCase {
         pipeline.run(
             shotID: try XCTUnwrap(shot.id),
             originalURL: store.originalURL(for: shot),
-            appBundleID: nil
+            appBundleID: nil,
+            metadata: ShotMetadata(from: shot)
         )
 
         let bothProcessorsStarted = await waitUntil { await probe.startedCount() == 2 }
@@ -157,6 +159,7 @@ final class PipelineLifecycleTests: XCTestCase {
 
 private struct NullAttributeWriter: ShotAttributeWriter {
     func write(shotID: Int64, key: String, value: AttributeValue) async {}
+    func saveContent(shotID: Int64, kind: ContentKind, payload: ContentPayload) async {}
 }
 
 private struct ProbeProcessor: CapturePostProcessor {

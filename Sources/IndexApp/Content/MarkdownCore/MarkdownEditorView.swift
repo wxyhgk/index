@@ -42,16 +42,8 @@ struct MarkdownEditorView: View {
             .background(.bar)
             .overlay(Divider(), alignment: .bottom)
 
-            // 编辑区（MarkdownEngine 所见即所得 + SwiftMath 公式渲染）
-            NativeTextViewWrapper(
-                text: $source,
-                configuration: {
-                    var config = MarkdownEditorConfiguration.default
-                    config.services.latex = SwiftMathBridge()
-                    return config
-                }()
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 编辑区（共享组件：MarkdownEngine 所见即所得 + SwiftMath 公式渲染）
+            MarkdownEditorSurface(text: $source)
         }
         .background(Color(nsColor: .textBackgroundColor))
     }

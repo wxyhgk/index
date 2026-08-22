@@ -41,6 +41,10 @@ struct KeyboardShortcut: Codable, Equatable {
         keyCode: 49,                                   // 空格
         modifiers: UInt32(optionKey)
     )
+    static let quickNoteDefault = KeyboardShortcut(
+        keyCode: 45,                                   // N
+        modifiers: UInt32(controlKey) | UInt32(cmdKey)
+    )
 
     /// 至少要有一个修饰键，否则会把普通打字全劫走。
     var isValid: Bool { modifiers != 0 }

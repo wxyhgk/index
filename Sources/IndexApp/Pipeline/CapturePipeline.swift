@@ -30,12 +30,13 @@ final class CapturePipeline {
 
     /// 调用方必须先把原图落库。等待队列只保留 URL，不保留 4K `CGImage`；真正拿到
     /// 会话槽位时才在 utility 任务里解码，因此此同步入口不会在主 actor 上编码像素。
-    func run(shotID: Int64, originalURL: URL, appBundleID: String?) {
+    func run(shotID: Int64, originalURL: URL, appBundleID: String?, metadata: ShotMetadata) {
         let enabled = processors.filter(\.isEnabled)
         scheduler.submit(
             shotID: shotID,
             originalURL: originalURL,
             appBundleID: appBundleID,
+            metadata: metadata,
             processors: enabled
         )
     }

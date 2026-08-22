@@ -410,40 +410,69 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    /// 收口三步查询：content → contentID → markdownContent。
+    /// 没有存储的 Markdown 时返回 nil，调用方自行决定兜底策略。
+    func markdownSource(for shot: Shot) -> String? {
+        guard let shotID = shot.id,
+              let content = try? content(for: shotID),
+              let contentID = content.id,
+              let md = try? markdownContent(for: contentID) else { return nil }
+        return md.source
+    }
+
     /// 写入 shot 的结构化内容（shotContent + 类型扩展表）。
     /// 幂等：同一 shot 重复调用会覆盖旧内容。
+    /// - Parameter payload: 类型相关的载荷，内部 switch 写对应扩展表。
     /// - Parameter updateKind: 是否同步更新 shot.contentKind（截图时 false，手动新建时 true）
     func saveContent(
         for shotID: Int64,
         kind: ContentKind,
-        markdownSource: String? = nil,
+        payload: ContentPayload,
         updateKind: Bool = true
     ) throws {
         try writer.write { db in
             let now = Date()
-            // 幂等：INSERT OR REPLACE 保证同一 shotID 只有一条记录
+            // ON CONFLICT DO UPDATE 保住 contentID 稳定（INSERT OR REPLACE 会删旧行+插新行，
+            // 导致 contentID 变化、级联删除旧扩展行）。
             try db.execute(
                 sql: """
-                    INSERT OR REPLACE INTO shotContent (shotID, kind, confidence, createdAt)
+                    INSERT INTO shotContent (shotID, kind, confidence, createdAt)
                     VALUES (?, ?, 1.0, ?)
+                    ON CONFLICT(shotID) DO UPDATE SET
+                        kind = excluded.kind,
+                        confidence = excluded.confidence,
+                        createdAt = excluded.createdAt
                     """,
                 arguments: [shotID, kind.rawValue, now]
             )
-            let contentID = try Int64.fetchOne(
+            guard let contentID = try Int64.fetchOne(
                 db,
                 sql: "SELECT id FROM shotContent WHERE shotID = ?",
                 arguments: [shotID]
-            ) ?? 0
+            ) else { throw StoreError.missingShotID }
 
-            // Markdown 扩展表
-            if let markdownSource {
+            // 按 payload 类型写对应扩展表（主键是 contentID，同样用 ON CONFLICT 保幂等）
+            switch payload {
+            case .markdown(let source):
                 try db.execute(
                     sql: """
-                        INSERT OR REPLACE INTO contentMarkdown (contentID, source)
-                        VALUES (?, ?)
+                        INSERT INTO contentMarkdown (contentID, source) VALUES (?, ?)
+                        ON CONFLICT(contentID) DO UPDATE SET source = excluded.source
                         """,
-                    arguments: [contentID, markdownSource]
+                    arguments: [contentID, source]
                 )
+            case .code(let text, let language):
+                try db.execute(
+                    sql: """
+                        INSERT INTO contentCode (contentID, language, text) VALUES (?, ?, ?)
+                        ON CONFLICT(contentID) DO UPDATE SET
+                            language = excluded.language,
+                            text = excluded.text
+                        """,
+                    arguments: [contentID, language, text]
+                )
+            case .pdf:
+                break // PDF 扩展表待建
             }
 
             // 更新 shot.contentKind
@@ -475,21 +504,28 @@ final class ShotStore: ObservableObject {
                 arguments: [sha256, now, title]
             ) ?? { throw StoreError.missingShotID }()
 
-            // 写 shotContent + contentMarkdown
+            // 写 shotContent + contentMarkdown（ON CONFLICT 保 contentID 稳定）
             try db.execute(
                 sql: """
-                    INSERT OR REPLACE INTO shotContent (shotID, kind, confidence, createdAt)
+                    INSERT INTO shotContent (shotID, kind, confidence, createdAt)
                     VALUES (?, 'markdown', 1.0, ?)
+                    ON CONFLICT(shotID) DO UPDATE SET
+                        kind = excluded.kind,
+                        confidence = excluded.confidence,
+                        createdAt = excluded.createdAt
                     """,
                 arguments: [shotID, now]
             )
-            let contentID = try Int64.fetchOne(
+            guard let contentID = try Int64.fetchOne(
                 db,
                 sql: "SELECT id FROM shotContent WHERE shotID = ?",
                 arguments: [shotID]
-            ) ?? 0
+            ) else { throw StoreError.missingShotID }
             try db.execute(
-                sql: "INSERT OR REPLACE INTO contentMarkdown (contentID, source) VALUES (?, ?)",
+                sql: """
+                    INSERT INTO contentMarkdown (contentID, source) VALUES (?, ?)
+                    ON CONFLICT(contentID) DO UPDATE SET source = excluded.source
+                    """,
                 arguments: [contentID, source]
             )
             return try Shot.fetchOne(db, key: shotID)!

@@ -157,6 +157,25 @@ struct SensitiveContentProcessor: CapturePostProcessor {
     }
 }
 
+/// 截图后自动生成 Markdown 附加数据（不改变 contentKind，卡片仍显示图片）。
+/// 用户后续可切换为 Markdown 视图或导出 .md 文件。
+struct MarkdownGeneratorProcessor: CapturePostProcessor {
+    let id = "markdown-generator"
+
+    func process(_ input: PostProcessInput, writer: ShotAttributeWriter) async {
+        let source = MarkdownGenerator.generate(
+            title: input.metadata.title,
+            sha256: input.metadata.sha256,
+            appName: input.metadata.appName,
+            capturedAt: input.metadata.capturedAt,
+            pixelWidth: input.metadata.pixelWidth,
+            pixelHeight: input.metadata.pixelHeight,
+            ocrText: input.metadata.ocrText
+        )
+        await writer.saveContent(shotID: input.shotID, kind: .markdown, payload: .markdown(source))
+    }
+}
+
 extension CapturePipeline {
     /// 在这里登记。注入式：装配根（AppDelegate）传全量设置，预览/测试传 `FakeStyleStore`。
     static func registerBuiltins(
@@ -170,5 +189,6 @@ extension CapturePipeline {
         pipeline.register(FeaturePrintProcessor())
         pipeline.register(CLIPEmbeddingProcessor(intelligence: styleStore))
         pipeline.register(SensitiveContentProcessor(intelligence: styleStore))
+        pipeline.register(MarkdownGeneratorProcessor())
     }
 }

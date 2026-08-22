@@ -16,6 +16,8 @@ struct SettingsView: View {
                 .tabItem { Label("AI", systemImage: "sparkles") }
             UploadSettings(settings: settings)
                 .tabItem { Label("上传", systemImage: "square.and.arrow.up") }
+            PluginSettingsView()
+                .tabItem { Label("插件", systemImage: "puzzlepiece.extension") }
             StorageSettings()
                 .tabItem { Label("存储", systemImage: "internaldrive") }
         }

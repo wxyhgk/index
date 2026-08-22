@@ -120,9 +120,16 @@ final class AppSettings: ObservableObject {
         static let moleculePinShortcut = "moleculePinShortcut"
         static let clipboardHistoryShortcut = "clipboardHistoryShortcut"
         static let searchPanelShortcut = "searchPanelShortcut"
+        static let quickNoteShortcut = "quickNoteShortcut"
 
         static let clipboardHistoryEnabled = "clipboardHistoryEnabled"
         static let clipboardHistoryRetentionDays = "clipboardHistoryRetentionDays"
+
+        static let enabledPluginIDs = "enabledPluginIDs"
+        static let agentEnabled = "agentEnabled"
+        static let agentBaseURL = "agentBaseURL"
+        static let agentModel = "agentModel"
+        static let agentAPIKey = "agentAPIKey"
     }
 
     private let defaults = UserDefaults.standard
@@ -226,6 +233,16 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var plugin: PluginPrefs {
+        didSet {
+            defaults.set(plugin.enabledPluginIDs, forKey: Keys.enabledPluginIDs)
+            defaults.set(plugin.agentEnabled, forKey: Keys.agentEnabled)
+            defaults.set(plugin.agentBaseURL, forKey: Keys.agentBaseURL)
+            defaults.set(plugin.agentModel, forKey: Keys.agentModel)
+            defaults.set(plugin.agentAPIKey, forKey: Keys.agentAPIKey)
+        }
+    }
+
     /// 由 AppDelegate 装上：剪贴板历史开关/保留策略变化时启停监听、清理。
     var onClipboardHistoryChanged: (() -> Void)?
 
@@ -282,7 +299,13 @@ final class AppSettings: ObservableObject {
             Keys.uploadLinkFormat: UploadPrefs.defaults.uploadLinkFormat.rawValue,
 
             Keys.clipboardHistoryEnabled: ClipboardHistoryPrefs.defaults.enabled,
-            Keys.clipboardHistoryRetentionDays: ClipboardHistoryPrefs.defaults.retentionDays
+            Keys.clipboardHistoryRetentionDays: ClipboardHistoryPrefs.defaults.retentionDays,
+
+            Keys.enabledPluginIDs: PluginPrefs.defaults.enabledPluginIDs,
+            Keys.agentEnabled: PluginPrefs.defaults.agentEnabled,
+            Keys.agentBaseURL: PluginPrefs.defaults.agentBaseURL,
+            Keys.agentModel: PluginPrefs.defaults.agentModel,
+            Keys.agentAPIKey: PluginPrefs.defaults.agentAPIKey
         ])
 
         capture = CapturePrefs(
@@ -348,11 +371,19 @@ final class AppSettings: ObservableObject {
             scrollCaptureShortcut: Self.load(Keys.scrollCaptureShortcut, from: defaults) ?? .scrollCaptureDefault,
             moleculePinShortcut: Self.load(Keys.moleculePinShortcut, from: defaults) ?? .moleculePinDefault,
             clipboardHistoryShortcut: Self.load(Keys.clipboardHistoryShortcut, from: defaults) ?? .clipboardHistoryDefault,
-            searchPanelShortcut: Self.load(Keys.searchPanelShortcut, from: defaults) ?? .searchPanelDefault
+            searchPanelShortcut: Self.load(Keys.searchPanelShortcut, from: defaults) ?? .searchPanelDefault,
+            quickNoteShortcut: Self.load(Keys.quickNoteShortcut, from: defaults) ?? .quickNoteDefault
         )
         clipboardHistory = ClipboardHistoryPrefs(
             enabled: defaults.bool(forKey: Keys.clipboardHistoryEnabled),
             retentionDays: defaults.integer(forKey: Keys.clipboardHistoryRetentionDays)
+        )
+        plugin = PluginPrefs(
+            enabledPluginIDs: defaults.stringArray(forKey: Keys.enabledPluginIDs) ?? PluginPrefs.defaults.enabledPluginIDs,
+            agentEnabled: defaults.bool(forKey: Keys.agentEnabled),
+            agentBaseURL: defaults.string(forKey: Keys.agentBaseURL) ?? PluginPrefs.defaults.agentBaseURL,
+            agentModel: defaults.string(forKey: Keys.agentModel) ?? PluginPrefs.defaults.agentModel,
+            agentAPIKey: defaults.string(forKey: Keys.agentAPIKey) ?? ""
         )
     }
 
@@ -379,7 +410,7 @@ final class AppSettings: ObservableObject {
 
 extension AppSettings: CapturePreferences, RecordingPreferences, ExportPreferences,
     LibraryPreferences, AnnotationStylePreferences, IntelligencePreferences,
-    UploadPreferences, ShortcutPreferences {
+    UploadPreferences, ShortcutPreferences, PluginPreferences {
 
     // Capture
     var copyToClipboard: Bool { capture.copyToClipboard }
@@ -450,7 +481,15 @@ extension AppSettings: CapturePreferences, RecordingPreferences, ExportPreferenc
     var moleculePinShortcut: KeyboardShortcut { shortcuts.moleculePinShortcut }
     var clipboardHistoryShortcut: KeyboardShortcut { shortcuts.clipboardHistoryShortcut }
     var searchPanelShortcut: KeyboardShortcut { shortcuts.searchPanelShortcut }
+    var quickNoteShortcut: KeyboardShortcut { shortcuts.quickNoteShortcut }
 
     var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
     var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }
+
+    // Plugin
+    var enabledPluginIDs: [String] { plugin.enabledPluginIDs }
+    var agentEnabled: Bool { plugin.agentEnabled }
+    var agentBaseURL: String { plugin.agentBaseURL }
+    var agentModel: String { plugin.agentModel }
+    var agentAPIKey: String { plugin.agentAPIKey }
 }
