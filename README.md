@@ -4,7 +4,7 @@
 
 <h1 align="center">Index</h1>
 
-<p align="center">macOS 原生截图、标注与本地优先图片资料库。</p>
+<p align="center">macOS 原生截图、标注与本地优先图片资料库，内置 AI Agent。</p>
 
 <p align="center">
   <img src="docs/images/index-capture-selection.png" alt="Index 截图冻结与选区界面">
@@ -22,21 +22,22 @@
 </table>
 
 - **冻结截图**：多显示器画面一次冻结，框选与标注始终对应同一帧。
-- **图片资料库**：截图、录屏、本地图片和浏览器图片统一入库，支持 OCR、标签、收藏与搜索。
+- **内容库**：截图、录屏、剪切板、AI 对话统一入口，子 tab 切换，支持 OCR、标签、收藏与搜索。
+- **AI Agent**：⌘⇧A 呼出，自然语言搜索截图、打开图片、管理插件、修改配置，对话历史持久化可回溯。
+- **结构化剪贴板**：复制颜色、URL、文本、图片，粘贴时自动识别类型。
 - **非破坏性编辑**：原图不可变，标注保存为结构化图层和修订历史。
 - **快速输出**：钉图、复制、保存、上传和拖拽暂存走同一套动作。
 - **化学工作流**：`复制 XYZ → ⌃⌘M → 旋转 → 定格 → 标注 → 输出`。
 
-## 四个工作区
+## 工作区
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/index-library.png" alt="Index 图库"><br><b>图库</b></td>
-    <td width="50%"><img src="docs/images/index-collections.png" alt="Index 收藏"><br><b>收藏</b></td>
+    <td width="50%"><img src="docs/images/index-library.png" alt="Index 内容库"><br><b>内容库</b> — 截图 / 录屏 / 剪切板 / AI 对话，子 tab 切换。</td>
+    <td width="50%"><img src="docs/images/index-collections.png" alt="Index 专题集"><br><b>专题集</b> — 手动分组，跨来源组织内容。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/images/index-recordings.png" alt="Index 录屏"><br><b>录屏</b></td>
-    <td width="50%"><img src="docs/images/index-apps.png" alt="Index 应用"><br><b>应用</b></td>
+    <td width="50%"><img src="docs/images/index-apps.png" alt="Index 应用"><br><b>应用</b> — 按来源 App 浏览截图。</td>
   </tr>
 </table>
 
@@ -52,9 +53,9 @@
 open build/Index.app
 ```
 
-首次截图前，在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Index，然后重新打开 App。
+首次截图前，在"系统设置 → 隐私与安全性 → 屏幕录制"中允许 Index，然后重新打开 App。
 
-默认快捷键：截图 `⌃⌘A` · 滚动截图 `⌃⌘S` · 录屏 `⌃⌘R` · 图库 `⌃⌘G` · 3D 分子 `⌃⌘M`。
+默认快捷键：截图 `⌃⌘A` · 滚动截图 `⌃⌘S` · 录屏 `⌃⌘R` · 图库 `⌃⌘G` · AI Agent `⌘⇧A` · 3D 分子 `⌃⌘M`。
 
 开发检查：`./scripts/check.sh`
 
