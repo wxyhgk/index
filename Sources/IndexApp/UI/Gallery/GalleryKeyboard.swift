@@ -68,7 +68,10 @@ final class GalleryKeyboard {
         case KeyCode.returnKey where flags.isEmpty,
              KeyCode.keypadEnter where flags.isEmpty:
             guard let shot = selectedShot(), let id = shot.id else { return false }
-            RecordingAssetActions.performPrimary(recordingAsset(for: shot), shotID: id)
+            RecordingAssetActions.performPrimary(
+                recordingAsset(for: shot), shotID: id,
+                presenter: GalleryWindowController.shared
+            )
             return true
 
         case KeyCode.f2 where flags.isEmpty:

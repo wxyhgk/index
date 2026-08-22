@@ -207,4 +207,9 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         show(selecting: shot)
         GalleryWindowMode.shared.openEditor(shotID: shot.id)
     }
+
+    /// 进入编辑器（按 ID）。窗口未打开时仅切换模式。
+    func openEditor(shotID: Int64?) {
+        GalleryWindowMode.shared.openEditor(shotID: shotID)
+    }
 }

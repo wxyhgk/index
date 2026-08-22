@@ -53,10 +53,15 @@ enum RecordingPlaybackAction: Equatable {
 /// 录屏资产动作的统一执行器。状态判定保持纯值；系统打开、访达和弹窗仍只经 Platform 门面。
 @MainActor
 enum RecordingAssetActions {
-    static func performPrimary(_ asset: RecordingAsset, shotID: Int64?, hostWindow: NSWindow? = nil) {
+    static func performPrimary(
+        _ asset: RecordingAsset,
+        shotID: Int64?,
+        presenter: any GalleryPresenting,
+        hostWindow: NSWindow? = nil
+    ) {
         switch asset.playbackAction {
         case .editCover:
-            GalleryWindowMode.shared.openEditor(shotID: shotID)
+            presenter.openEditor(shotID: shotID)
         case let .play(url):
             SystemNavigator.open(url: url)
         case let .reportMissing(url):

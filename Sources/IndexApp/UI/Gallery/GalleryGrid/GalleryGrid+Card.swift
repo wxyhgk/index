@@ -73,7 +73,10 @@ extension GalleryGrid {
                     openMarkdownEditor(shot)
                     return
                 }
-                RecordingAssetActions.performPrimary(recordingAsset(for: shot), shotID: shot.id)
+                RecordingAssetActions.performPrimary(
+                    recordingAsset(for: shot), shotID: shot.id,
+                    presenter: GalleryWindowController.shared
+                )
             }
         )
         // 用 `onDrag` 而不是 `.draggable(_:)`，理由是**接收方兼容性**：
