@@ -61,6 +61,8 @@ protocol ShotWriting: AnyObject {
     func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws
     func attachRecording(at url: URL, to shot: Shot) throws
     func writeAttribute(shotID: Int64, key: String, value: AttributeValue)
+    func saveContent(for shotID: Int64, kind: ContentKind, markdownSource: String?, updateKind: Bool) throws
+    @discardableResult func createMarkdownShot(title: String, source: String) throws -> Shot
 }
 
 /// 可观察：需要订阅刷新的视图。

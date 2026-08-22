@@ -67,6 +67,11 @@ extension GalleryGrid {
             TapGesture(count: 2).onEnded {
                 // 带修饰键的双击只是两次修饰点击（toggle / 范围），不进编辑器。
                 guard currentModifiers().isEmpty else { return }
+                // Markdown 卡片：双击打开 Typora 风格编辑器
+                if shot.contentKind == "markdown" {
+                    openMarkdownEditor(shot)
+                    return
+                }
                 RecordingAssetActions.performPrimary(recordingAsset(for: shot), shotID: shot.id)
             }
         )
@@ -126,6 +131,25 @@ extension GalleryGrid {
     /// 不再反查 NSApp.currentEvent（tap 回调时它可能已被后续事件覆盖）。
     func currentModifiers() -> NSEvent.ModifierFlags {
         MouseModifierCache.shared.cachedFlags ?? []
+    }
+
+    /// 双击 Markdown 卡片：打开 Typora 风格编辑器。
+    private func openMarkdownEditor(_ shot: Shot) {
+        guard let shotID = shot.id else { return }
+        let store = ShotStore.shared
+        let source: String
+        if let content = try? store.content(for: shotID),
+           let contentID = content.id,
+           let md = try? store.markdownContent(for: contentID) {
+            source = md.source
+        } else {
+            source = MarkdownGenerator.generate(for: shot)
+        }
+        let title = shot.windowTitle ?? "Markdown"
+        MarkdownEditorWindowController.shared.show(title: title, source: source) { newSource in
+            try? store.saveContent(for: shotID, kind: .markdown, markdownSource: newSource, updateKind: false)
+            store.reload(query: "", filter: .all)
+        }
     }
 
     // MARK: 右键菜单

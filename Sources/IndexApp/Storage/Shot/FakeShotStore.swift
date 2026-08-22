@@ -509,6 +509,47 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         objectWillChange.send()
     }
 
+    func saveContent(for shotID: Int64, kind: ContentKind, markdownSource: String?, updateKind: Bool) throws {
+        if let idx = shots.firstIndex(where: { $0.id == shotID }) {
+            if updateKind {
+                shots[idx].contentKind = kind.rawValue
+            }
+        }
+        objectWillChange.send()
+    }
+
+    @discardableResult
+    func createMarkdownShot(title: String, source: String) throws -> Shot {
+        var shot = Shot(
+            id: nil,
+            sha256: UUID().uuidString,
+            capturedAt: Date(),
+            pixelWidth: 0,
+            pixelHeight: 0,
+            scale: 1.0,
+            appName: nil,
+            appBundleID: nil,
+            appVersion: nil,
+            appBuild: nil,
+            windowTitle: title,
+            sourceURL: nil,
+            displayID: nil,
+            displayName: nil,
+            regionX: 0,
+            regionY: 0,
+            regionW: 0,
+            regionH: 0,
+            ocrText: nil
+        )
+        shot.contentKind = "markdown"
+        let id = nextID
+        nextID += 1
+        shot.id = id
+        shots.insert(shot, at: 0)
+        objectWillChange.send()
+        return shot
+    }
+
     func attachMoleculeSource(_ source: MoleculeSourceAttachment, to shot: Shot) throws {
         guard let shotID = shot.id else { throw ShotStore.StoreError.missingShotID }
         moleculeSourceStore[shotID] = source

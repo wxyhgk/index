@@ -324,6 +324,48 @@ enum AppDatabase {
             try db.create(indexOn: "clipboardCollectionItem", columns: ["clipboardID"])
         }
 
+        // 结构化内容：shot 表加 contentKind 列（卡片渲染分发用，O(1) 读取），
+        // 通用内容记录表 shotContent（1:1 关联 shot，不是所有 shot 都有记录），
+        // 以及第一个类型专属扩展表 contentCode。
+        migrator.registerMigration("v12_shot_content") { db in
+            try db.execute(sql: "ALTER TABLE shot ADD COLUMN contentKind TEXT NOT NULL DEFAULT 'image'")
+            try db.create(indexOn: "shot", columns: ["contentKind"])
+
+            try db.create(table: "shotContent") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("shotID", .integer)
+                    .notNull()
+                    .unique()
+                    .references("shot", onDelete: .cascade)
+                t.column("kind", .text).notNull()
+                t.column("confidence", .double).notNull().defaults(to: 1.0)
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.create(indexOn: "shotContent", columns: ["kind"])
+
+            try db.create(table: "contentCode") { t in
+                t.column("contentID", .integer)
+                    .notNull()
+                    .references("shotContent", onDelete: .cascade)
+                t.column("language", .text)
+                t.column("text", .text).notNull()
+                t.primaryKey(["contentID"])
+            }
+        }
+
+        // Markdown 类型专属扩展表。
+        // Markdown 是一等公民：截图自动生成 + 手动新建，
+        // source 是 Markdown 原文，卡片中间区域排版渲染。
+        migrator.registerMigration("v13_content_markdown") { db in
+            try db.create(table: "contentMarkdown") { t in
+                t.column("contentID", .integer)
+                    .notNull()
+                    .references("shotContent", onDelete: .cascade)
+                t.column("source", .text).notNull()
+                t.primaryKey(["contentID"])
+            }
+        }
+
         return migrator
     }
 }

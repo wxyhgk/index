@@ -198,6 +198,9 @@ struct Shot: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, E
     /// 原图文件扩展名（截图恒为 png；导入的 SVG 保留矢量文件为 svg）。
     var originalExtension: String? = "png"
 
+    /// 卡片内容渲染分发类型（ContentKind rawValue）。默认 "image"。
+    var contentKind: String = "image"
+
     mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID
     }

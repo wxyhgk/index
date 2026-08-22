@@ -37,6 +37,10 @@ struct KeyboardShortcut: Codable, Equatable {
         keyCode: 9,                                    // V
         modifiers: UInt32(shiftKey) | UInt32(cmdKey)
     )
+    static let searchPanelDefault = KeyboardShortcut(
+        keyCode: 49,                                   // 空格
+        modifiers: UInt32(optionKey)
+    )
 
     /// 至少要有一个修饰键，否则会把普通打字全劫走。
     var isValid: Bool { modifiers != 0 }

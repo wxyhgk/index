@@ -58,11 +58,25 @@ struct GalleryBottomBar: View {
         Group {
             if destinationID == LibraryDestination.destinationID {
                 importButton
+                newMarkdownButton
             }
             if showsPrimaryCaptureButton {
                 captureButton
             }
         }
+    }
+
+    private var newMarkdownButton: some View {
+        Button {
+            viewModel.createMarkdownCard()
+        } label: {
+            Label("Markdown", systemImage: "text.badge.plus")
+                .font(.system(size: DS.font13, weight: .medium))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help("新建 Markdown 卡片")
+        .accessibilityLabel("新建 Markdown 卡片")
     }
 
     // MARK: - 右侧：辅助操作

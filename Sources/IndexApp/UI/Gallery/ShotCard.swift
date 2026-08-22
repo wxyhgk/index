@@ -58,6 +58,13 @@ struct ShotCard: View {
     /// 尺寸浮条的悬停延迟。
     private let hoverDelay: Duration = .milliseconds(300)
 
+    /// 中间内容区的渲染器。按 shot.contentKind 分发到对应渲染器，
+    /// 未注册的类型退回图片渲染器（兜底）。
+    private var contentRenderer: any ContentRenderer {
+        let kind = ContentKind(rawValue: shot.contentKind) ?? .image
+        return ContentRendererRegistry.shared.renderer(for: kind)
+    }
+
     // 刻意不用 @ObservedObject 订阅 store —— 只需要一个文件路径，
     // 订阅了会导致任何 store 变化都重建全部缩略图。
     private var thumbnailURL: URL { store.thumbnailURL(for: shot) }
@@ -134,12 +141,14 @@ struct ShotCard: View {
             // 浅色下 `.quaternary` 比 windowBackgroundColor 还暗，是浅色主题
             // 显脏的根源（见 DS.thumbnailBacking 的注释）。
             thumbShape.fill(DS.thumbnailBacking(scheme))
-            CachedImage(url: thumbnailURL, key: shot.sha256)
-                // 视差只给当前悬停的那张卡开：未悬停时 unit vector 是 .zero，
-                // `.visualEffect` 闭包退化成 identity 变换，成本近似为零。
-                // 幅度（±5pt / ±1.5° / perspective 0.3）在 DS.Parallax 里，
-                // Reduce Motion 由修饰器自己整个关掉（不是减半）。
-                .parallaxThumbnail(isEnabled: isHovering)
+            // 中间内容区通过渲染器协议分发：当前所有 shot 都是 .image，
+            // 后续新增内容类型（代码/表格/Markdown）只需注册新渲染器。
+            contentRenderer.render(
+                shot: shot,
+                height: height,
+                store: store,
+                isHovering: isHovering
+            )
         }
         .frame(height: height)
         // 尺寸浮条盖在底边，先叠再裁 —— 让浮条跟着缩略图圆角走。

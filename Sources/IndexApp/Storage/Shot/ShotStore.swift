@@ -383,6 +383,119 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    // MARK: - 结构化内容
+
+    /// 获取 shot 的结构化内容（纯图片 shot 返回 nil）。
+    func content(for shotID: Int64) throws -> ShotContent? {
+        try writer.read { db in
+            try ShotContent.fetchOne(
+                db,
+                sql: "SELECT * FROM shotContent WHERE shotID = ?",
+                arguments: [shotID]
+            )
+        }
+    }
+
+    /// 获取代码类型的扩展内容。
+    func codeContent(for contentID: Int64) throws -> ContentCode? {
+        try writer.read { db in
+            try ContentCode.fetchOne(db, key: contentID)
+        }
+    }
+
+    /// 获取 Markdown 类型的扩展内容。
+    func markdownContent(for contentID: Int64) throws -> ContentMarkdown? {
+        try writer.read { db in
+            try ContentMarkdown.fetchOne(db, key: contentID)
+        }
+    }
+
+    /// 写入 shot 的结构化内容（shotContent + 类型扩展表）。
+    /// 幂等：同一 shot 重复调用会覆盖旧内容。
+    /// - Parameter updateKind: 是否同步更新 shot.contentKind（截图时 false，手动新建时 true）
+    func saveContent(
+        for shotID: Int64,
+        kind: ContentKind,
+        markdownSource: String? = nil,
+        updateKind: Bool = true
+    ) throws {
+        try writer.write { db in
+            let now = Date()
+            // 幂等：INSERT OR REPLACE 保证同一 shotID 只有一条记录
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO shotContent (shotID, kind, confidence, createdAt)
+                    VALUES (?, ?, 1.0, ?)
+                    """,
+                arguments: [shotID, kind.rawValue, now]
+            )
+            let contentID = try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM shotContent WHERE shotID = ?",
+                arguments: [shotID]
+            ) ?? 0
+
+            // Markdown 扩展表
+            if let markdownSource {
+                try db.execute(
+                    sql: """
+                        INSERT OR REPLACE INTO contentMarkdown (contentID, source)
+                        VALUES (?, ?)
+                        """,
+                    arguments: [contentID, markdownSource]
+                )
+            }
+
+            // 更新 shot.contentKind
+            if updateKind {
+                try db.execute(
+                    sql: "UPDATE shot SET contentKind = ? WHERE id = ?",
+                    arguments: [kind.rawValue, shotID]
+                )
+            }
+        }
+    }
+
+    /// 手动新建一个 Markdown 卡片（无原图，contentKind = "markdown"）。
+    @discardableResult
+    func createMarkdownShot(title: String, source: String) throws -> Shot {
+        try writer.write { db in
+            let now = Date()
+            let sha256 = UUID().uuidString
+            // 纯 SQL 插入，避免 GRDB save 后 id 为 nil 的问题
+            let shotID = try Int64.fetchOne(
+                db,
+                sql: """
+                    INSERT INTO shot (sha256, capturedAt, pixelWidth, pixelHeight, scale,
+                                      windowTitle, regionX, regionY, regionW, regionH,
+                                      contentKind, originalExtension)
+                    VALUES (?, ?, 0, 0, 1.0, ?, 0, 0, 0, 0, 'markdown', 'png')
+                    RETURNING id
+                    """,
+                arguments: [sha256, now, title]
+            ) ?? { throw StoreError.missingShotID }()
+
+            // 写 shotContent + contentMarkdown
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO shotContent (shotID, kind, confidence, createdAt)
+                    VALUES (?, 'markdown', 1.0, ?)
+                    """,
+                arguments: [shotID, now]
+            )
+            let contentID = try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM shotContent WHERE shotID = ?",
+                arguments: [shotID]
+            ) ?? 0
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO contentMarkdown (contentID, source) VALUES (?, ?)",
+                arguments: [contentID, source]
+            )
+            return try Shot.fetchOne(db, key: shotID)!
+        }
+    }
+
     enum StoreError: Error {
         case encodingFailed
         case missingShotID

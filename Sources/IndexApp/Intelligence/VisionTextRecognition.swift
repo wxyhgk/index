@@ -25,10 +25,13 @@ struct VisionTextLine: Sendable, Equatable {
 
 struct VisionTextRecognition {
     func recognize(in image: CGImage) async -> [VisionTextLine] {
-        await withCheckedContinuation { continuation in
+        guard image.width > 0, image.height > 0 else { return [] }
+        let result: [VisionTextLine] = await withCheckedContinuation { continuation in
             let width = CGFloat(image.width)
             let height = CGFloat(image.height)
+            let guard_ = ContinuationGuard()
             let request = VNRecognizeTextRequest { request, error in
+                guard guard_.claim() else { return }
                 guard error == nil,
                       let observations = request.results as? [VNRecognizedTextObservation]
                 else {
@@ -55,7 +58,7 @@ struct VisionTextRecognition {
 
             request.recognitionLevel = .accurate
             // 第一候选保留自然语言纠错质量；敏感检测同时检查其它候选，避免密钥、
-            // 卡号等非自然语言内容被第一候选“修正”后漏掉。
+            // 卡号等非自然语言内容被第一候选"修正"后漏掉。
             request.usesLanguageCorrection = true
             request.recognitionLanguages = ["zh-Hans", "en-US"]
 
@@ -63,8 +66,23 @@ struct VisionTextRecognition {
                 try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             } catch {
                 NSLog("[Index] 文字识别失败: \(error)")
+                guard guard_.claim() else { return }
                 continuation.resume(returning: [])
             }
         }
+        return result
+    }
+}
+
+/// 保证 continuation 只 resume 一次（perform 可能先调 completion 再 throw）。
+private final class ContinuationGuard {
+    private var done = false
+    private let lock = NSLock()
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !done else { return false }
+        done = true
+        return true
     }
 }

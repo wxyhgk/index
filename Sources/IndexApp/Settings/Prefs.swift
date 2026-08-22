@@ -157,7 +157,7 @@ struct ClipboardHistoryPrefs: Equatable {
     )
 }
 
-/// 全局快捷键：七个可重绑的组合键。
+/// 全局快捷键：可重绑的组合键。
 struct ShortcutPrefs: Equatable {
     var captureShortcut: KeyboardShortcut
     var galleryShortcut: KeyboardShortcut
@@ -166,6 +166,7 @@ struct ShortcutPrefs: Equatable {
     var scrollCaptureShortcut: KeyboardShortcut
     var moleculePinShortcut: KeyboardShortcut
     var clipboardHistoryShortcut: KeyboardShortcut
+    var searchPanelShortcut: KeyboardShortcut
 
     static let defaults = ShortcutPrefs(
         captureShortcut: .captureDefault,
@@ -174,6 +175,7 @@ struct ShortcutPrefs: Equatable {
         recordingShortcut: .recordingDefault,
         scrollCaptureShortcut: .scrollCaptureDefault,
         moleculePinShortcut: .moleculePinDefault,
-        clipboardHistoryShortcut: .clipboardHistoryDefault
+        clipboardHistoryShortcut: .clipboardHistoryDefault,
+        searchPanelShortcut: .searchPanelDefault
     )
 }

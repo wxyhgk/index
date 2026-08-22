@@ -119,6 +119,7 @@ final class AppSettings: ObservableObject {
         static let scrollCaptureShortcut = "scrollCaptureShortcut"
         static let moleculePinShortcut = "moleculePinShortcut"
         static let clipboardHistoryShortcut = "clipboardHistoryShortcut"
+        static let searchPanelShortcut = "searchPanelShortcut"
 
         static let clipboardHistoryEnabled = "clipboardHistoryEnabled"
         static let clipboardHistoryRetentionDays = "clipboardHistoryRetentionDays"
@@ -346,7 +347,8 @@ final class AppSettings: ObservableObject {
             recordingShortcut: Self.load(Keys.recordingShortcut, from: defaults) ?? .recordingDefault,
             scrollCaptureShortcut: Self.load(Keys.scrollCaptureShortcut, from: defaults) ?? .scrollCaptureDefault,
             moleculePinShortcut: Self.load(Keys.moleculePinShortcut, from: defaults) ?? .moleculePinDefault,
-            clipboardHistoryShortcut: Self.load(Keys.clipboardHistoryShortcut, from: defaults) ?? .clipboardHistoryDefault
+            clipboardHistoryShortcut: Self.load(Keys.clipboardHistoryShortcut, from: defaults) ?? .clipboardHistoryDefault,
+            searchPanelShortcut: Self.load(Keys.searchPanelShortcut, from: defaults) ?? .searchPanelDefault
         )
         clipboardHistory = ClipboardHistoryPrefs(
             enabled: defaults.bool(forKey: Keys.clipboardHistoryEnabled),
@@ -447,6 +449,7 @@ extension AppSettings: CapturePreferences, RecordingPreferences, ExportPreferenc
     var scrollCaptureShortcut: KeyboardShortcut { shortcuts.scrollCaptureShortcut }
     var moleculePinShortcut: KeyboardShortcut { shortcuts.moleculePinShortcut }
     var clipboardHistoryShortcut: KeyboardShortcut { shortcuts.clipboardHistoryShortcut }
+    var searchPanelShortcut: KeyboardShortcut { shortcuts.searchPanelShortcut }
 
     var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
     var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }

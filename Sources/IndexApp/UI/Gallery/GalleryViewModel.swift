@@ -36,6 +36,22 @@ final class GalleryViewModel: ObservableObject {
         store.reload(query: searchText, filter: filter)
     }
 
+    /// 新建一个 Markdown 卡片。
+    func createMarkdownCard() {
+        let defaultSource = """
+        # 新建笔记
+
+        在这里输入内容…
+        """
+        do {
+            let shot = try store.createMarkdownShot(title: "新建笔记", source: defaultSource)
+            store.reload(query: searchText, filter: filter)
+            _ = shot
+        } catch {
+            NSLog("[Index] 新建 Markdown 卡片失败: \(error)")
+        }
+    }
+
     func reloadInBackground() async {
         await store.reloadInBackground(query: searchText, filter: filter)
     }

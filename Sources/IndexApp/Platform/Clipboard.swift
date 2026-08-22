@@ -62,4 +62,80 @@ enum Clipboard {
         pasteboard.clearContents()
         pasteboard.writeObjects(items)
     }
+
+    // MARK: 结构化复制（屏幕剪贴板）
+    //
+    // 一个 NSPasteboardItem 上同时写多种格式，目标应用各取所需：
+    //   · PNG（兜底，所有应用都能粘贴）
+    //   · 纯文本（备忘录/微信/终端）
+    //   · com.apple.color（Figma/设计工具，色值）
+    //   · public.url（浏览器直接打开）
+
+    /// 图片 + 文本（OCR 结果）。文本粘贴到备忘录，图片粘贴到设计工具。
+    static func copy(image: CGImage, text: String?) {
+        guard let pngData = ImageCodec.pngData(from: image) else { return }
+        let item = NSPasteboardItem()
+        item.setData(pngData, forType: .png)
+        if let text, !text.isEmpty {
+            item.setString(text, forType: .string)
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+    }
+
+    /// 色块：com.apple.color + 纯文本色值 + PNG。
+    static func copy(colorHex: String, image: CGImage) {
+        guard let pngData = ImageCodec.pngData(from: image) else { return }
+        let item = NSPasteboardItem()
+        item.setData(pngData, forType: .png)
+        item.setString(colorHex, forType: .string)
+        // com.apple.color：RGBA 4 字节
+        if let color = NSColor(hexString: colorHex),
+           let srgb = color.usingColorSpace(.sRGB) {
+            var rgba: [UInt8] = [
+                UInt8(srgb.redComponent * 255),
+                UInt8(srgb.greenComponent * 255),
+                UInt8(srgb.blueComponent * 255),
+                UInt8(srgb.alphaComponent * 255)
+            ]
+            item.setData(Data(rgba), forType: NSPasteboard.PasteboardType("com.apple.color"))
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+    }
+
+    /// URL：public.url + 纯文本 + PNG。
+    static func copy(url: String, image: CGImage) {
+        guard let pngData = ImageCodec.pngData(from: image) else { return }
+        let item = NSPasteboardItem()
+        item.setData(pngData, forType: .png)
+        item.setString(url, forType: .string)
+        if let urlObj = URL(string: url),
+           let urlData = urlObj.absoluteString.data(using: .utf8) {
+            item.setData(urlData, forType: NSPasteboard.PasteboardType("public.url"))
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+    }
+}
+
+// MARK: - NSColor hex 解析
+
+extension NSColor {
+    /// 解析 "#RRGGBB" 格式色值。
+    convenience init?(hexString: String) {
+        var hex = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hex.hasPrefix("#") else { return nil }
+        hex.removeFirst()
+        guard hex.count == 6, let value = Int(hex, radix: 16) else { return nil }
+        self.init(
+            srgbRed: CGFloat((value >> 16) & 0xFF) / 255.0,
+            green: CGFloat((value >> 8) & 0xFF) / 255.0,
+            blue: CGFloat(value & 0xFF) / 255.0,
+            alpha: 1.0
+        )
+    }
 }

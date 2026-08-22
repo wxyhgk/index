@@ -267,6 +267,19 @@ final class CaptureCoordinator {
                     originalURL: shotStore.originalURL(for: shot),
                     appBundleID: metadata.appBundleID
                 )
+
+                // 自动生成 Markdown 附加数据（不改变 contentKind，卡片仍显示图片）。
+                // 用户后续可切换为 Markdown 视图或导出 .md 文件。
+                let shotForMD = shot
+                Task { @MainActor in
+                    let source = MarkdownGenerator.generate(for: shotForMD)
+                    try? shotStore.saveContent(
+                        for: id,
+                        kind: .markdown,
+                        markdownSource: source,
+                        updateKind: false
+                    )
+                }
             }
 
             // 传底图 + 图层而非合成结果 —— 钉图窗口要靠它们继续非破坏性地画。
@@ -336,7 +349,24 @@ final class CaptureCoordinator {
         // 动作自己管剪贴板时不要再叠加一次。此前这里是个 switch 的 default 分支，
         // 新动作会默认吃到自动复制 —— 「上传图床」会顺手覆盖剪贴板。
         if styleStore.copyToClipboard && !action.suppressesAutoCopy {
-            Clipboard.copy(context.rendered())
+            let image = context.rendered()
+            // 先同步写 PNG（保证剪贴板立刻有图，不破坏现有体验）。
+            Clipboard.copy(image)
+            // 异步检测结构，升级剪贴板为多类型（文本/色值/URL + PNG）。
+            // 100-500ms 内用户如果已经粘贴了，拿到的是纯图片（兜底）。
+            Task { @MainActor in
+                let content = await StructuredContentDetector.detect(in: image)
+                switch content {
+                case .color(let hex):
+                    Clipboard.copy(colorHex: hex, image: image)
+                case .url(let url):
+                    Clipboard.copy(url: url, image: image)
+                case .text(let text):
+                    Clipboard.copy(image: image, text: text)
+                case .image:
+                    break
+                }
+            }
         }
 
         Task {

@@ -278,6 +278,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.bind("clipboard-history", to: settings.clipboardHistoryShortcut) { [weak self] in
             self?.toggleClipboardHistory()
         }
+        GlobalHotKeyCenter.shared.bind("search-panel", to: settings.searchPanelShortcut) { [weak self] in
+            self?.toggleSearchPanel()
+        }
     }
 
     private func refreshHotKeys() {
@@ -288,6 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.update("gallery", to: settings.galleryShortcut)
         GlobalHotKeyCenter.shared.update("pin-molecule", to: settings.moleculePinShortcut)
         GlobalHotKeyCenter.shared.update("clipboard-history", to: settings.clipboardHistoryShortcut)
+        GlobalHotKeyCenter.shared.update("search-panel", to: settings.searchPanelShortcut)
     }
 
     // MARK: - 动作
@@ -336,6 +340,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleClipboardHistory() {
         ClipboardHistoryCoordinator.shared.togglePanel()
+    }
+
+    @objc private func toggleSearchPanel() {
+        SearchPanelCoordinator.shared.togglePanel()
     }
 
     /// 按设置启停剪贴板监听 + 清理过期条目。

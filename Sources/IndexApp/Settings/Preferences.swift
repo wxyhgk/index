@@ -80,6 +80,7 @@ protocol ShortcutPreferences: AnyObject {
     var scrollCaptureShortcut: KeyboardShortcut { get }
     var moleculePinShortcut: KeyboardShortcut { get }
     var clipboardHistoryShortcut: KeyboardShortcut { get }
+    var searchPanelShortcut: KeyboardShortcut { get }
 }
 
 protocol ClipboardHistoryPreferences: AnyObject {
