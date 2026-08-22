@@ -7,21 +7,6 @@ import SwiftUI
 // 和浮动面板共享去重/落盘逻辑，只是展示形态不同。
 // ============================================================
 
-struct ClipboardDestination: GalleryDestination {
-    let id = "destination.clipboard"
-    let title = "剪贴板"
-    let symbol = "doc.on.clipboard"
-    let order = 75
-
-    func content() -> AnyView {
-        AnyView(ClipboardContent())
-    }
-
-    func inspector() -> AnyView? {
-        AnyView(ClipboardInspectorPanelHost())
-    }
-}
-
 // MARK: - 中间内容：页头 + 网格
 
 struct ClipboardContent: View {

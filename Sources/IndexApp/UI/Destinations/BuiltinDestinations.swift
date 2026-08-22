@@ -39,6 +39,7 @@ struct ContentLibraryView: View {
 
     @AppStorage("contentLibrarySubTab") private var subTab = "shots"
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var viewModel = GalleryViewModel.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -59,7 +60,7 @@ struct ContentLibraryView: View {
             Group {
                 switch subTab {
                 case "recordings":
-                    RecordingsContent()
+                    RecordingsContent(viewModel: viewModel)
                 case "clipboard":
                     ClipboardContent()
                 case "ai":
@@ -71,6 +72,24 @@ struct ContentLibraryView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .floatingPanel()
+        .task {
+            activateSubTabScope()
+        }
+        .onChange(of: subTab) { _, _ in
+            activateSubTabScope()
+        }
+    }
+
+    /// 子 tab 切换时联动 scope：录屏子 tab 固定 .recordings filter，
+    /// 其他子 tab 恢复 .all。destinationID 不变时 GalleryView 的
+    /// activateScope 不触发，这里补上。
+    private func activateSubTabScope() {
+        switch subTab {
+        case "recordings":
+            GalleryContentScope.recordings.activate(in: viewModel)
+        default:
+            GalleryContentScope.recordings.deactivate(in: viewModel)
+        }
     }
 
     private func subTabButton(_ id: String, title: String, symbol: String) -> some View {
@@ -113,32 +132,6 @@ struct LibraryContent: View {
 // ============================================================
 // MARK: - 录屏
 // ============================================================
-
-/// 录屏是一等图库入口，但仍复用 Shot 网格：首帧负责封面、recording 附件
-/// 负责指向 mp4。这样既有清晰入口，也不复制图库的选择、详情和时间分组体系。
-struct RecordingsDestination: GalleryDestination {
-    let id = "destination.recordings"
-    let title = "录屏"
-    let symbol = "play.rectangle"
-    let order = 50
-
-    var contentScope: GalleryContentScope { .recordings }
-
-    func badge(reader: any ShotReading = ShotStore.shared) -> Int? {
-        let count = reader.recordingCount()
-        return count > 0 ? count : nil
-    }
-
-    func badge() -> Int? { badge(reader: ShotStore.shared) }
-
-    func content() -> AnyView {
-        AnyView(RecordingsContent())
-    }
-
-    func inspector() -> AnyView? {
-        AnyView(GalleryInspectorPanelHost())
-    }
-}
 
 struct RecordingsContent: View {
     @ObservedObject private var store: ShotStore

@@ -339,7 +339,7 @@ final class ShotStoreTests: XCTestCase {
             )[try XCTUnwrap(recording.id)],
             path
         )
-        XCTAssertEqual(RecordingsDestination().badge(reader: store), 1)
+        XCTAssertEqual(store.recordingCount(), 1)
         let semanticCandidateIDs = await store.matchingShotIDsInBackground(filter: .recordings)
         XCTAssertEqual(semanticCandidateIDs, [try XCTUnwrap(recording.id)])
     }
