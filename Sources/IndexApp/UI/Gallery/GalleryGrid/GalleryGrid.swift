@@ -273,7 +273,7 @@ struct GalleryGrid: View {
         // 列数是键盘导航（上下键 = ±列数）唯一需要知道的东西，网格算好直接喂。
         // 空列表时网格不渲染，这里也照样上报（值无害，且列表回来时不用等首帧）。
         .onChange(of: keyboardColumnCount, initial: true) { _, count in
-            GalleryKeyboard.shared.gridColumnCount = count
+            GalleryWindowController.shared.keyboard.gridColumnCount = count
         }
         .task(id: GalleryGridSnapshotKey(
             sessionGeneration: sessionLifecycle.generation,

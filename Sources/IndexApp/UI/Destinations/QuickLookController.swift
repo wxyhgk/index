@@ -164,16 +164,16 @@ extension QuickLookController: QLPreviewPanelDelegate {
                 close()
                 return true
             case KeyCode.left:
-                GalleryKeyboard.shared.moveSelection(by: -1)
+                GalleryWindowController.shared.keyboard.moveSelection(by: -1)
                 return true
             case KeyCode.right:
-                GalleryKeyboard.shared.moveSelection(by: 1)
+                GalleryWindowController.shared.keyboard.moveSelection(by: 1)
                 return true
             case KeyCode.up:
-                GalleryKeyboard.shared.moveSelection(by: -GalleryKeyboard.shared.columnCount())
+                GalleryWindowController.shared.keyboard.moveSelection(by: -GalleryWindowController.shared.keyboard.columnCount())
                 return true
             case KeyCode.down:
-                GalleryKeyboard.shared.moveSelection(by: GalleryKeyboard.shared.columnCount())
+                GalleryWindowController.shared.keyboard.moveSelection(by: GalleryWindowController.shared.keyboard.columnCount())
                 return true
             default:
                 return false

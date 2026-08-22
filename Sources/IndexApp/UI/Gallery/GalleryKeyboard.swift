@@ -11,8 +11,6 @@ import AppKit
 @MainActor
 final class GalleryKeyboard {
 
-    static let shared = GalleryKeyboard()
-
     private let store: ShotReading
     private let displayedShots: () -> [Shot]
     private let matchingIDs: () async -> [Int64]
@@ -39,12 +37,12 @@ final class GalleryKeyboard {
     /// 由 GalleryWindowController 在建窗时调用。重复调用无害。
     func install() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             // 只把值类型带进 assumeIsolated，避免非 Sendable 的 NSEvent 跨隔离告警。
             let keyCode = event.keyCode
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let handled = MainActor.assumeIsolated {
-                GalleryKeyboard.shared.handle(keyCode: keyCode, flags: flags)
+                self?.handle(keyCode: keyCode, flags: flags) ?? false
             }
             return handled ? nil : event
         }

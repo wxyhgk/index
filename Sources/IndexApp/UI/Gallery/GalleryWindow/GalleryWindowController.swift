@@ -14,6 +14,8 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     let mode = GalleryWindowMode()
     /// 选中状态。窗口级会话状态，生命周期跟随窗口。
     let selection = GallerySelection()
+    /// 键盘导航。窗口级控制器，生命周期跟随窗口。
+    let keyboard = GalleryKeyboard()
 
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
@@ -71,7 +73,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         _ = window.setFrameAutosaveName("IndexGallery")
         super.init(window: window)
 
-        GalleryKeyboard.shared.install()
+        keyboard.install()
 
         // 单窗口多模式（图库 / 编辑器 / 设置）：标题跟着模式走；
         // 进入编辑瞬间若 Quick Look 面板开着，顺手收掉 ——
