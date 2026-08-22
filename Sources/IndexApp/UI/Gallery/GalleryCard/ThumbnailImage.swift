@@ -218,8 +218,8 @@ final class ThumbnailCache {
     static let shared = ThumbnailCache()
     /// 约容纳两屏 Retina 缩略图。可见卡片自己还会短暂持有 NSImage，缓存预算不能
     /// 再按整页 300 张估算，否则图库窗口与 SwiftUI 图层会同时放大峰值。
-    nonisolated static let totalCostLimit = 48 * 1024 * 1024
-    nonisolated static let countLimit = 160
+    nonisolated static let totalCostLimit = 128 * 1024 * 1024
+    nonisolated static let countLimit = 400
 
     private let cache = NSCache<NSString, NSImage>()
     /// View 自己强持有正在显示的 token；缓存只弱引用。离屏后 token 可释放，浏览过
@@ -415,6 +415,9 @@ struct CachedImage: View {
         .task(id: "\(key)#\(invalidation.version)") { await load() }
     }
 
+    /// 快速滚动时批量图同时完成加载，跳过动画避免一批并行淡入事务叠加在滚动帧里。
+    private static var lastLoadFinishTime: TimeInterval = 0
+
     private func load() async {
         if let hit = loader.cachedImage(forKey: key) {
             image = hit
@@ -422,6 +425,13 @@ struct CachedImage: View {
         }
         image = nil
         guard let decoded = await loader.load(url: url, key: key), !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.15)) { image = decoded }
+        let now = Date.timeIntervalSinceReferenceDate
+        let isBurst = now - Self.lastLoadFinishTime < 0.1
+        Self.lastLoadFinishTime = now
+        if isBurst {
+            image = decoded
+        } else {
+            withAnimation(.easeOut(duration: 0.15)) { image = decoded }
+        }
     }
 }

@@ -28,7 +28,7 @@ enum GalleryVisualBudget {
 struct ShotSection: Identifiable {
     let id: String
     let title: String
-    let shots: [Shot]
+    var shots: [Shot]
 
     /// 按拍摄时间分成 今天 / 昨天 / 本周 / 本月 / 更早，空段不出现。
     /// shots 已按时间降序，段内顺序自然保持。
@@ -54,6 +54,22 @@ struct ShotSection: Identifiable {
         return ["今天", "昨天", "本周", "本月", "更早"].compactMap { title in
             buckets[title].map { ShotSection(id: title, title: title, shots: $0) }
         }
+    }
+
+    /// 分页追加：只对新 shots 做分组，合并到已有 sections 尾部。
+    /// 新 shots 的时间一定比已有更旧（时间降序），所以只会落在已有段尾部或新段。
+    static func mergeAppend(existing: [ShotSection], newShots: [Shot], calendar: Calendar = .current) -> [ShotSection] {
+        guard !newShots.isEmpty else { return existing }
+        let newSections = group(newShots, calendar: calendar)
+        var result = existing
+        for newSection in newSections {
+            if let idx = result.firstIndex(where: { $0.id == newSection.id }) {
+                result[idx].shots.append(contentsOf: newSection.shots)
+            } else {
+                result.append(newSection)
+            }
+        }
+        return result
     }
 }
 

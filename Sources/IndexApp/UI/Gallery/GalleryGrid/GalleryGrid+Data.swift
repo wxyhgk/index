@@ -41,10 +41,22 @@ extension GalleryGrid {
 
     func refreshGridSnapshot(forceFullMetadata: Bool = false) async {
         let shots = visibleShots
+        let ids = shots.compactMap(\.id)
+        let previous = metadataSnapshot
+        let isPureAppend = !forceFullMetadata
+            && !previous.shotIDs.isEmpty
+            && ids.count > previous.shotIDs.count
+            && ids.starts(with: previous.shotIDs)
+
+        // 纯追加（分页）：只对新增 shots 做分组，合并到已有 sections 尾部。
+        // 避免整体重建 sections 导致全网格 ForEach diff + body 重算。
         if presentation.semanticMode, presentation.semanticResults != nil {
             sections = shots.isEmpty
                 ? []
                 : [ShotSection(id: "语义", title: "按相似度排序", shots: shots)]
+        } else if isPureAppend, !sections.isEmpty {
+            let newShots = Array(shots.dropFirst(previous.shotIDs.count))
+            sections = ShotSection.mergeAppend(existing: sections, newShots: newShots)
         } else {
             sections = ShotSection.group(shots)
         }
@@ -54,12 +66,6 @@ extension GalleryGrid {
             GalleryPerformance.firstPagePublished(count: shots.count)
         }
 
-        let ids = shots.compactMap(\.id)
-        let previous = metadataSnapshot
-        let isPureAppend = !forceFullMetadata
-            && !previous.shotIDs.isEmpty
-            && ids.count > previous.shotIDs.count
-            && ids.starts(with: previous.shotIDs)
         let requestedIDs = isPureAppend
             ? Array(ids.dropFirst(previous.shotIDs.count))
             : ids
