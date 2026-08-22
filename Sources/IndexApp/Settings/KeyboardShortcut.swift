@@ -45,6 +45,10 @@ struct KeyboardShortcut: Codable, Equatable {
         keyCode: 45,                                   // N
         modifiers: UInt32(controlKey) | UInt32(cmdKey)
     )
+    static let agentDefault = KeyboardShortcut(
+        keyCode: 0,                                    // A
+        modifiers: UInt32(shiftKey) | UInt32(cmdKey)
+    )
 
     /// 至少要有一个修饰键，否则会把普通打字全劫走。
     var isValid: Bool { modifiers != 0 }

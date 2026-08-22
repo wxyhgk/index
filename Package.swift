@@ -10,7 +10,8 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
         .package(url: "https://github.com/nodes-app/swift-markdown-engine.git", from: "0.1.0"),
-        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui.git", from: "2.0.2")
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui.git", from: "2.0.2"),
+        .package(url: "https://github.com/MacPaw/OpenAI.git", from: "0.5.1")
     ],
     targets: [
         .executableTarget(
@@ -19,7 +20,8 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "MarkdownEngine", package: "swift-markdown-engine"),
                 .product(name: "MarkdownEngineLatex", package: "swift-markdown-engine"),
-                .product(name: "MarkdownUI", package: "swift-markdown-ui")
+                .product(name: "MarkdownUI", package: "swift-markdown-ui"),
+                .product(name: "OpenAI", package: "OpenAI")
             ],
             path: "Sources/IndexApp",
             exclude: [

@@ -6,20 +6,27 @@ struct SelectionAISettings: View {
 
     @State private var apiKey = ""
     @State private var hasStoredKey = false
+    @State private var showReplaceField = false
     @State private var isTesting = false
     @State private var statusText: String?
     @State private var statusIsError = false
 
     var body: some View {
-        Form {
-            Section("服务") {
-                TextField("Base URL", text: $settings.intelligence.selectionAIBaseURL)
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
+        SettingsPage {
+            SettingsCard("服务", icon: "server.rack") {
+                DebouncedTextField(
+                    title: "Base URL",
+                    placeholder: "https://api.openai.com/v1",
+                    initialValue: settings.intelligence.selectionAIBaseURL,
+                    monospaced: true
+                ) { settings.intelligence.selectionAIBaseURL = $0 }
 
-                TextField("模型", text: $settings.intelligence.selectionAIModel)
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
+                DebouncedTextField(
+                    title: "模型",
+                    placeholder: "gpt-4o",
+                    initialValue: settings.intelligence.selectionAIModel,
+                    monospaced: true
+                ) { settings.intelligence.selectionAIModel = $0 }
 
                 HStack {
                     Spacer()
@@ -27,53 +34,49 @@ struct SelectionAISettings: View {
                         settings.intelligence.selectionAIBaseURL = IntelligencePrefs.defaults.selectionAIBaseURL
                         settings.intelligence.selectionAIModel = IntelligencePrefs.defaults.selectionAIModel
                     }
-                    .controlSize(.small)
+                    .controlSize(.mini)
                 }
-
-                Text("使用 OpenAI-compatible Responses API。请求只包含你再次框选的局部图片；服务地址必须是 HTTPS。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
-            Section("API Key") {
-                SecureField(
-                    hasStoredKey ? "已保存在 macOS 钥匙串；输入新值可替换" : "粘贴 API Key",
-                    text: $apiKey
-                )
-                .textFieldStyle(.roundedBorder)
-
-                HStack(spacing: 8) {
-                    Label(
-                        hasStoredKey ? "已安全保存" : "尚未配置",
-                        systemImage: hasStoredKey ? "checkmark.shield.fill" : "key"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(hasStoredKey ? .green : .secondary)
-
-                    Spacer()
-
-                    if hasStoredKey {
+            SettingsCard("API Key", icon: "key") {
+                if hasStoredKey {
+                    HStack(spacing: DS.s2) {
+                        Image(systemName: "checkmark.shield.fill")
+                            .font(.system(size: DS.font12)).foregroundStyle(.green)
+                        Spacer()
+                        Button("替换") { showReplaceField = true }
+                            .controlSize(.mini)
                         Button("移除") { removeKey() }
-                            .controlSize(.small)
+                            .controlSize(.mini)
                     }
-                    Button(hasStoredKey ? "替换" : "保存") { saveKey() }
-                        .controlSize(.small)
-                        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if showReplaceField {
+                        HStack(spacing: DS.s2) {
+                            SecureField("粘贴新 Key", text: $apiKey)
+                                .textFieldStyle(.roundedBorder)
+                            Button("保存") { saveKey(); showReplaceField = false }
+                                .controlSize(.mini)
+                                .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                } else {
+                    HStack(spacing: DS.s2) {
+                        SecureField("粘贴 API Key", text: $apiKey)
+                            .textFieldStyle(.roundedBorder)
+                        Button("保存") { saveKey() }
+                            .controlSize(.mini)
+                            .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                 }
-
-                Text("密钥不会写入项目、UserDefaults 或日志，只保存在当前 Mac 的钥匙串中。界面不会回显已经保存的值。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
-            Section("验证") {
-                HStack(spacing: 10) {
+            SettingsCard("验证", icon: "checkmark.seal") {
+                HStack(spacing: DS.s3) {
                     Button {
                         Task { await testConnection() }
                     } label: {
                         if isTesting {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
+                            HStack(spacing: DS.s2) {
+                                ProgressView().controlSize(.mini)
                                 Text("测试中…")
                             }
                         } else {
@@ -84,24 +87,12 @@ struct SelectionAISettings: View {
 
                     if let statusText {
                         Text(statusText)
-                            .font(.caption)
+                            .font(.system(size: DS.font11))
                             .foregroundStyle(statusIsError ? .red : .green)
-                            .lineLimit(2)
                     }
                 }
-
-                Text("测试会向当前服务发送一张不含用户内容的 8×8 白色图片，以验证鉴权、图像输入和结构化输出。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("使用") {
-                Text("普通截图确认范围后，点击 Tool Palette 的“AI 选区”，再次框选局部内容，然后选择解释、翻译、公式或表格。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
         .onAppear { refreshKeyStatus() }
     }
 
@@ -110,7 +101,6 @@ struct SelectionAISettings: View {
             hasStoredKey = try MacSelectionAIKeychain.shared.loadAPIKey() != nil
         } catch {
             hasStoredKey = false
-            setStatus(error.localizedDescription, isError: true)
         }
     }
 
@@ -130,7 +120,6 @@ struct SelectionAISettings: View {
             try MacSelectionAIKeychain.shared.deleteAPIKey()
             apiKey = ""
             hasStoredKey = false
-            setStatus("已移除", isError: false)
         } catch {
             setStatus(error.localizedDescription, isError: true)
         }
@@ -152,8 +141,7 @@ struct SelectionAISettings: View {
             ))
             guard result.kind == .explain else {
                 throw SelectionAIError.responseKindMismatch(
-                    expected: .explain,
-                    actual: result.kind
+                    expected: .explain, actual: result.kind
                 )
             }
             setStatus("连接成功", isError: false)
@@ -169,11 +157,8 @@ struct SelectionAISettings: View {
 
     private static func testImage() -> CGImage {
         let context = CGContext(
-            data: nil,
-            width: 8,
-            height: 8,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
+            data: nil, width: 8, height: 8,
+            bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!

@@ -25,6 +25,12 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- 本地 AI 模型服务器（vLLM/Ollama/LM Studio）通常只开 http -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
     <!-- 取浏览器当前标签页地址需要 Apple Events 授权 -->
     <key>NSAppleEventsUsageDescription</key>
     <string>Index 需要询问浏览器当前页面的网址，以便把它记录到图片的来源信息里。</string>

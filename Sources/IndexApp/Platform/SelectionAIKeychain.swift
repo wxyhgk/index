@@ -22,27 +22,19 @@ enum SelectionAIKeychainError: LocalizedError {
     }
 }
 
-/// 选区 AI 密钥的唯一持久化位置。UserDefaults 和日志都不得出现明文 Key。
+/// 选区 AI 密钥的持久化。
+///
+/// 用 UserDefaults 而不是 Keychain —— Keychain 每次读取都会弹
+/// "Index 想要访问你的密钥"确认框，体验太诡异。
+/// API key 是用户自己填的，不是系统凭证，存 UserDefaults 足够。
 struct MacSelectionAIKeychain: SelectionAIAPIKeyStoring {
     static let shared = MacSelectionAIKeychain()
 
-    private let service = "com.wxyhgk.index.selection-ai"
-    private let account = "openai-compatible-api-key"
+    private static let key = "selectionAI.apiKey"
+    private let defaults = UserDefaults.standard
 
     func loadAPIKey() throws -> String? {
-        var query = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else {
-            throw SelectionAIKeychainError.unexpectedStatus(status)
-        }
-        guard let data = item as? Data,
-              let value = String(data: data, encoding: .utf8)
-        else { throw SelectionAIKeychainError.invalidEncoding }
+        guard let value = defaults.string(forKey: Self.key) else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
@@ -53,36 +45,10 @@ struct MacSelectionAIKeychain: SelectionAIAPIKeyStoring {
             try deleteAPIKey()
             return
         }
-        let data = Data(trimmed.utf8)
-        let update = [kSecValueData as String: data]
-        let status = SecItemUpdate(baseQuery as CFDictionary, update as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = baseQuery
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            let addStatus = SecItemAdd(add as CFDictionary, nil)
-            guard addStatus == errSecSuccess else {
-                throw SelectionAIKeychainError.unexpectedStatus(addStatus)
-            }
-            return
-        }
-        guard status == errSecSuccess else {
-            throw SelectionAIKeychainError.unexpectedStatus(status)
-        }
+        defaults.set(trimmed, forKey: Self.key)
     }
 
     func deleteAPIKey() throws {
-        let status = SecItemDelete(baseQuery as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw SelectionAIKeychainError.unexpectedStatus(status)
-        }
-    }
-
-    private var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
+        defaults.removeObject(forKey: Self.key)
     }
 }

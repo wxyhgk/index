@@ -328,6 +328,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.bind("quick-note", to: settings.quickNoteShortcut) { [weak self] in
             self?.toggleQuickNote()
         }
+        GlobalHotKeyCenter.shared.bind("agent", to: settings.agentShortcut) { [weak self] in
+            self?.toggleAgent()
+        }
     }
 
     private func refreshHotKeys() {
@@ -340,6 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.update("clipboard-history", to: settings.clipboardHistoryShortcut)
         GlobalHotKeyCenter.shared.update("search-panel", to: settings.searchPanelShortcut)
         GlobalHotKeyCenter.shared.update("quick-note", to: settings.quickNoteShortcut)
+        GlobalHotKeyCenter.shared.update("agent", to: settings.agentShortcut)
     }
 
     // MARK: - 动作
@@ -396,6 +400,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleQuickNote() {
         QuickNoteCoordinator.shared.toggle()
+    }
+
+    @objc private func toggleAgent() {
+        AgentCoordinator.shared.toggle()
     }
 
     /// 按设置启停剪贴板监听 + 清理过期条目。

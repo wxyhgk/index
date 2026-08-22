@@ -11,15 +11,23 @@ struct OpenAICompatibleSelectionAIConfiguration: Equatable, Sendable {
         self.timeout = timeout
     }
 
+    /// 拼出 /chat/completions 端点。支持 http 和 https。
     var responseURL: URL? {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmed),
-              components.scheme?.lowercased() == "https",
+              let scheme = components.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
               components.host != nil
         else { return nil }
         var path = components.path
         while path.hasSuffix("/") { path.removeLast() }
-        if !path.hasSuffix("/responses") { path += "/responses" }
+        if path.hasSuffix("/chat/completions") {
+            // 用户直接填了完整端点
+        } else if path.hasSuffix("/responses") {
+            path = String(path.dropLast("/responses".count)) + "/chat/completions"
+        } else {
+            path += "/chat/completions"
+        }
         components.path = path
         return components.url
     }
@@ -57,7 +65,24 @@ enum OpenAICompatibleSelectionAIError: LocalizedError {
     }
 }
 
-/// OpenAI-compatible Responses API 实现。网络、Bearer 鉴权和凭据读取全部收在 Platform。
+/// 信任所有证书的 delegate（本地模型服务器自签名/无证书）。
+private final class TrustAllDelegate: NSObject, URLSessionDelegate {
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let trust = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+}
+
+/// OpenAI-compatible Chat Completions API 实现。
+/// 支持本地模型（vLLM/Ollama/LM Studio）和云端 OpenAI 兼容端点。
 struct OpenAICompatibleSelectionAIProvider: SelectionAIProvider {
     let id = "openai-compatible"
     let supportedTasks = Set(SelectionAITaskKind.allCases)
@@ -66,14 +91,21 @@ struct OpenAICompatibleSelectionAIProvider: SelectionAIProvider {
     private let credentialStore: any SelectionAIAPIKeyStoring
     private let session: URLSession
 
+    /// 共享的 trust-all session（本地服务器自签名/无证书）。
+    private static let trustAllSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        return URLSession(configuration: config, delegate: TrustAllDelegate(), delegateQueue: nil)
+    }()
+
     init(
         configuration: OpenAICompatibleSelectionAIConfiguration,
         credentialStore: any SelectionAIAPIKeyStoring = MacSelectionAIKeychain.shared,
-        session: URLSession = .shared
+        session: URLSession? = nil
     ) {
         self.configuration = configuration
         self.credentialStore = credentialStore
-        self.session = session
+        self.session = session ?? Self.trustAllSession
     }
 
     var isAvailable: Bool {
@@ -122,65 +154,31 @@ struct OpenAICompatibleSelectionAIProvider: SelectionAIProvider {
             )
         } catch SelectionAIImageEncoderError.remainsTooLarge(let bytes) {
             throw OpenAICompatibleSelectionAIError.imageTooLarge(bytes)
-        } catch SelectionAIImageEncoderError.preparationFailed {
-            throw OpenAICompatibleSelectionAIError.imageEncodingFailed
-        } catch SelectionAIImageEncoderError.encodingFailed {
-            throw OpenAICompatibleSelectionAIError.imageEncodingFailed
         } catch {
             throw OpenAICompatibleSelectionAIError.imageEncodingFailed
         }
 
-        let expectedKind = request.task.kind.rawValue
-        var prompt = Self.prompt(for: request.task)
-        if let instruction = request.instruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !instruction.isEmpty {
-            prompt += "\n用户补充要求：\(instruction)"
-        }
-        if let recognized = request.input.recognizedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !recognized.isEmpty {
-            prompt += "\n本地 OCR 参考文本：\n\(recognized)"
-        }
+        let prompt = Self.prompt(for: request.task, request: request)
+        let imageDataURL = "data:\(encodedImage.mimeType);base64,\(encodedImage.data.base64EncodedString())"
 
-        let nullableString: [String: Any] = ["type": ["string", "null"]]
-        let schema: [String: Any] = [
-            "type": "object",
-            "properties": [
-                "kind": ["type": "string", "enum": [expectedKind]],
-                "primary": ["type": "string"],
-                "markdown": nullableString,
-                "csv": nullableString,
-                "source_language": nullableString,
-                "target_language": nullableString
-            ],
-            "required": [
-                "kind", "primary", "markdown", "csv", "source_language", "target_language"
-            ],
-            "additionalProperties": false
-        ]
+        // Chat Completions API 格式
         let body: [String: Any] = [
             "model": configuration.normalizedModel,
-            "store": false,
-            "reasoning": ["effort": "low"],
-            "max_output_tokens": policy.maxOutputTokens,
-            "input": [[
-                "role": "user",
-                "content": [
-                    ["type": "input_text", "text": prompt],
-                    [
-                        "type": "input_image",
-                        "image_url": "data:\(encodedImage.mimeType);base64,\(encodedImage.data.base64EncodedString())",
-                        "detail": "high"
+            "messages": [
+                [
+                    "role": "system",
+                    "content": "你是一个结构化 JSON 输出助手。严格按用户要求的 JSON schema 返回，不要加任何额外文字或代码围栏。"
+                ],
+                [
+                    "role": "user",
+                    "content": [
+                        ["type": "text", "text": prompt],
+                        ["type": "image_url", "image_url": ["url": imageDataURL]]
                     ]
                 ]
-            ]],
-            "text": [
-                "format": [
-                    "type": "json_schema",
-                    "name": "index_selection_ai_result",
-                    "strict": true,
-                    "schema": schema
-                ]
-            ]
+            ],
+            "max_tokens": policy.maxOutputTokens,
+            "temperature": 0.1
         ]
         guard JSONSerialization.isValidJSONObject(body) else {
             throw OpenAICompatibleSelectionAIError.invalidRequest
@@ -194,14 +192,29 @@ struct OpenAICompatibleSelectionAIProvider: SelectionAIProvider {
         return urlRequest
     }
 
+    // MARK: - 响应解析
+
     static func parseResult(from data: Data, task: SelectionAITask) throws -> SelectionAIResult {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let text = outputText(from: root),
-              let json = normalizedJSONText(text).data(using: .utf8),
-              let payload = try? JSONDecoder().decode(StructuredPayload.self, from: json),
-              payload.kind == task.kind.rawValue
-        else { throw OpenAICompatibleSelectionAIError.invalidStructuredOutput }
+              let text = outputText(from: root)
+        else { throw OpenAICompatibleSelectionAIError.missingOutput }
 
+        let json = normalizedJSONText(text)
+        guard let jsondata = json.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(StructuredPayload.self, from: jsondata),
+              payload.kind == task.kind.rawValue
+        else {
+            // 容错：模型没严格返回 kind 字段时，尝试直接解析
+            if let jsondata = json.data(using: .utf8),
+               let fallback = try? JSONDecoder().decode(StructuredPayload.self, from: jsondata) {
+                return try makeResult(from: fallback, task: task)
+            }
+            throw OpenAICompatibleSelectionAIError.invalidStructuredOutput
+        }
+        return try makeResult(from: payload, task: task)
+    }
+
+    private static func makeResult(from payload: StructuredPayload, task: SelectionAITask) throws -> SelectionAIResult {
         switch task {
         case .explain:
             return .explanation(markdown: payload.markdown ?? payload.primary)
@@ -221,50 +234,77 @@ struct OpenAICompatibleSelectionAIProvider: SelectionAIProvider {
         }
     }
 
+    /// 从 Chat Completions 响应提取文本。
     private static func outputText(from root: [String: Any]) -> String? {
-        if let direct = root["output_text"] as? String, !direct.isEmpty { return direct }
-        guard let output = root["output"] as? [[String: Any]] else { return nil }
-        let texts = output.flatMap { item -> [String] in
-            guard item["type"] as? String == "message",
-                  let content = item["content"] as? [[String: Any]]
-            else { return [] }
-            return content.compactMap { block in
-                guard block["type"] as? String == "output_text" else { return nil }
-                return block["text"] as? String
-            }
-        }
-        return texts.isEmpty ? nil : texts.joined(separator: "\n")
+        guard let choices = root["choices"] as? [[String: Any]],
+              let first = choices.first,
+              let message = first["message"] as? [String: Any],
+              let content = message["content"] as? String,
+              !content.isEmpty
+        else { return nil }
+        return content
     }
 
     private static func normalizedJSONText(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("```"), trimmed.hasSuffix("```") else { return trimmed }
-        var lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
-        if !lines.isEmpty { lines.removeFirst() }
-        if !lines.isEmpty { lines.removeLast() }
-        return lines.joined(separator: "\n")
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 去掉 markdown 代码围栏
+        if trimmed.hasPrefix("```") {
+            if trimmed.hasPrefix("```json") { trimmed = String(trimmed.dropFirst(7)) }
+            else if trimmed.hasPrefix("```") { trimmed = String(trimmed.dropFirst(3)) }
+            if trimmed.hasSuffix("```") { trimmed = String(trimmed.dropLast(3)) }
+            trimmed = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // 提取第一个 { ... } 块（模型可能在 JSON 前后加了说明文字）
+        if let start = trimmed.firstIndex(of: "{"),
+           let end = trimmed.lastIndex(of: "}") {
+            trimmed = String(trimmed[start...end])
+        }
+        return trimmed
     }
 
     private static func providerErrorMessage(from data: Data) -> String? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let error = root["error"] as? [String: Any],
-              let message = error["message"] as? String
-        else { return nil }
-        return String(message.prefix(240))
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        // OpenAI 格式: {"error": {"message": "..."}}
+        if let error = root["error"] as? [String: Any],
+           let message = error["message"] as? String {
+            return String(message.prefix(240))
+        }
+        // vLLM/Ollama 格式: {"error": "string"}
+        if let error = root["error"] as? String {
+            return String(error.prefix(240))
+        }
+        return nil
     }
 
-    private static func prompt(for task: SelectionAITask) -> String {
+    // MARK: - Prompt
+
+    private static func prompt(for task: SelectionAITask, request: SelectionAIRequest) -> String {
         let common = "只分析用户提供的截图选区。不要猜测选区外的上下文。"
+        let schema = """
+        严格返回如下 JSON（不要加代码围栏或额外文字）：
+        {"kind":"\(task.kind.rawValue)","primary":"...","markdown":null,"csv":null,"source_language":null,"target_language":null}
+        """
+        var prompt: String
         switch task {
         case .explain:
-            return "\(common) 用中文解释画面内容；primary 和 markdown 都给出完整 Markdown 说明，其余可空字段返回 null。"
+            prompt = "\(common) 用中文解释画面内容；primary 和 markdown 都给出完整 Markdown 说明，其余可空字段返回 null。"
         case let .translate(targetLanguage):
-            return "\(common) 识别画面文字并翻译为 \(targetLanguage)，保留专业术语、公式和段落；primary 只放译文，并填写语言字段。"
+            prompt = "\(common) 识别画面文字并翻译为 \(targetLanguage)，保留专业术语、公式和段落；primary 只放译文，并填写语言字段。"
         case .formulaToLaTeX:
-            return "\(common) 识别其中的数学或化学公式；primary 只返回可复制的 LaTeX 源码，不加代码围栏。"
+            prompt = "\(common) 识别其中的数学或化学公式；primary 只返回可复制的 LaTeX 源码，不加代码围栏。"
         case .extractTable:
-            return "\(common) 按视觉行列提取表格；primary 与 markdown 放完整 Markdown 表格，csv 放符合 RFC 4180 的 CSV。"
+            prompt = "\(common) 按视觉行列提取表格；primary 与 markdown 放完整 Markdown 表格，csv 放符合 RFC 4180 的 CSV。"
         }
+        prompt += "\n\(schema)"
+        if let instruction = request.instruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !instruction.isEmpty {
+            prompt += "\n用户补充要求：\(instruction)"
+        }
+        if let recognized = request.input.recognizedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !recognized.isEmpty {
+            prompt += "\n本地 OCR 参考文本：\n\(recognized)"
+        }
+        return prompt
     }
 
     private struct StructuredPayload: Decodable {

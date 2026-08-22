@@ -103,7 +103,6 @@ struct GalleryView: View {
                             .font(.system(size: DS.font13, weight: .medium))
                     }
                     .buttonStyle(.plain)
-                    // Esc 也能退，与编辑器一致。
                     .keyboardShortcut(.escape, modifiers: [])
 
                     Text("设置")
@@ -113,12 +112,12 @@ struct GalleryView: View {
                 }
                 .padding(.leading, DS.Shell.trafficLightInset)
                 .padding(.trailing, DS.Shell.windowMargin)
-                .frame(height: DS.Shell.topBarHeight)
+                .frame(height: 48)
 
                 SettingsView()
-                    .frame(maxWidth: 720, maxHeight: .infinity)
-                    .padding(.horizontal, DS.Shell.windowMargin)
-                    .padding(.bottom, DS.Shell.windowMargin)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, DS.s3)
+                    .padding(.bottom, DS.s3)
             }
         }
         .ignoresSafeArea(.container, edges: .top)

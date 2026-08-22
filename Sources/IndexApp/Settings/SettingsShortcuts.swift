@@ -1,91 +1,67 @@
 import SwiftUI
 
-// MARK: - 快捷键
-
 struct ShortcutSettings: View {
     @ObservedObject var settings: AppSettings
-
-    /// 快捷键录制框统一尺寸（与 ShortcutRecorder 的 intrinsicContentSize 对齐）。
-    private let recorderSize = CGSize(width: 130, height: 24)
+    private let recorderSize = CGSize(width: 110, height: 22)
 
     var body: some View {
-        Form {
-            Section("全局快捷键") {
-                LabeledContent("截图") {
-                    ShortcutRecorder(shortcut: $settings.shortcuts.captureShortcut)
-                        .frame(width: recorderSize.width, height: recorderSize.height)
-                }
-                LabeledContent("延时截图") {
-                    ShortcutRecorder(shortcut: $settings.shortcuts.delayedCaptureShortcut)
-                        .frame(width: recorderSize.width, height: recorderSize.height)
-                }
-                LabeledContent("录屏") {
-                    ShortcutRecorder(shortcut: $settings.shortcuts.recordingShortcut)
-                        .frame(width: recorderSize.width, height: recorderSize.height)
-                }
-                LabeledContent("滚动截图") {
-                    ShortcutRecorder(shortcut: $settings.shortcuts.scrollCaptureShortcut)
-                        .frame(width: recorderSize.width, height: recorderSize.height)
-                }
-                LabeledContent("打开图库") {
-                    ShortcutRecorder(shortcut: $settings.shortcuts.galleryShortcut)
-                        .frame(width: recorderSize.width, height: recorderSize.height)
-                }
-                LabeledContent("3D 分子钉图") {
-                    ShortcutRecorder(shortcut: $settings.shortcuts.moleculePinShortcut)
-                        .frame(width: recorderSize.width, height: recorderSize.height)
-                }
-
+        SettingsPage {
+            // 全局快捷键：大卡片（6 行 recorder）
+            SettingsCard("全局快捷键", icon: "command") {
+                shortcutRow("截图", $settings.shortcuts.captureShortcut)
+                shortcutRow("延时截图", $settings.shortcuts.delayedCaptureShortcut)
+                shortcutRow("录屏", $settings.shortcuts.recordingShortcut)
+                shortcutRow("滚动截图", $settings.shortcuts.scrollCaptureShortcut)
+                shortcutRow("打开图库", $settings.shortcuts.galleryShortcut)
+                shortcutRow("3D 分子钉图", $settings.shortcuts.moleculePinShortcut)
                 HStack {
                     Spacer()
                     Button("恢复默认") { settings.resetShortcuts() }
-                        .controlSize(.small)
+                        .controlSize(.mini)
+                }
+            }
+
+            // 只读按键：小卡片并排
+            ToggleCardGrid {
+                MiniCard("标注工具", icon: "pencil.tip") {
+                    ForEach(AnnotationTool.shortcuts, id: \.keyCode) { s in
+                        keyRow(s.label, s.toolName)
+                    }
                 }
 
-                Text("点一下方框，然后按下新的组合键。必须包含至少一个修饰键。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("标注工具") {
-                // 从 AnnotationTool.shortcuts 生成 —— 此前这里是手写的第三份清单，
-                // 改了实际映射它不会跟着变。
-                ForEach(AnnotationTool.shortcuts, id: \.keyCode) { shortcut in
-                    shortcutRow(shortcut.label, shortcut.toolName)
+                MiniCard("其它按键", icon: "keyboard") {
+                    keyRow("⌘Z", "撤销")
+                    keyRow("⌘C", "复制")
+                    keyRow("⇧C", "取字")
+                    keyRow("⏎", "确定")
+                    keyRow("⎋", "取消")
+                    keyRow("右键", "退出")
                 }
-                Text("截图工具条常驻 指针 / 矩形 / 箭头 / 文字 / 马赛克，其余工具（含序号）按快捷键激活时临时出现。截图默认不选中任何工具；按 V 或点「指针」后可选中图层、并直接拖选画面里的文字（实况文本）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
 
-            Section("其它按键") {
-                shortcutRow("⌘Z", "撤销标注")
-                shortcutRow("⌘C / ⌘S", "复制 / 保存（指针模式下选中了文字则 ⌘C 复制文字）")
-                shortcutRow("⇧C", "取字：识别选区内全部文字并复制到剪贴板")
-                shortcutRow("⏎", "确定（行为见「通用」）")
-                shortcutRow("方向键", "微调选区，⇧ 十倍步进，⌥ 改尺寸")
-                shortcutRow("⎋", "编辑后第一次退出编辑、第二次取消；中性态一次取消")
-                shortcutRow("右键", "逐级退出：文字输入 → 图层选中 → 指针/工具 → 选区 → 取消")
-            }
-
-            Section("钉图窗口") {
-                shortcutRow("⌘T", "切换鼠标穿透。穿透后点击落到下层窗口，从菜单栏「解除钉图穿透」恢复")
-                shortcutRow("滚轮", "缩放钉图")
-                shortcutRow("⌘滚轮", "调整透明度")
-                shortcutRow("双击", "复制到剪贴板")
+                MiniCard("钉图", icon: "pin") {
+                    keyRow("⌘T", "穿透")
+                    keyRow("滚轮", "缩放")
+                    keyRow("⌘滚轮", "透明度")
+                    keyRow("双击", "复制")
+                }
             }
         }
-        .formStyle(.grouped)
     }
 
-    private func shortcutRow(_ key: String, _ description: String) -> some View {
-        LabeledContent {
-            Text(description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } label: {
-            Text(key)
-                .font(.system(.caption, design: .monospaced))
+    private func shortcutRow(_ label: String, _ shortcut: Binding<KeyboardShortcut>) -> some View {
+        HStack {
+            Text(label).font(.system(size: DS.font12))
+            Spacer()
+            ShortcutRecorder(shortcut: shortcut)
+                .frame(width: recorderSize.width, height: recorderSize.height)
+        }
+    }
+
+    private func keyRow(_ key: String, _ desc: String) -> some View {
+        HStack {
+            Text(key).font(.system(size: DS.font12, design: .monospaced))
+            Spacer()
+            Text(desc).font(.system(size: DS.font11)).foregroundStyle(.secondary)
         }
     }
 }

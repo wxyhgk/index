@@ -1,12 +1,10 @@
 import Foundation
 
-// MARK: - Agent LLM 客户端（OpenAI 兼容 function calling）
+// MARK: - Agent LLM 客户端（原生 URLSession + Chat Completions API）
 //
-// 把 AgentTool 表喂给 LLM（tools 参数），LLM 决定调哪个工具、传什么参数，
-// 客户端执行工具后把结果回给 LLM，直到 LLM 给出最终回答。
-//
-// 端点 / 模型 / key 从 PluginPrefs 读（用户可在设置页配）。
-// 当前支持 OpenAI 兼容的 /v1/chat/completions 接口。
+// 不用 MacPaw/OpenAI SDK —— SDK 硬编码 https 且不支持自定义端口，
+// 本地模型服务器（vLLM/Ollama/LM Studio）通常只开 http://host:port/v1。
+// 这里直接用 URLSession + trust-all delegate，和 OpenAICompatibleSelectionAIProvider 一致。
 
 struct AgentLLMClient: Sendable {
 
@@ -14,63 +12,117 @@ struct AgentLLMClient: Sendable {
     let model: String
     let apiKey: String
 
-    /// 是否已配置（有 key 才启用）。
     var isConfigured: Bool { !apiKey.isEmpty && !baseURL.isEmpty }
 
-    /// 跑一轮 agent 对话：用户输入 → LLM 调工具 → 最终回答。
-    /// - Parameters:
-    ///   - userMessage: 用户说的话
-    ///   - tools: 可调用的工具表
-    ///   - maxRounds: 最多几轮工具调用（防死循环）
+    // MARK: - 请求
+
     func run(
         userMessage: String,
         tools: [AgentTool],
         maxRounds: Int = 5
     ) async -> String {
-        guard isConfigured else { return "Agent 未配置 API key（设置 → 插件 → Agent）" }
+        guard isConfigured, let url = makeURL() else {
+            return "Agent 未配置（设置 → 插件 → Agent）"
+        }
 
         var messages: [[String: Any]] = [
-            ["role": "system", "content": "你是 Index 截图软件的内置 agent。你可以调用工具来查询截图、管理插件、修改配置。回答用中文，简洁直接。"],
-            ["role": "user", "content": userMessage]
+            [
+                "role": "system",
+                "content": "你是 Index 截图软件的内置 agent。你可以调用工具来查询截图、管理插件、修改配置。回答用中文，简洁直接。"
+            ],
+            [
+                "role": "user",
+                "content": userMessage
+            ]
         ]
 
-        for _ in 0..<maxRounds {
-            let response = await chat(messages: messages, tools: tools)
-            guard let response else { return "LLM 请求失败" }
+        let sdkTools: [[String: Any]] = tools.map { tool in
+            let properties: [String: Any] = tool.parameters.mapValues { desc in
+                ["type": "string", "description": desc]
+            }
+            return [
+                "type": "function",
+                "function": [
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": [
+                        "type": "object",
+                        "properties": properties,
+                        "required": Array(tool.parameters.keys)
+                    ]
+                ]
+            ]
+        }
 
-            // 提取 content 和 tool_calls
-            let content = (response["content"] as? String) ?? ""
-            let toolCalls = (response["tool_calls"] as? [[String: Any]]) ?? []
+        for _ in 0..<maxRounds {
+            var body: [String: Any] = [
+                "model": model,
+                "messages": messages
+            ]
+            if !sdkTools.isEmpty {
+                body["tools"] = sdkTools
+                body["tool_choice"] = "auto"
+            }
+
+            let data: Data
+            do {
+                data = try await post(url: url, body: body)
+            } catch {
+                NSLog("[Agent] LLM 请求失败: \(error.localizedDescription)")
+                return "LLM 请求失败: \(error.localizedDescription)"
+            }
+
+            // 解析响应
+            guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = root["choices"] as? [[String: Any]],
+                  let first = choices.first,
+                  let message = first["message"] as? [String: Any]
+            else {
+                return "（响应格式异常）"
+            }
+
+            let content = message["content"] as? String ?? ""
+            let toolCalls = message["tool_calls"] as? [[String: Any]] ?? []
 
             if toolCalls.isEmpty {
-                // 没有工具调用，content 就是最终回答
                 return content.isEmpty ? "（无回答）" : content
             }
 
-            // 有工具调用：执行每个工具，把结果回给 LLM
-            messages.append(["role": "assistant", "content": content, "tool_calls": toolCalls])
+            // 有工具调用
+            var assistantMsg: [String: Any] = [
+                "role": "assistant",
+                "content": content
+            ]
+            if !toolCalls.isEmpty {
+                assistantMsg["tool_calls"] = toolCalls
+            }
+            messages.append(assistantMsg)
+
             for call in toolCalls {
-                let funcInfo = (call["function"] as? [String: Any]) ?? [:]
-                let name = (funcInfo["name"] as? String) ?? ""
-                let argsStr = (funcInfo["arguments"] as? String) ?? "{}"
-                let callID = (call["id"] as? String) ?? ""
+                guard let fn = call["function"] as? [String: Any],
+                      let name = fn["name"] as? String,
+                      let argsStr = fn["arguments"] as? String
+                else { continue }
 
-                let args: [String: String] = (try? JSONSerialization.jsonObject(with: Data(argsStr.utf8)))
-                    .flatMap { $0 as? [String: String] } ?? [:]
+                let args: [String: String] = (try? JSONSerialization.jsonObject(
+                    with: Data(argsStr.utf8)
+                )).flatMap { $0 as? [String: String] } ?? [:]
 
-                let result = await executeTool(name: name, args: args, tools: tools)
+                let toolResult = await executeTool(name: name, args: args, tools: tools)
+                let callID = call["id"] as? String ?? "call_\(UUID().uuidString.prefix(8))"
 
                 messages.append([
                     "role": "tool",
                     "tool_call_id": callID,
-                    "content": result
+                    "content": toolResult
                 ])
             }
         }
         return "（达到最大工具调用轮数）"
     }
 
-    /// 执行一个工具。
+    // MARK: - 工具执行
+
     private func executeTool(name: String, args: [String: String], tools: [AgentTool]) async -> String {
         guard let tool = tools.first(where: { $0.name == name }) else {
             return "未知工具: \(name)"
@@ -86,59 +138,90 @@ struct AgentLLMClient: Sendable {
         }
     }
 
-    /// 调 /v1/chat/completions。
-    private func chat(messages: [[String: Any]], tools: [AgentTool]) async -> [String: Any]? {
-        guard let url = URL(string: baseURL.hasSuffix("/") ? baseURL + "chat/completions" : baseURL + "/chat/completions") else { return nil }
+    // MARK: - HTTP
 
-        var request = URLRequest(url: url)
+    private func makeURL() -> URL? {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              components.host != nil
+        else { return nil }
+        var path = components.path
+        while path.hasSuffix("/") { path.removeLast() }
+        if path.hasSuffix("/chat/completions") {
+            // 用户直接填了完整端点
+        } else {
+            path += "/chat/completions"
+        }
+        components.path = path
+        return components.url
+    }
+
+    private func post(url: URL, body: [String: Any]) async throws -> Data {
+        guard JSONSerialization.isValidJSONObject(body) else {
+            throw AgentLLMError.invalidBody
+        }
+        var request = URLRequest(url: url, timeoutInterval: 60)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 30
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        var body: [String: Any] = [
-            "model": model,
-            "messages": messages,
-            "stream": false
-        ]
-
-        // tools（function calling）
-        if !tools.isEmpty {
-            body["tools"] = tools.map { tool in
-                [
-                    "type": "function",
-                    "function": [
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": [
-                            "type": "object",
-                            "properties": tool.parameters.mapValues { desc in
-                                ["type": "string", "description": desc]
-                            }
-                        ]
-                    ]
-                ]
-            }
+        let (data, response) = try await AgentLLMClient.trustAllSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw AgentLLMError.badResponse
         }
+        guard (200..<300).contains(http.statusCode) else {
+            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
+                .flatMap { $0["error"] as? [String: Any] }
+                .flatMap { $0["message"] as? String }
+                ?? (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
+                    .flatMap { $0["error"] as? String }
+                ?? "HTTP \(http.statusCode)"
+            throw AgentLLMError.http(http.statusCode, msg)
+        }
+        return data
+    }
 
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+    // MARK: - Trust-all session
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-                let text = String(data: data, encoding: .utf8) ?? ""
-                NSLog("[Agent] LLM 请求失败 status=\(status) body=\(text.prefix(200))")
-                return nil
-            }
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let first = choices.first,
-                  let message = first["message"] as? [String: Any] else { return nil }
-            return message
-        } catch {
-            NSLog("[Agent] LLM 请求异常: \(error.localizedDescription)")
-            return nil
+    private static let trustAllSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        return URLSession(configuration: config, delegate: TrustAllDelegate(), delegateQueue: nil)
+    }()
+}
+
+// MARK: - 错误类型
+
+enum AgentLLMError: LocalizedError {
+    case invalidBody
+    case badResponse
+    case http(Int, String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidBody: "请求体无效"
+        case .badResponse: "服务器响应异常"
+        case let .http(status, msg): "HTTP \(status): \(msg)"
+        }
+    }
+}
+
+// MARK: - Trust-all delegate（本地服务器自签名/无证书）
+
+private final class TrustAllDelegate: NSObject, URLSessionDelegate {
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let trust = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
         }
     }
 }

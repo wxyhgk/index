@@ -193,6 +193,7 @@ struct ShortcutPrefs: Equatable {
     var clipboardHistoryShortcut: KeyboardShortcut
     var searchPanelShortcut: KeyboardShortcut
     var quickNoteShortcut: KeyboardShortcut
+    var agentShortcut: KeyboardShortcut
 
     static let defaults = ShortcutPrefs(
         captureShortcut: .captureDefault,
@@ -203,6 +204,7 @@ struct ShortcutPrefs: Equatable {
         moleculePinShortcut: .moleculePinDefault,
         clipboardHistoryShortcut: .clipboardHistoryDefault,
         searchPanelShortcut: .searchPanelDefault,
-        quickNoteShortcut: .quickNoteDefault
+        quickNoteShortcut: .quickNoteDefault,
+        agentShortcut: .agentDefault
     )
 }

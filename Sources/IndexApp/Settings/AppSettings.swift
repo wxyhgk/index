@@ -121,6 +121,7 @@ final class AppSettings: ObservableObject {
         static let clipboardHistoryShortcut = "clipboardHistoryShortcut"
         static let searchPanelShortcut = "searchPanelShortcut"
         static let quickNoteShortcut = "quickNoteShortcut"
+        static let agentShortcut = "agentShortcut"
 
         static let clipboardHistoryEnabled = "clipboardHistoryEnabled"
         static let clipboardHistoryRetentionDays = "clipboardHistoryRetentionDays"
@@ -221,6 +222,7 @@ final class AppSettings: ObservableObject {
             store(shortcuts.scrollCaptureShortcut, forKey: Keys.scrollCaptureShortcut)
             store(shortcuts.moleculePinShortcut, forKey: Keys.moleculePinShortcut)
             store(shortcuts.clipboardHistoryShortcut, forKey: Keys.clipboardHistoryShortcut)
+            store(shortcuts.agentShortcut, forKey: Keys.agentShortcut)
             onShortcutsChanged?()
         }
     }
@@ -372,7 +374,8 @@ final class AppSettings: ObservableObject {
             moleculePinShortcut: Self.load(Keys.moleculePinShortcut, from: defaults) ?? .moleculePinDefault,
             clipboardHistoryShortcut: Self.load(Keys.clipboardHistoryShortcut, from: defaults) ?? .clipboardHistoryDefault,
             searchPanelShortcut: Self.load(Keys.searchPanelShortcut, from: defaults) ?? .searchPanelDefault,
-            quickNoteShortcut: Self.load(Keys.quickNoteShortcut, from: defaults) ?? .quickNoteDefault
+            quickNoteShortcut: Self.load(Keys.quickNoteShortcut, from: defaults) ?? .quickNoteDefault,
+            agentShortcut: Self.load(Keys.agentShortcut, from: defaults) ?? .agentDefault
         )
         clipboardHistory = ClipboardHistoryPrefs(
             enabled: defaults.bool(forKey: Keys.clipboardHistoryEnabled),
@@ -482,6 +485,7 @@ extension AppSettings: CapturePreferences, RecordingPreferences, ExportPreferenc
     var clipboardHistoryShortcut: KeyboardShortcut { shortcuts.clipboardHistoryShortcut }
     var searchPanelShortcut: KeyboardShortcut { shortcuts.searchPanelShortcut }
     var quickNoteShortcut: KeyboardShortcut { shortcuts.quickNoteShortcut }
+    var agentShortcut: KeyboardShortcut { shortcuts.agentShortcut }
 
     var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
     var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }

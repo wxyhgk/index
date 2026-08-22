@@ -1,79 +1,69 @@
 import SwiftUI
 
-// MARK: - 标注
-
 struct AnnotationSettings: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
-        Form {
-            Section("默认颜色") {
-                HStack(spacing: 10) {
-                    ForEach(AnnotationState.palette.indices, id: \.self) { index in
-                        let color = AnnotationState.palette[index]
-                        Circle()
-                            .fill(Color(.sRGB, red: color.r, green: color.g, blue: color.b))
-                            .frame(width: 22, height: 22)
-                            .overlay {
-                                Circle().strokeBorder(
-                                    settings.annotationStyle.defaultColorIndex == index
-                                        ? DS.accent : DS.focusRingIdle,
-                                    lineWidth: settings.annotationStyle.defaultColorIndex == index ? 3 : 1
-                                )
-                            }
-                            .onTapGesture { settings.annotationStyle.defaultColorIndex = index }
+        SettingsPage {
+            // 颜色 + 粗细：小卡片并排
+            ToggleCardGrid {
+                MiniCard("颜色", icon: "paintpalette") {
+                    HStack(spacing: DS.s2) {
+                        ForEach(AnnotationState.palette.indices, id: \.self) { i in
+                            let c = AnnotationState.palette[i]
+                            Circle()
+                                .fill(Color(.sRGB, red: c.r, green: c.g, blue: c.b))
+                                .frame(width: 20, height: 20)
+                                .overlay {
+                                    Circle().strokeBorder(
+                                        settings.annotationStyle.defaultColorIndex == i ? DS.accent : DS.focusRingIdle,
+                                        lineWidth: settings.annotationStyle.defaultColorIndex == i ? 2.5 : 1
+                                    )
+                                }
+                                .onTapGesture { settings.annotationStyle.defaultColorIndex = i }
+                        }
                     }
-                    Spacer()
+                }
+
+                MiniCard("粗细", icon: "line.diagonal") {
+                    Picker("", selection: $settings.annotationStyle.defaultWidthIndex) {
+                        ForEach(AnnotationState.widths.indices, id: \.self) { i in
+                            Text("\(Int(AnnotationState.widths[i]))pt").tag(i)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
             }
 
-            Section("默认粗细") {
-                Picker("", selection: $settings.annotationStyle.defaultWidthIndex) {
-                    ForEach(AnnotationState.widths.indices, id: \.self) { index in
-                        Text("\(Int(AnnotationState.widths[index])) pt").tag(index)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
+            // 水印：内容多，大卡片
+            SettingsCard("水印", icon: "textformat") {
+                DebouncedTextField(
+                    title: "文案",
+                    placeholder: "@your-name",
+                    initialValue: settings.annotationStyle.watermarkText,
+                    monospaced: false
+                ) { settings.annotationStyle.watermarkText = $0 }
 
-            Section {
-                TextField("默认文案", text: $settings.annotationStyle.watermarkText, prompt: Text("如 @your-name"))
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
-                Picker("默认位置", selection: $settings.annotationStyle.watermarkMode) {
-                    ForEach(WatermarkMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode)
+                Picker("位置", selection: $settings.annotationStyle.watermarkMode) {
+                    ForEach(WatermarkMode.allCases) { m in
+                        Text(m.displayName).tag(m)
                     }
                 }
                 .pickerStyle(.segmented)
-                HStack {
-                    Slider(value: $settings.annotationStyle.watermarkAlpha, in: 0.1...0.8) {
-                        Text("透明度")
-                    }
+
+                HStack(spacing: DS.s2) {
+                    Slider(value: $settings.annotationStyle.watermarkAlpha, in: 0.1...0.8)
                     Text("\(Int(settings.annotationStyle.watermarkAlpha * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .frame(width: 36, alignment: .trailing)
+                        .font(.system(size: DS.font10)).foregroundStyle(.secondary).monospacedDigit()
+                        .frame(width: 32, alignment: .trailing)
                 }
-                Toggle("导出自动加水印", isOn: $settings.annotationStyle.autoWatermark)
-            } header: {
-                Text("水印")
-            } footer: {
-                Text("水印是一个图层：进修订链、可撤销、可在图库编辑器里删除。自动水印只作用于新截图，文案为空时不生效；工具条/编辑器里的手动开关不受这一项影响。")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
 
-            Section {
-                Text("原图永远不会被修改。标注以图层形式存成修订，每次编辑都是追加一条记录，可以无限回溯。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("关于标注")
+                SettingsRow("自动加水印", icon: "wand.and.stars") {
+                    Toggle("", isOn: $settings.annotationStyle.autoWatermark)
+                        .labelsHidden().toggleStyle(.switch)
+                }
             }
         }
-        .formStyle(.grouped)
     }
 }

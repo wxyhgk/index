@@ -127,6 +127,7 @@ final class FakeStyleStore: ObservableObject, StyleStore,
     var clipboardHistoryShortcut: KeyboardShortcut { shortcuts.clipboardHistoryShortcut }
     var searchPanelShortcut: KeyboardShortcut { shortcuts.searchPanelShortcut }
     var quickNoteShortcut: KeyboardShortcut { shortcuts.quickNoteShortcut }
+    var agentShortcut: KeyboardShortcut { shortcuts.agentShortcut }
 
     var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
     var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }
