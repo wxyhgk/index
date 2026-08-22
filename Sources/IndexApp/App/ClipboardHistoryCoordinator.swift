@@ -142,8 +142,13 @@ final class ClipboardHistoryCoordinator {
 
     /// 粘贴前把焦点还给之前正在使用的应用。
     func restoreFrontmostApp() {
-        previousFrontmostApp?.activate(options: [])
-        previousFrontmostApp = nil
+        if let app = previousFrontmostApp {
+            app.activate(options: [])
+            previousFrontmostApp = nil
+        } else {
+            // 之前前台就是 Index 自身（Agent 面板打开时），让 Agent 面板重新成为 key window
+            AgentCoordinator.shared.refocus()
+        }
     }
 
     /// 面板钉住状态（点击外部不关闭）。

@@ -19,7 +19,9 @@ struct AgentLLMClient: Sendable {
     func run(
         userMessage: String,
         tools: [AgentTool],
-        maxRounds: Int = 5
+        history: [[String: Any]] = [],
+        maxRounds: Int = 5,
+        onEvent: (@Sendable (AgentEvent) -> Void)? = nil
     ) async -> String {
         guard isConfigured, let url = makeURL() else {
             return "Agent 未配置（设置 → 插件 → Agent）"
@@ -28,13 +30,20 @@ struct AgentLLMClient: Sendable {
         var messages: [[String: Any]] = [
             [
                 "role": "system",
-                "content": "你是 Index 截图软件的内置 agent。你可以调用工具来查询截图、管理插件、修改配置。回答用中文，简洁直接。"
-            ],
-            [
-                "role": "user",
-                "content": userMessage
+                "content": """
+                    你是 Index 截图软件的内置 agent。你可以调用工具来查询截图、管理插件、修改配置。
+                    回答用中文，简洁直接。
+
+                    重要规则：
+                    - 当用户提到"查/搜/有没有/找"某个内容时，**必须**先调用 search_shots 在截图库里搜索，不要凭自己的知识回答。
+                    - search_shots 的 query 用简短核心关键词（如 "DeepSeek" 而非 "DeepSeek api 的价格"），多个关键词用空格分隔。
+                    - 搜索有结果时，基于结果回答；没结果时告诉用户"截图库里没搜到"，不要编造。
+                    - 不要回答截图库之外的问题（如天气、新闻），告诉用户你只能查截图和管理配置。
+                    """
             ]
         ]
+        messages.append(contentsOf: history)
+        messages.append(["role": "user", "content": userMessage])
 
         let sdkTools: [[String: Any]] = tools.map { tool in
             let properties: [String: Any] = tool.parameters.mapValues { desc in
@@ -85,7 +94,9 @@ struct AgentLLMClient: Sendable {
             let toolCalls = message["tool_calls"] as? [[String: Any]] ?? []
 
             if toolCalls.isEmpty {
-                return content.isEmpty ? "（无回答）" : content
+                let answer = content.isEmpty ? "（无回答）" : content
+                onEvent?(.response(answer))
+                return answer
             }
 
             // 有工具调用
@@ -108,7 +119,10 @@ struct AgentLLMClient: Sendable {
                     with: Data(argsStr.utf8)
                 )).flatMap { $0 as? [String: String] } ?? [:]
 
+                onEvent?(.toolCallStarted(name: name, args: argsStr))
                 let toolResult = await executeTool(name: name, args: args, tools: tools)
+                onEvent?(.toolCallFinished(name: name, result: toolResult))
+
                 let callID = call["id"] as? String ?? "call_\(UUID().uuidString.prefix(8))"
 
                 messages.append([

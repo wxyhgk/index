@@ -15,3 +15,11 @@ struct AgentTool: Sendable {
     /// 执行闭包。input 是参数键值对，返回结果文本（回给 LLM 或规则引擎）。
     let execute: @Sendable ([String: String]) async -> String
 }
+
+// MARK: - Agent 事件（工具调用过程回调，驱动前端实时展示）
+
+enum AgentEvent: Sendable {
+    case toolCallStarted(name: String, args: String)
+    case toolCallFinished(name: String, result: String)
+    case response(String)
+}

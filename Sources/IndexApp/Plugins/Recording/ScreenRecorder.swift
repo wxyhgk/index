@@ -499,10 +499,11 @@ private final class RecordingSession: NSObject, SCStreamDelegate, SCRecordingOut
             throw RecordingError.displayNotFound
         }
 
-        let ownPID = ProcessInfo.processInfo.processIdentifier
+        // 不排除自身进程 —— Agent 面板、图库窗口等也是自身进程的，
+        // 用户可能想录到它们（如录 Agent 操作过程）。
         let filter = SCContentFilter(
             display: scDisplay,
-            excludingApplications: content.applications.filter { $0.processID == ownPID },
+            excludingApplications: [],
             exceptingWindows: []
         )
 

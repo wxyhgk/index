@@ -366,6 +366,28 @@ enum AppDatabase {
             }
         }
 
+        // Agent 对话记录：conversation 是会话（命名 20260822-a3f2），
+        // message 是单条消息（user/assistant，工具调用过程存 JSON）。
+        migrator.registerMigration("v14_agent_conversation") { db in
+            try db.create(table: "agentConversation") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("name", .text).notNull().unique()
+                t.column("createdAt", .datetime).notNull().indexed()
+                t.column("updatedAt", .datetime).notNull()
+            }
+            try db.create(table: "agentMessage") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("conversationID", .integer)
+                    .notNull()
+                    .indexed()
+                    .references("agentConversation", onDelete: .cascade)
+                t.column("role", .text).notNull()
+                t.column("text", .text).notNull().defaults(to: "")
+                t.column("toolCallsJSON", .text)
+                t.column("createdAt", .datetime).notNull()
+            }
+        }
+
         return migrator
     }
 }

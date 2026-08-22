@@ -76,7 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             toolbarRegistry: .shared,
             hotKeyCenter: .shared,
             pluginManager: .shared,
-            pluginRegistry: .shared
+            pluginRegistry: .shared,
+            openShot: { shot in
+                GalleryWindowController.shared.showEditor(for: shot)
+            }
         )
         // 插件激活：按 enabledPluginIDs 过滤（空列表 = 全部启用）。
         let pluginManager = PluginManager.shared
@@ -570,6 +573,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(editMenuItem)
         let editMenu = NSMenu(title: "Edit")
         editMenu.addItem(NSMenuItem(title: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
         editMenu.addItem(NSMenuItem(title: "全选", action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a"))
         editMenuItem.submenu = editMenu
 

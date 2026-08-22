@@ -24,7 +24,7 @@ struct ClipboardDestination: GalleryDestination {
 
 // MARK: - 中间内容：页头 + 网格
 
-private struct ClipboardContent: View {
+struct ClipboardContent: View {
 
     @ObservedObject private var viewModel: ClipboardHistoryViewModel
     @ObservedObject private var selection = ClipboardSelection.shared

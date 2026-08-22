@@ -24,6 +24,8 @@ struct PluginContext {
     let hotKeyCenter: GlobalHotKeyCenter
     let pluginManager: PluginManager
     let pluginRegistry: PluginRegistry
+    /// 在图库中打开指定截图（由 UI 层注入，Plugin 层不直接引用 GalleryWindowController）。
+    let openShot: (Shot) -> Void
 }
 
 /// 插件协议。一个动作包 = 一个 Plugin 实现。
