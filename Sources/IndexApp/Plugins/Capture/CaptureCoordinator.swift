@@ -19,6 +19,12 @@ final class CaptureCoordinator {
     private let shotStore: any ShotReading & ShotWriting
     private let styleStore: any StyleStore
     private let pipeline: CapturePipeline
+    /// 选区后转直接录屏（由 AppDelegate 注入，断开 Capture → Recording 单例依赖）。
+    var recordHandler: (@MainActor (CGRect, DisplayInfo) -> Void)?
+    /// 选区后转长截图（由 AppDelegate 注入，断开 Capture → Scroll 单例依赖）。
+    var scrollHandler: (@MainActor (CGRect, DisplayInfo) -> Void)?
+    /// 互斥检查：录屏/框选录制区域是否进行中（由 AppDelegate 注入）。
+    var isOtherCaptureActive: (@MainActor () -> Bool)?
     private var isPreparing = false
     /// 进行中的准备任务（冻结屏幕 / 延时等待）。取消它就打断整次捕获。
     private var prepareTask: Task<Void, Never>?
@@ -77,7 +83,7 @@ final class CaptureCoordinator {
         guard !overlay.isActive else { return }
 
         // 录屏进行中（或正在框选录制区域）不开截图 —— 两套覆盖层会互相打架。
-        guard !ScreenRecorder.shared.isRecording, !RecordingCoordinator.shared.isSelecting else {
+        guard !(isOtherCaptureActive?() ?? false) else {
             NSLog("[Index] 录屏进行中，截图请求被拒绝")
             return
         }
@@ -141,13 +147,14 @@ final class CaptureCoordinator {
     }
 
     private func handle(_ result: SelectionResult, previousApp: NSRunningApplication?) {
-        // 工具条上直接转录屏/长截图：不产生一张截图，避免图库多一张无用记录
+        // 工具条上直接转录屏/长截图：不产生一张截图，避免图库多一张无用记录。
+        // 走注入的闭包而非直接调插件单例 —— Capture 不认识 Recording/Scroll 的具体类型。
         if result.actionID == ActionID.record {
-            RecordingCoordinator.shared.startDirectly(region: result.region, display: result.display)
+            recordHandler?(result.region, result.display)
             return
         }
         if result.actionID == ActionID.scrollCapture {
-            ScrollCaptureController.shared.begin(with: result.region, display: result.display)
+            scrollHandler?(result.region, result.display)
             return
         }
         // ⌥+单击整窗：异步用 SCK 重拍不被遮挡的完整窗口（透明背景 + 可选系统阴影）。

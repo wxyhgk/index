@@ -192,6 +192,39 @@ else
     bad "Plugin/ 框架层引用了 DS —— 设计令牌走 UI 层注入"
 fi
 
+section "纪律十：Plugins 层窗口/视图子类需登记白名单"
+# Plugins 层允许持有 NSWindow/NSPanel/NSWindowController/NSView 子类
+# （选区覆盖层、钉图、暂存卡片是插件的本职 UI），但必须登记在白名单里 ——
+# 新增窗口逻辑时显式加一行，防止窗口代码无声扩散进插件层。
+window_whitelist="OverlayView
+LiveTextHitTestView
+OverlayWindow
+ChromeView
+PinImageView
+PinToolbarView
+PinToolbarPanel
+PinWindowController
+ShelfCardController
+ShelfCardView"
+window_subclass_hits=$(grep -rn -E '^\s*(final |private |public |open )?(class|struct) [A-Za-z_][A-Za-z0-9_]*\s*:\s*(NSWindow|NSPanel|NSWindowController|NSView|NSViewController|NSControl)\b' \
+    --include="*.swift" Sources/IndexApp/Plugins 2>/dev/null | code_only || true)
+window_violations=""
+if [ -n "$window_subclass_hits" ]; then
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        cls=$(printf "%s\n" "$line" | sed -E 's/.*(class|struct) ([A-Za-z_][A-Za-z0-9_]*)\s*:?.*/\2/')
+        if ! printf "%s\n" "$window_whitelist" | grep -qx "$cls"; then
+            window_violations="${window_violations}${line}"$'\n'
+        fi
+    done <<< "$window_subclass_hits"
+fi
+if [ -z "$window_violations" ]; then
+    ok "Plugins/ 层窗口/视图子类均在白名单内"
+else
+    printf "%s" "$window_violations" | sed 's/^/    /'
+    bad "Plugins/ 层出现未登记的窗口/视图子类 —— 加进白名单或移回 UI 层"
+fi
+
 # -------------------------------------------------------------------- 可选：打包
 
 if [ "${1:-}" = "--full" ]; then

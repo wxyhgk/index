@@ -114,6 +114,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ThumbnailLoader.shared.remove(forKey: shot.sha256)
             }
         }
+        // 选区后分派到录屏/长截图：闭包注入，CaptureCoordinator 不认识具体插件类型。
+        CaptureCoordinator.shared.recordHandler = { region, display in
+            RecordingCoordinator.shared.startDirectly(region: region, display: display)
+        }
+        CaptureCoordinator.shared.scrollHandler = { region, display in
+            ScrollCaptureController.shared.begin(with: region, display: display)
+        }
+        CaptureCoordinator.shared.isOtherCaptureActive = {
+            ScreenRecorder.shared.isRecording || RecordingCoordinator.shared.isSelecting
+        }
+
         registerCaptureSources()
 
         setupMainMenu()

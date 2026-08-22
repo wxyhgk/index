@@ -1,7 +1,3 @@
-import SwiftUI
-import AppKit
-import Carbon.HIToolbox
-
 // MARK: - 插件注册表（阶段 1：内容模式收口）
 //
 // 借鉴 Emacs 的 package + major mode 思想。一个内容类型 = 一个 ContentMode，
@@ -10,6 +6,9 @@ import Carbon.HIToolbox
 // 阶段 1 只收口「内容模式」（= major mode）。processors / actions / controls /
 // hooks 在后续阶段陆续接入同一个 registry，最终一个 Plugin 的 activate 往这里
 // 注册它贡献的所有东西。
+//
+// 框架层不直接引用 SwiftUI/AppKit 字面量 —— 内置模式定义在 Content 层
+// （BuiltinContentModes），装配层注入。
 
 @MainActor
 final class PluginRegistry {
@@ -22,8 +21,8 @@ final class PluginRegistry {
 
     /// 装配层调用：注册内置内容模式（image + markdown）。
     static func registerBuiltins() {
-        shared.registerMode(Self.imageMode)
-        shared.registerMode(Self.markdownMode)
+        shared.registerMode(BuiltinContentModes.imageMode)
+        shared.registerMode(BuiltinContentModes.markdownMode)
     }
 
     // MARK: - 注册 / 查找
@@ -38,42 +37,8 @@ final class PluginRegistry {
 
     /// 取内容模式。未注册的类型退回 image 模式（兜底）。
     func mode(for kind: ContentKind) -> ContentMode {
-        modes[kind] ?? modes[.image] ?? Self.imageMode
+        modes[kind] ?? modes[.image] ?? BuiltinContentModes.imageMode
     }
 
     var registeredKinds: [ContentKind] { Array(modes.keys) }
-
-    // MARK: - 内置模式
-
-    /// 图片模式（兜底）：蓝条 / App 图标 / 时间 caption。
-    static let imageMode = ContentMode(
-        kind: .image,
-        label: "截图",
-        barColor: .blue,
-        icon: nil,
-        caption: { shot in
-            (shot.customTitle ?? shot.primaryDisplayName,
-             shot.capturedAt.formatted(.dateTime.month().day().hour().minute()))
-        },
-        renderer: ImageContentRenderer(),
-        doubleClick: .none,
-        keymap: [:]
-    )
-
-    /// Markdown 便签模式：黑条 / M 图标 / "Markdown" caption / 双击开编辑器。
-    static let markdownMode = ContentMode(
-        kind: .markdown,
-        label: "便签",
-        barColor: .primary,
-        icon: CardAppearance.markdownIcon,
-        caption: { shot in
-            (shot.customTitle ?? shot.windowTitle ?? "便签", "Markdown")
-        },
-        renderer: MarkdownContentRenderer(),
-        doubleClick: .openMarkdownEditor,
-        keymap: [
-            "bold": KeyboardShortcut(keyCode: 66, modifiers: UInt32(cmdKey)),
-            "italic": KeyboardShortcut(keyCode: 75, modifiers: UInt32(cmdKey)),
-        ]
-    )
 }

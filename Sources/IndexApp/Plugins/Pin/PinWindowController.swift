@@ -12,6 +12,8 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
 
     private let base: CGImage
     private let shot: Shot?
+    /// 修订链落库（钉图上标注）。注入而非硬引用单例，与同目录协调器对齐。
+    private let shotStore: any ShotReading & ShotWriting
     /// 钉图窗口的设置切片：回车语义（键盘）+ 标注样式持久化（水印/底壳）。
     private let capture: any CapturePreferences
     private let annotationStyle: any AnnotationStylePreferences
@@ -42,7 +44,8 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         at globalRegion: CGRect,
         capture: any CapturePreferences,
         annotationStyle: any AnnotationStylePreferences,
-        moleculeSource: MoleculeSourceAttachment? = nil
+        moleculeSource: MoleculeSourceAttachment? = nil,
+        shotStore: (any ShotReading & ShotWriting)? = nil
     ) {
         let anchor: CGRect = (globalRegion.width >= 20 && globalRegion.height >= 20)
             ? globalRegion
@@ -54,7 +57,8 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
             anchor: anchor,
             capture: capture,
             annotationStyle: annotationStyle,
-            moleculeSource: moleculeSource
+            moleculeSource: moleculeSource,
+            shotStore: shotStore ?? ShotStore.shared
         )
         // 钉图是浮动面板，不算「正经窗口」，不该让 App 跳出 Dock 图标。
         WindowRegistry.shared.present(controller, dockIcon: false, retain: true)
@@ -67,10 +71,12 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         anchor: CGRect,
         capture: any CapturePreferences,
         annotationStyle: any AnnotationStylePreferences,
-        moleculeSource: MoleculeSourceAttachment?
+        moleculeSource: MoleculeSourceAttachment?,
+        shotStore: any ShotReading & ShotWriting
     ) {
         self.base = base
         self.shot = shot
+        self.shotStore = shotStore
         self.savedLayers = layers
         self.capture = capture
         self.annotationStyle = annotationStyle
@@ -106,7 +112,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
             annotationStyle: annotationStyle
         )
         let attachedMolecule = moleculeSource ?? shot.flatMap {
-            ShotStore.shared.moleculeSource(for: $0)
+            shotStore.moleculeSource(for: $0)
         }
         if let attachedMolecule {
             view.moleculeSourceActions = MoleculeSourceActions(
@@ -319,7 +325,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         let layers = view.allLayers
         guard layers != savedLayers else { return }
         savedLayers = layers
-        ShotStore.shared.appendRevision(shot: shot, layers: layers, note: "钉图上标注")
+        shotStore.appendRevision(shot: shot, layers: layers, note: "钉图上标注")
     }
 
     // MARK: - 窗口
