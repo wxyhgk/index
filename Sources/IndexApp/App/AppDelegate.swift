@@ -59,6 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Dock Tile 在 didFinishLaunching 前可能尚未注册；这里再次安装，确保
+        // SwiftPM 裸 Debug 不会回退成系统的通用 exec 图标。
+        IndexApplicationBranding.installApplicationIcon(on: NSApp)
         _ = shotStore          // 提前建库，避免第一次截图时卡顿
         CaptureActionRegistry.registerBuiltins(into: .shared, styleStore: settings)
         ToolbarRegistry.registerBuiltins(into: .shared)
@@ -197,10 +200,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "camera.viewfinder",
-            accessibilityDescription: "Index"
-        )
+        item.button?.image = IndexApplicationBranding.menuBarIcon()
+            ?? NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Index")
+        item.button?.setAccessibilityLabel("Index")
         item.menu = buildMenu()
         statusItem = item
     }
@@ -525,8 +527,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             symbolName = "record.circle.fill"
             tint = .systemRed
         } else {
-            symbolName = "camera.viewfinder"
-            tint = nil
+            statusItem?.button?.image = IndexApplicationBranding.menuBarIcon()
+            return
         }
         var image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Index")
         if let tint {
@@ -574,6 +576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenu.addItem(NSMenuItem(title: "关于 Index", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "隐私政策", action: #selector(openPrivacyPolicy), keyEquivalent: ""))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "退出 Index", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
@@ -597,6 +600,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenuItem.submenu = windowMenu
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func openPrivacyPolicy() {
+        guard let url = URL(string: "https://github.com/wxyhgk/index/blob/main/PRIVACY.md") else { return }
+        SystemNavigator.open(url: url)
     }
 
     // Edit 菜单的实际执行与校验兜底（responder chain 未命中时由 App 兜住）

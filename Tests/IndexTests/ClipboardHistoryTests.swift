@@ -104,4 +104,162 @@ final class ClipboardHistoryTests: XCTestCase {
         XCTAssertEqual(longSummary.count, 121, "120 字符 + 省略号")
         XCTAssertTrue(longSummary.hasSuffix("…"))
     }
+
+    func testClipboardChangeGateSuppressesHistoryWriteBackOnlyOnce() {
+        var gate = ClipboardChangeGate()
+
+        gate.synchronize(to: 41)
+        XCTAssertFalse(gate.consumeIfChanged(41), "内部写回的 changeCount 应被直接消费")
+        XCTAssertTrue(gate.consumeIfChanged(42), "下一次真实的外部复制仍应进入历史")
+        XCTAssertFalse(gate.consumeIfChanged(42), "同一个 changeCount 不应重复处理")
+    }
+
+    @MainActor
+    func testPopupSelectionResolvesItemImmediatelyByStableID() throws {
+        try store.record(
+            kind: .text,
+            contentHash: "selection-1",
+            text: "first",
+            assetPath: nil,
+            summary: "first",
+            sourceApp: nil
+        )
+        try store.record(
+            kind: .text,
+            contentHash: "selection-2",
+            text: "second",
+            assetPath: nil,
+            summary: "second",
+            sourceApp: nil
+        )
+        let items = try store.recent(limit: 10)
+        let viewModel = ClipboardHistoryViewModel(store: store)
+        viewModel.items = items
+
+        viewModel.select(items[1])
+
+        XCTAssertEqual(viewModel.selectedIndex, 1)
+        XCTAssertEqual(viewModel.selectedItemID, items[1].id)
+    }
+
+    @MainActor
+    func testPopupPasteQueueUsesExplicitSelectionOrder() throws {
+        for index in 1...3 {
+            try store.record(
+                kind: .text,
+                contentHash: "queue-\(index)",
+                text: "text-\(index)",
+                assetPath: nil,
+                summary: "text-\(index)",
+                sourceApp: nil
+            )
+        }
+        let items = try store.recent(limit: 10)
+        let viewModel = ClipboardHistoryViewModel(store: store)
+        viewModel.items = items
+
+        viewModel.select(items[1])
+        viewModel.select(items[0], extending: true)
+        viewModel.select(items[2], extending: true)
+
+        XCTAssertEqual(viewModel.orderedSelectedIDs, [items[1].id, items[0].id, items[2].id].compactMap { $0 })
+        XCTAssertEqual(viewModel.selectionOrdinal(for: items[1]), 1)
+        XCTAssertEqual(viewModel.selectionOrdinal(for: items[0]), 2)
+        XCTAssertEqual(viewModel.selectionOrdinal(for: items[2]), 3)
+
+        // 取消再加入必须排到队尾，而不是回到列表里的原始位置。
+        viewModel.select(items[0], extending: true)
+        viewModel.select(items[0], extending: true)
+        XCTAssertEqual(viewModel.orderedSelectedIDs, [items[1].id, items[2].id, items[0].id].compactMap { $0 })
+    }
+
+    func testQueuedTextUsesNewlineAndKeepsOrder() {
+        XCTAssertEqual(
+            ClipboardHistoryViewModel.joinedTexts(["first", "second", "third"]),
+            "first\nsecond\nthird"
+        )
+    }
+
+    @MainActor
+    func testPasteQueueSurvivesSearchAndAppendsResult() throws {
+        try store.record(
+            kind: .text,
+            contentHash: "before-search",
+            text: "chosen before search",
+            assetPath: nil,
+            summary: "chosen before search",
+            sourceApp: nil
+        )
+        try store.record(
+            kind: .text,
+            contentHash: "search-result",
+            text: "needle result",
+            assetPath: nil,
+            summary: "needle result",
+            sourceApp: nil
+        )
+        let allItems = try store.recent(limit: 10)
+        let first = try XCTUnwrap(allItems.first { $0.contentHash == "before-search" })
+        let result = try XCTUnwrap(allItems.first { $0.contentHash == "search-result" })
+        let viewModel = ClipboardHistoryViewModel(store: store)
+        viewModel.items = allItems
+        viewModel.select(first)
+
+        // 搜索只替换候选列表，已选条目快照不能随之消失。
+        viewModel.query = "needle"
+        viewModel.items = [result]
+        viewModel.selectedIndex = 0
+        viewModel.setContinuousSelectionEnabled(true)
+        viewModel.select(
+            result,
+            continuingQueue: viewModel.isContinuousSelectionEnabled
+        )
+
+        XCTAssertEqual(viewModel.orderedSelectedIDs, [first.id, result.id].compactMap { $0 })
+        XCTAssertEqual(viewModel.pasteQueueItems.map(\.contentHash), ["before-search", "search-result"])
+        XCTAssertEqual(viewModel.selectionOrdinal(for: result), 2)
+    }
+
+    @MainActor
+    func testContinuousSelectionModeExplicitlyControlsAppend() throws {
+        for index in 1...2 {
+            try store.record(
+                kind: .text,
+                contentHash: "mode-\(index)",
+                text: "mode-\(index)",
+                assetPath: nil,
+                summary: "mode-\(index)",
+                sourceApp: nil
+            )
+        }
+        let items = try store.recent(limit: 10)
+        let viewModel = ClipboardHistoryViewModel(store: store)
+        viewModel.items = items
+
+        viewModel.select(items[0])
+        viewModel.select(
+            items[1],
+            continuingQueue: viewModel.isContinuousSelectionEnabled
+        )
+        XCTAssertEqual(viewModel.orderedSelectedIDs, [items[1].id].compactMap { $0 })
+
+        viewModel.select(items[0])
+        viewModel.setContinuousSelectionEnabled(true)
+        viewModel.select(
+            items[1],
+            continuingQueue: viewModel.isContinuousSelectionEnabled
+        )
+        XCTAssertEqual(viewModel.orderedSelectedIDs, [items[0].id, items[1].id].compactMap { $0 })
+
+        // 连续模式再次点击同一张卡片就是取消，不需要去左侧点移除。
+        viewModel.select(
+            items[1],
+            continuingQueue: viewModel.isContinuousSelectionEnabled
+        )
+        XCTAssertEqual(viewModel.orderedSelectedIDs, [items[0].id].compactMap { $0 })
+        XCTAssertNil(viewModel.selectionOrdinal(for: items[1]))
+
+        viewModel.setContinuousSelectionEnabled(false)
+        XCTAssertEqual(viewModel.orderedSelectedIDs, [items[1].id].compactMap { $0 })
+    }
 }

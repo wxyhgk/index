@@ -82,7 +82,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
 
         keyboard.install()
 
-        // 单窗口多模式（图库 / 编辑器 / 设置）：标题跟着模式走；
+        // 单窗口多模式（图库 / 标注 / Markdown / 设置）：标题跟着模式走；
         // 进入编辑瞬间若 Quick Look 面板开着，顺手收掉 ——
         // 编辑器有自己的空格语义，面板留着只会盖住画布。
         // 模式模型只存 ID，来源摘要按 ID 现查（$mode 发布的是新值，
@@ -97,6 +97,10 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
                 case .editing(let id):
                     let summary = GalleryWindowMode.resolveShot(id: id)?.sourceSummary
                     self?.window?.title = summary.map { "标注 — \($0)" } ?? "Index 图库"
+                    self?.quickLook.close()
+                case .markdownEditing(let id):
+                    let title = GalleryWindowMode.resolveShot(id: id)?.primaryDisplayName
+                    self?.window?.title = title.map { "Markdown — \($0)" } ?? "Index Markdown"
                     self?.quickLook.close()
                 }
             }

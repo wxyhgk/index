@@ -25,7 +25,7 @@ struct AgentConversationListView: View {
             conversationDetail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .onAppear { refresh() }
+        .task { await refresh() }
     }
 
     // MARK: - 对话列表
@@ -38,7 +38,7 @@ struct AgentConversationListView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    refresh()
+                    Task { await refresh() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: DS.font12))
@@ -102,17 +102,17 @@ struct AgentConversationListView: View {
 
     // MARK: - 数据
 
-    private func refresh() {
+    private func refresh() async {
         isRefreshing = true
-        do {
-            conversations = try AgentConversationStore.shared.listConversations(limit: 100)
-            // 保持选中
-            if let selectedID, !conversations.contains(where: { $0.id == selectedID }) {
-                self.selectedID = nil
-                self.selectedMessages = []
-            }
-        } catch {
-            NSLog("[Agent] 加载对话列表失败: \(error)")
+        let loaded = await Task.detached(priority: .userInitiated) {
+            try? AgentConversationStore.shared.listConversations(limit: 100)
+        }.value
+        guard !Task.isCancelled else { return }
+        conversations = loaded ?? []
+        // 保持选中
+        if let selectedID, !conversations.contains(where: { $0.id == selectedID }) {
+            self.selectedID = nil
+            self.selectedMessages = []
         }
         isRefreshing = false
     }

@@ -38,30 +38,57 @@ final class MouseModifierCache {
 
 extension GalleryGrid {
 
+    func thumbnailIdentity(for shot: Shot) -> String {
+        shot.id.map { "shot:\($0)" } ?? "sha:\(shot.sha256)"
+    }
+
     @ViewBuilder
-    func card(for shot: Shot, height: CGFloat) -> some View {
-        if GalleryVisualBudget.allowsScrollDepth(
+    func card(
+        for shot: Shot,
+        height: CGFloat,
+        reportsVisibility: Bool = true
+    ) -> some View {
+        if !isScrolling,
+           !isLiveResizing,
+           GalleryVisualBudget.allowsScrollDepth(
             isEnabled: settings.galleryScrollDepth,
             cardCount: visibleShots.count
         ) {
-            cardBody(for: shot, height: height).scrollDepth()
+            cardBody(
+                for: shot,
+                height: height,
+                reportsVisibility: reportsVisibility
+            )
+            .scrollDepth()
         } else {
-            cardBody(for: shot, height: height)
+            cardBody(
+                for: shot,
+                height: height,
+                reportsVisibility: reportsVisibility
+            )
         }
     }
 
-    func cardBody(for shot: Shot, height: CGFloat) -> some View {
-        ShotCard(
+    func cardBody(
+        for shot: Shot,
+        height: CGFloat,
+        reportsVisibility: Bool = true
+    ) -> some View {
+        return ShotCard(
             shot: shot,
             height: height,
             isSelected: selection.isSelected(shot.id),
             isFavorite: shot.id.map(store.isFavorite) ?? false,
-            category: shot.id.flatMap { categoriesByShot[$0] },
-            isAnnotated: shot.id.map(annotatedIDs.contains) ?? false,
             isRecording: recordingAsset(for: shot).isRecording,
             onToggleFavorite: { store.toggleFavorite(shot) }
         )
+        .equatable()
         .id(shot.id)
+        .modifier(GalleryCardVisibilityReporter(
+            isEnabled: reportsVisibility,
+            identity: thumbnailIdentity(for: shot),
+            preheater: thumbnailPreheater
+        ))
         .onTapGesture { handleTap(shot) }
         .simultaneousGesture(
             TapGesture(count: 2).onEnded {
@@ -70,7 +97,7 @@ extension GalleryGrid {
                 // 双击动作由 ContentMode 描述（= Emacs major mode），从 PluginRegistry 取。
                 let mode = PluginRegistry.shared.mode(for: ContentKind(rawValue: shot.contentKind) ?? .image)
                 if mode.doubleClick == .openMarkdownEditor {
-                    openMarkdownEditor(shot)
+                    GalleryWindowController.shared.mode.openMarkdownEditor(shotID: shot.id)
                     return
                 }
                 RecordingAssetActions.performPrimary(
@@ -98,14 +125,14 @@ extension GalleryGrid {
             // 在这里写任何状态（哪怕 async）都会形成「渲染→改选中→重渲染」的自激振荡
             // （曾经的尾部卡片 20Hz 闪烁事故，选中乒乓 4 万次/分钟）。只准纯读。
             // 右键未选中的卡不再抢选中（Finder 的预选行为放弃）：菜单项本就绑定该 shot。
+            // 不能按 isScrolling / isLiveResizing 把菜单清空：AppKit 复用池会在滚动中
+            // 创建新卡片，它们会永久拿到一份空菜单，直到下一轮 SwiftUI 刷新。
+            // 原生网格只有少量可见 cell，始终构造纯读菜单的成本已经是有界的。
             if selection.isMultiple && selection.isSelected(shot.id) {
                 batchContextMenu()
             } else {
                 contextMenu(for: shot)
             }
-        } preview: {
-            CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
-                .frame(maxWidth: 480, maxHeight: 360)
         }
     }
 
@@ -135,19 +162,6 @@ extension GalleryGrid {
     /// 不再反查 NSApp.currentEvent（tap 回调时它可能已被后续事件覆盖）。
     func currentModifiers() -> NSEvent.ModifierFlags {
         MouseModifierCache.shared.cachedFlags ?? []
-    }
-
-    /// 双击 Markdown 卡片：打开 Typora 风格编辑器。
-    private func openMarkdownEditor(_ shot: Shot) {
-        guard let shotID = shot.id else { return }
-        let store = ShotStore.shared
-        // 收口读取：三步查询由 store 内部完成，没有存储的 Markdown 就现场生成。
-        let source = store.markdownSource(for: shot) ?? MarkdownGenerator.generate(for: shot)
-        let title = shot.windowTitle ?? "Markdown"
-        MarkdownEditorWindowController.shared.show(title: title, source: source) { newSource in
-            try? store.saveContent(for: shotID, kind: .markdown, payload: .markdown(newSource), updateKind: false)
-            store.reload(query: "", filter: .all)
-        }
     }
 
     // MARK: 右键菜单
@@ -414,6 +428,23 @@ extension GalleryGrid {
             SystemNavigator.open(url: url)
         } else if let bundleID = shot.appBundleID {
             SystemNavigator.activateApp(bundleID: bundleID)
+        }
+    }
+}
+
+private struct GalleryCardVisibilityReporter: ViewModifier {
+    let isEnabled: Bool
+    let identity: String
+    let preheater: ViewportThumbnailPreheater
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .onAppear { preheater.mounted(identity) }
+                .onDisappear { preheater.unmounted(identity) }
+        } else {
+            content
         }
     }
 }

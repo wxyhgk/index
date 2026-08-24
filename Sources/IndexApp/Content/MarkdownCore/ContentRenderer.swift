@@ -64,9 +64,13 @@ struct ImageContentRenderer: ContentRenderer {
 
     @MainActor
     func render(shot: Shot, height: CGFloat, store: ShotStore, isHovering: Bool) -> AnyView {
-        AnyView(
-            CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
-                .parallaxThumbnail(isEnabled: isHovering)
-        )
+        let image = CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
+        // `visualEffect` 即使最终返回 identity，也仍会进入每个可见卡片的
+        // 滚动几何更新。视差同一时刻只可能属于指针下的一张卡：只给那一张
+        // 挂修饰器，普通滚动路径保持成一棵最小图片视图。
+        if isHovering {
+            return AnyView(image.parallaxThumbnail())
+        }
+        return AnyView(image)
     }
 }

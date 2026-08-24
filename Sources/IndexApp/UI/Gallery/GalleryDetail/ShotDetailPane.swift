@@ -35,7 +35,7 @@ struct ShotDetailPane: View {
 
     // 订阅 store 是为了收藏态实时刷新；重查询都挂在 task(id:) 上，不受影响。
     @ObservedObject private var store: ShotStore
-    @ObservedObject private var selection = GalleryWindowController.shared.selection
+    @EnvironmentObject private var selection: GallerySelection
     @ObservedObject private var settings: AppSettings
 
     init(shot: Shot, store: ShotStore = .shared, settings: AppSettings = .shared) {

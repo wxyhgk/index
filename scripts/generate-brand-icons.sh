@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-SOURCE="Resources/Brand/index-app-icon.svg"
+SOURCE="Sources/IndexApp/Resources/index-app-icon.svg"
 APP_ICON="Resources/Index.icns"
 EDGE_ICON_DIR="BrowserExtensions/Edge/icons"
 ICON_WORK_DIR="$(mktemp -d /tmp/index-brand-icons.XXXXXX)"

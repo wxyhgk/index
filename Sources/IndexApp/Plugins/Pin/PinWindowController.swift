@@ -23,10 +23,15 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
     private var opacity: CGFloat = 1.0
     /// 鼠标穿透中：点击落到下层窗口，钉图只当参考图看。
     private var isPassthrough = false
-    /// 鼠标在钉图上（图片窗口或工具条窗口都算）。工具条据此在 0.45 / 1.0 之间切换。
+    /// 鼠标在钉图上（图片窗口或已显示的工具条窗口都算）。离开后工具条完全隐藏。
     private var isHovering = false
     /// 上次落库的图层内容。比数量更可靠 —— 撤销一层再画一层，数量不变但内容变了。
     private var savedLayers: Layers<ImageSpace>
+    /// 连续输入文字 / 滚轮调粗细会产生密集变更；合并成一次修订，避免为每个字符
+    /// 启动一轮全尺寸缩略图重画。关闭窗口时会同步 flush，不会丢最后一次修改。
+    private var revisionSaveTask: Task<Void, Never>?
+    /// 缩放期间复用 backing layer，停止滚轮后再补一次高清重画与阴影刷新。
+    private var zoomSettleTask: Task<Void, Never>?
     private var actionExecution = ActionExecutionTracker()
 
     /// 工具条：独立的子窗口，不占图片窗口的任何空间。
@@ -147,7 +152,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         view.isActionExecuting = { [weak self] actionID in
             self?.actionExecution.isExecuting(actionID) ?? false
         }
-        view.onAnnotationsChanged = { [weak self] in self?.saveRevisionIfNeeded() }
+        view.onAnnotationsChanged = { [weak self] in self?.scheduleRevisionSave() }
         view.onToolbarInvalidated = { [weak self] in self?.layoutToolbar() }
         view.onHoverChanged = { [weak self] in self?.refreshHover() }
         view.onTogglePassthrough = { [weak self] in
@@ -212,6 +217,8 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
     }
 
     deinit {
+        revisionSaveTask?.cancel()
+        zoomSettleTask?.cancel()
         frameObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
@@ -278,9 +285,11 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         applyToolbarAlpha()
     }
 
-    /// 悬停才亮。整体透明度（⌘滚轮）也乘进去 —— 工具条以前住在窗口里，跟着一起淡。
+    /// 悬停才显示。隐藏时同时关闭鼠标命中，避免透明的子窗口挡住下面的软件；
+    /// 从图片直接移向已显示的工具条仍由 `isPointerOnPin` 保持悬停，因此工具条可正常点击。
     private func applyToolbarAlpha() {
-        toolbarPanel.alphaValue = opacity * (isHovering ? 1.0 : 0.45)
+        toolbarPanel.ignoresMouseEvents = !isHovering
+        toolbarPanel.alphaValue = isHovering ? opacity : 0
     }
 
     // MARK: - 动作
@@ -328,6 +337,16 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         shotStore.appendRevision(shot: shot, layers: layers, note: "钉图上标注")
     }
 
+    private func scheduleRevisionSave() {
+        revisionSaveTask?.cancel()
+        revisionSaveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.revisionSaveTask = nil
+            self.saveRevisionIfNeeded()
+        }
+    }
+
     // MARK: - 窗口
 
     private func applyZoom(_ delta: CGFloat) {
@@ -353,9 +372,20 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
             display: true,
             animate: false
         )
-        window.invalidateShadow()
         // 选字层跟随缩放：bounds 变了，归一化坐标需重贴，分析结果复用（像素未变）
         imageView?.didZoom()
+        scheduleSettledZoomRedraw()
+    }
+
+    private func scheduleSettledZoomRedraw() {
+        zoomSettleTask?.cancel()
+        zoomSettleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 90_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.zoomSettleTask = nil
+            self.imageView?.needsDisplay = true
+            self.window?.invalidateShadow()
+        }
     }
 
     private func applyOpacity(_ step: CGFloat) {
@@ -397,6 +427,10 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
     }
 
     override func close() {
+        revisionSaveTask?.cancel()
+        revisionSaveTask = nil
+        zoomSettleTask?.cancel()
+        zoomSettleTask = nil
         saveRevisionIfNeeded()
         imageView?.teardownLiveText()
         PinPassthroughRegistry.shared.unregister(self)

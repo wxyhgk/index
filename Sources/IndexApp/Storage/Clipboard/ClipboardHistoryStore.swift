@@ -195,7 +195,7 @@ final class ClipboardHistoryStore: @unchecked Sendable {
             return (item.text, nil)
         case .image, .file:
             guard let assetPath = item.assetPath else { return (nil, nil) }
-            return (nil, assetDirectory.appendingPathComponent(assetPath))
+            return (nil, assetDirectory.appendingPathComponent(assetPath, isDirectory: false))
         }
     }
 

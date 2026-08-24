@@ -25,5 +25,7 @@
 
 ## 分发安全
 
-本地 `Index Dev` 证书只用于保持开发机上的 TCC 身份稳定。公开二进制必须使用 Developer ID
-Application 签名并完成 Apple notarization；不要把开发证书或私钥提交到仓库或公共 CI。
+本地 `Index Dev` 证书只用于保持开发机上的 TCC 身份稳定。站外公开二进制必须使用
+Developer ID Application 签名并完成 Apple notarization；Mac App Store 二进制必须启用
+App Sandbox，使用 Apple Distribution / Mac App Distribution 和 Mac Installer Distribution
+签名。不要把开发证书、分发私钥或 provisioning profile 提交到仓库或公共 CI。

@@ -192,7 +192,31 @@ else
     bad "Plugin/ 框架层引用了 DS —— 设计令牌走 UI 层注入"
 fi
 
-section "纪律十：Plugins 层窗口/视图子类需登记白名单"
+section "纪律十：商店分发配置与直装版隔离"
+store_config_ok=1
+if ! plutil -lint Resources/Info.plist Resources/IndexAppStore.entitlements >/dev/null; then
+    bad "Info.plist 或商店 entitlements 不是有效 plist"
+    store_config_ok=0
+fi
+if ! bash -n scripts/package-app-store.sh; then
+    bad "商店打包脚本语法错误"
+    store_config_ok=0
+fi
+store_sandbox=$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' \
+    Resources/IndexAppStore.entitlements 2>/dev/null || true)
+if [ "$store_sandbox" != "true" ]; then
+    bad "商店 entitlements 必须启用 App Sandbox"
+    store_config_ok=0
+fi
+if grep -q 'temporary-exception' Resources/IndexAppStore.entitlements; then
+    bad "商店 entitlements 不得静默加入临时沙盒例外"
+    store_config_ok=0
+fi
+if [ "$store_config_ok" -eq 1 ]; then
+    ok "商店沙盒与旁路打包配置有效，且没有临时例外"
+fi
+
+section "纪律十一：Plugins 层窗口/视图子类需登记白名单"
 # Plugins 层允许持有 NSWindow/NSPanel/NSWindowController/NSView 子类
 # （选区覆盖层、钉图、暂存卡片是插件的本职 UI），但必须登记在白名单里 ——
 # 新增窗口逻辑时显式加一行，防止窗口代码无声扩散进插件层。

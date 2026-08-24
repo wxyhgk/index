@@ -23,11 +23,7 @@ struct CollectionsContent: View {
     @State private var deleteTarget: ShotCollectionSummary?
     @State private var errorMessage: String?
     @State private var clipboardFavorites: [ClipboardHistoryItem] = []
-    @State private var clipboardFavoritesThumbnails: [Int64: NSImage] = [:]
-    @State private var clipboardFavoritesAppIcons: [String: NSImage] = [:]
     @State private var collectionClipboardItems: [ClipboardHistoryItem] = []
-    @State private var collectionClipboardThumbnails: [Int64: NSImage] = [:]
-    @State private var collectionClipboardAppIcons: [String: NSImage] = [:]
 
     init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
         _store = ObservedObject(wrappedValue: store)
@@ -45,11 +41,7 @@ struct CollectionsContent: View {
                     route: route,
                     collections: collections,
                     clipboardFavorites: clipboardFavorites,
-                    clipboardFavoritesThumbnails: clipboardFavoritesThumbnails,
-                    clipboardFavoritesAppIcons: clipboardFavoritesAppIcons,
                     collectionClipboardItems: collectionClipboardItems,
-                    collectionClipboardThumbnails: collectionClipboardThumbnails,
-                    collectionClipboardAppIcons: collectionClipboardAppIcons,
                     onClose: closeDetail
                 )
             } else {
@@ -59,8 +51,6 @@ struct CollectionsContent: View {
                     collections: collections,
                     favoritePreviews: favoritePreviews,
                     clipboardFavorites: clipboardFavorites,
-                    clipboardFavoritesThumbnails: clipboardFavoritesThumbnails,
-                    clipboardFavoritesAppIcons: clipboardFavoritesAppIcons,
                     creating: $creating,
                     newName: $newName,
                     renameTarget: $renameTarget,
@@ -129,37 +119,11 @@ struct CollectionsContent: View {
         }
         let items = (try? ClipboardHistoryStore.shared.items(inCollection: id)) ?? []
         collectionClipboardItems = items
-        for item in items where item.kind == .image {
-            guard let id = item.id, collectionClipboardThumbnails[id] == nil,
-                  let url = ClipboardHistoryStore.shared.content(of: item).assetURL,
-                  let image = NSImage(contentsOf: url) else { continue }
-            collectionClipboardThumbnails[id] = image
-        }
-        for item in items {
-            guard let app = item.sourceApp, collectionClipboardAppIcons[app] == nil else { continue }
-            Task {
-                guard let icon = await AppIconProvider.shared.icon(forName: app) else { return }
-                collectionClipboardAppIcons[app] = icon
-            }
-        }
     }
 
     private func reloadClipboardFavorites() {
         let favs = (try? ClipboardHistoryStore.shared.favorites()) ?? []
         clipboardFavorites = favs
-        for item in favs where item.kind == .image {
-            guard let id = item.id, clipboardFavoritesThumbnails[id] == nil,
-                  let url = ClipboardHistoryStore.shared.content(of: item).assetURL,
-                  let image = NSImage(contentsOf: url) else { continue }
-            clipboardFavoritesThumbnails[id] = image
-        }
-        for item in favs {
-            guard let app = item.sourceApp, clipboardFavoritesAppIcons[app] == nil else { continue }
-            Task {
-                guard let icon = await AppIconProvider.shared.icon(forName: app) else { return }
-                clipboardFavoritesAppIcons[app] = icon
-            }
-        }
     }
 
     // MARK: CRUD

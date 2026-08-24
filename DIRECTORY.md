@@ -23,13 +23,15 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 | `build.sh` | 在旁路目录组装并固定身份签名，退出旧 Index/Index 后原子替换 `Index.app`，按原运行状态自动重启；签名优先级 Developer ID → 自签名 "Index Dev"，ad-hoc 只可显式启用 |
 | `Sources/Index/` | 应用源码，按依赖边界分模块 |
 | `Tests/IndexTests/` | 单元、回归、架构和生命周期测试 |
-| `Resources/` | `Info.plist`、应用图标及品牌 SVG 源文件 |
+| `Resources/` | `Info.plist`、Release 应用图标与商店专用 entitlements；运行时品牌 SVG 在 `Sources/IndexApp/Resources/` |
 | `BrowserExtensions/Edge/` | Edge 图片导入扩展、Native Messaging host 与独立说明 |
 | `Contracts/` | 面向未来 Windows 客户端的便携图库和标注 JSON Schema |
 | `docs/` | 产品设计、开发记录、故障记录、CI 说明与 README 截图 |
 | `scripts/` | 架构检查、证书、品牌资源和浏览器扩展安装脚本 |
 | `scripts/make-dev-cert.sh` | 生成自签名证书。**存在的理由**：ad-hoc 签名的 cdhash 每次编译都变，macOS 会认为是另一个 App 而反复要求重新授权屏幕录制；固定证书给出稳定的 designated requirement，授权一次即可 |
+| `scripts/package-app-store.sh` | 从标准 Release App 复制旁路副本，嵌入 Mac App Store 描述文件和沙盒签名，生成 Transporter 用 `.pkg`；不就地重签 `build/Index.app` |
 | `Resources/Info.plist` | bundle 元信息与权限用途说明 |
+| `Resources/IndexAppStore.entitlements` | 仅用于 Mac App Store 副本的最小沙盒能力，不参与日常直装版签名 |
 | `ARCHITECTURE.md` | 规范文档：依赖方向、八个扩展点、类型约定、违例表、阶段进度 |
 | `DIRECTORY.md` | 本文件 |
 | `README.md` | 面向使用者的功能与版本说明 |
@@ -45,6 +47,7 @@ docs/
 ├── design/mockups/   4K 界面方案原稿，不直接用于 README
 ├── errors/           可复盘的捕获、签名与系统服务事故
 ├── images/           README 和发布页实际使用的产品截图
+├── app-store.md      Mac App Store 账号、签名、打包与上传流程
 ├── ci.md             CI 与 Release 说明
 ├── gallery-chrome-spec.md
 └── spatial-ui-spec.md

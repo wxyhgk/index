@@ -13,8 +13,6 @@ struct CollectionsOverviewView: View {
     let collections: [ShotCollectionSummary]
     let favoritePreviews: [Shot]
     let clipboardFavorites: [ClipboardHistoryItem]
-    let clipboardFavoritesThumbnails: [Int64: NSImage]
-    let clipboardFavoritesAppIcons: [String: NSImage]
     @Binding var creating: Bool
     @Binding var newName: String
     @Binding var renameTarget: ShotCollectionSummary?
@@ -40,11 +38,9 @@ struct CollectionsOverviewView: View {
                     QuickFavoritesCard(store: store, previews: favoritePreviews) {
                         onOpen(.favorites)
                     }
-                    ClipboardFavoritesCard(
-                        items: clipboardFavorites,
-                        thumbnails: clipboardFavoritesThumbnails,
-                        appIcons: clipboardFavoritesAppIcons
-                    ) { onOpen(.clipboardFavorites) }
+                    ClipboardFavoritesCard(items: clipboardFavorites) {
+                        onOpen(.clipboardFavorites)
+                    }
                     ForEach(filteredCollections) { collection in
                         CollectionCard(collection: collection, store: store) {
                             onOpen(.collection(collection.id))

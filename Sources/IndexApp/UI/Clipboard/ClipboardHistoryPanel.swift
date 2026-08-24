@@ -7,8 +7,9 @@ import SwiftUI
 // Paste 式设计：横向卡片流，彩色标题栏（类型+时间+来源），
 // 键盘导航（←→ 选择 + Enter 复制 + Delete 删除），类型过滤。
 //
-// 窗口用 nonactivatingPanel（不跳 Dock），但 show 时手动激活
-// 让面板成为 key window 接收键盘事件。点击面板外面自动关闭。
+// 窗口用 nonactivatingPanel：它可以自己成为 key window 接收键盘事件，
+// 但不能激活整个 Index、把图库窗口所在的 Stage 一起拉到前台。
+// 点击面板外面自动关闭。
 // ============================================================
 
 @MainActor
@@ -34,11 +35,13 @@ final class ClipboardHistoryPanel: NSPanel {
 
     init(store: ClipboardHistoryStore, viewModel: ClipboardHistoryViewModel? = nil) {
         self.store = store
-        let resolvedViewModel = viewModel ?? ClipboardHistoryViewModel.shared
+        // 浮动面板拥有独立的查询/筛选/键盘选择会话。它与图库里的剪贴板
+        // Tab 只共享持久化 store，不能共享一份 UI 状态。
+        let resolvedViewModel = viewModel ?? ClipboardHistoryViewModel(store: store)
         self.viewModel = resolvedViewModel
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 320),
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -51,6 +54,8 @@ final class ClipboardHistoryPanel: NSPanel {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         isMovable = true
+        becomesKeyOnlyIfNeeded = false
+        PanelPlacement.detachFromAppStage(self)
 
         let root = ClipboardHistoryView(viewModel: resolvedViewModel, store: store)
         let hosting = NSHostingController(rootView: root)
@@ -63,6 +68,7 @@ final class ClipboardHistoryPanel: NSPanel {
     required init?(coder: NSCoder) { fatalError() }
 
     override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 
     func show() {
         viewModel.refresh()
@@ -89,9 +95,10 @@ final class ClipboardHistoryPanel: NSPanel {
             )
             setFrameOrigin(origin)
         }
-        // 激活 app 让面板成为 key window（LSUIElement 不跳 Dock）
-        NSApp.activate(ignoringOtherApps: true)
-        makeKeyAndOrderFront(nil)
+        // nonactivatingPanel 能在不激活整个 App 的情况下拿键盘焦点。
+        // 不能调用 NSApp.activate：台前调度会把图库等所有 Index 窗口一起带出来。
+        orderFrontRegardless()
+        makeKey()
         resetScrollPosition()
         installMonitors()
         onPanelShown?()
@@ -146,10 +153,16 @@ final class ClipboardHistoryPanel: NSPanel {
             }
             switch event.keyCode {
             case 123: // ←
-                self.viewModel.moveSelection(-1)
+                self.viewModel.moveSelection(
+                    -1,
+                    preservingQueue: self.viewModel.isContinuousSelectionEnabled
+                )
                 return nil
             case 124: // →
-                self.viewModel.moveSelection(1)
+                self.viewModel.moveSelection(
+                    1,
+                    preservingQueue: self.viewModel.isContinuousSelectionEnabled
+                )
                 return nil
             case 36: // Enter = 粘贴选中项
                 self.viewModel.pasteSelected()
@@ -172,10 +185,20 @@ final class ClipboardHistoryPanel: NSPanel {
         guard viewModel.selectedIndex < visible.count else { return }
         let item = visible[viewModel.selectedIndex]
         guard item.kind == .image,
-              let id = item.id,
-              let thumbnail = viewModel.imageThumbnails[id]
+              let url = viewModel.store.content(of: item).assetURL
         else { return }
-        ImagePreviewController.shared.showNow(image: thumbnail, screenPoint: NSEvent.mouseLocation)
+        let point = NSEvent.mouseLocation
+        if let cached = ThumbnailLoader.shared.cachedImage(forKey: item.thumbnailCacheKey) {
+            ImagePreviewController.shared.showNow(image: cached, screenPoint: point)
+            return
+        }
+        Task {
+            guard let image = await ThumbnailLoader.shared.load(
+                url: url,
+                key: item.thumbnailCacheKey
+            ), !Task.isCancelled else { return }
+            ImagePreviewController.shared.showNow(image: image, screenPoint: point)
+        }
     }
 
     /// 点击面板外部时关闭（非钉住模式）。

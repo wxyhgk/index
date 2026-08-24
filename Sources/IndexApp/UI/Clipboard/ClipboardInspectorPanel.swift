@@ -26,11 +26,16 @@ struct ClipboardInspectorPanel: View {
 
     init(
         isPresented: Binding<Bool>,
-        store: ClipboardHistoryStore = .shared
+        store: ClipboardHistoryStore = .shared,
+        viewModel: ClipboardHistoryViewModel? = nil
     ) {
         self._isPresented = isPresented
         self.store = store
-        _viewModel = ObservedObject(wrappedValue: .shared)
+        let resolvedViewModel = viewModel
+            ?? (store === ClipboardHistoryStore.shared
+                ? ClipboardTabSession.shared.viewModel
+                : ClipboardHistoryViewModel(store: store))
+        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
     }
 
     var body: some View {
@@ -143,10 +148,8 @@ struct ClipboardInspectorPanel: View {
                 .padding(DS.s3)
                 .background(DS.iconPlaceholderFill, in: RoundedRectangle(cornerRadius: DS.radiusCard))
         case .image:
-            if let id = item.id, let image = viewModel.imageThumbnails[id] {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
+            if let url = store.content(of: item).assetURL {
+                CachedImage(url: url, key: item.thumbnailCacheKey)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard))
             } else {

@@ -1,5 +1,10 @@
 import Foundation
 
+struct GalleryThumbnailDatasetKey: Equatable {
+    let keys: [String]
+    let columnCount: Int
+}
+
 // MARK: - 图库中栏的支撑类型
 //
 // 从 `GalleryGrid.swift` 拆出：这一组顶层类型不依赖视图实例，
@@ -25,7 +30,7 @@ enum GalleryVisualBudget {
 }
 
 /// 一个时间段的截图。分组在 shots 变化时算一次，不在 body 里逐帧分组。
-struct ShotSection: Identifiable {
+struct ShotSection: Identifiable, Equatable {
     let id: String
     let title: String
     var shots: [Shot]

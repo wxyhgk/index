@@ -11,8 +11,6 @@ import SwiftUI
 
 struct ClipboardFavoritesCard: View {
     let items: [ClipboardHistoryItem]
-    let thumbnails: [Int64: NSImage]
-    let appIcons: [String: NSImage]
     let action: () -> Void
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -91,10 +89,13 @@ struct ClipboardFavoritesCard: View {
     @ViewBuilder
     private func clipboardPreview(_ item: ClipboardHistoryItem) -> some View {
         Group {
-            if item.kind == .image, let id = item.id, let thumb = thumbnails[id] {
-                Image(nsImage: thumb)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+            if item.kind == .image,
+               let url = ClipboardHistoryStore.shared.content(of: item).assetURL {
+                CachedImage(
+                    url: url,
+                    key: item.thumbnailCacheKey,
+                    contentMode: .fill
+                )
             } else {
                 VStack {
                     Image(systemName: item.kind == .text ? "textformat" : "doc")
@@ -117,8 +118,6 @@ struct ClipboardFavoritesCard: View {
 
 struct ClipboardFavoritesGrid: View {
     let items: [ClipboardHistoryItem]
-    let thumbnails: [Int64: NSImage]
-    let appIcons: [String: NSImage]
 
     var body: some View {
         if items.isEmpty {
@@ -136,10 +135,9 @@ struct ClipboardFavoritesGrid: View {
                 ) {
                     ForEach(items) { item in
                         ClipboardGridCard(
-                            item: item,
-                            thumbnail: item.id.flatMap { thumbnails[$0] },
-                            appIcon: item.sourceApp.flatMap { appIcons[$0] }
+                            item: item
                         )
+                        .equatable()
                         .contextMenu {
                             Button("复制") {
                                 ClipboardHistoryViewModel.shared.copyBack(item)

@@ -5,6 +5,66 @@ import SwiftUI
 // 目前三个：图库、录屏、应用。后续要加（暂存、回收站…）在这里各写一个类型、
 // 在 `registerBuiltins` 里加一行。
 
+/// 内容库子 Tab 的轻量会话状态。
+///
+/// `@AppStorage` 的 setter 会在按钮动作里同步写 UserDefaults，并让内容区与
+/// Inspector 的两个 property wrapper 分别失效。子 Tab 是高频交互，先发布内存状态，
+/// 等首帧提交后再持久化，避免把磁盘偏好写入塞进点击响应帧。
+@MainActor
+private final class ContentLibraryTabSelection: ObservableObject {
+    @Published fileprivate var value: String
+
+    init(_ value: String) { self.value = value }
+}
+
+@MainActor
+private final class ContentLibraryDisplayedTab: ObservableObject {
+    @Published fileprivate var value: String
+
+    init(_ value: String) { self.value = value }
+}
+
+@MainActor
+private final class ContentLibraryTabSession {
+    static let shared = ContentLibraryTabSession()
+
+    let selection: ContentLibraryTabSelection
+    let displayed: ContentLibraryDisplayedTab
+
+    private let defaults: UserDefaults
+    private var transitionTask: Task<Void, Never>?
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let saved = defaults.string(forKey: "contentLibrarySubTab")
+        let initial = ["shots", "recordings", "clipboard", "ai"].contains(saved ?? "")
+            ? saved!
+            : "shots"
+        selection = ContentLibraryTabSelection(initial)
+        displayed = ContentLibraryDisplayedTab(initial)
+    }
+
+    func select(_ id: String) {
+        guard id != selection.value else { return }
+
+        // 第一帧只更新四个小按钮，立刻给出按下反馈。大页面与 Inspector 的替换
+        // 放到下一帧，避免 100–200 ms 的页面布局阻塞选中胶囊出现。
+        selection.value = id
+        transitionTask?.cancel()
+        transitionTask = Task { [weak self] in
+            // 留出至少两个 60 Hz 帧，让选中胶囊真正提交到 WindowServer；16 ms
+            // 在复杂窗口里可能和当前布局事务重叠，仍会被后续大页面创建拖住。
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled, let self, self.selection.value == id else { return }
+            self.displayed.value = id
+
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled, self.selection.value == id else { return }
+            self.defaults.set(id, forKey: "contentLibrarySubTab")
+        }
+    }
+}
+
 /// 内容库：截图/录屏/剪切板/AI 对话的统一入口。这是默认落点。
 struct LibraryDestination: GalleryDestination {
 
@@ -28,7 +88,23 @@ struct LibraryDestination: GalleryDestination {
 
     /// 详情面板的开关是用户偏好，所以这里恒定返回面板，由容器按偏好决定显不显示。
     func inspector() -> AnyView? {
-        AnyView(GalleryInspectorPanelHost())
+        AnyView(ContentLibraryInspectorPanelHost())
+    }
+}
+
+/// 内容库的中间区和 Inspector 是兄弟子树，因此 Inspector 必须按同一个子 Tab
+/// 切换。剪贴板使用自己的详情面板；截图和录屏继续使用图库详情面板。
+private struct ContentLibraryInspectorPanelHost: View {
+    @AppStorage("galleryInspectorShown") private var showInspector = true
+    @ObservedObject private var displayedTab = ContentLibraryTabSession.shared.displayed
+
+    @ViewBuilder
+    var body: some View {
+        if displayedTab.value == "clipboard" {
+            ClipboardInspectorPanel(isPresented: $showInspector)
+        } else {
+            GalleryInspectorPanel(isPresented: $showInspector)
+        }
     }
 }
 
@@ -37,7 +113,7 @@ struct LibraryDestination: GalleryDestination {
 /// 内容库的中间内容：子 tab 栏（截图/录屏/剪切板/AI 对话）+ 对应内容。
 struct ContentLibraryView: View {
 
-    @AppStorage("contentLibrarySubTab") private var subTab = "shots"
+    @ObservedObject private var tabSelection = ContentLibraryTabSession.shared.selection
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var viewModel = GalleryViewModel.shared
 
@@ -56,57 +132,27 @@ struct ContentLibraryView: View {
             .padding(.top, DS.s4)
             .padding(.bottom, DS.s2)
 
-            // 内容区
-            Group {
-                switch subTab {
-                case "recordings":
-                    RecordingsContent(viewModel: viewModel)
-                case "clipboard":
-                    ClipboardContent()
-                case "ai":
-                    AgentConversationListView()
-                default:
-                    LibraryContent()
-                }
-            }
+            ContentLibraryPageHost(viewModel: viewModel)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .floatingPanel()
-        .task {
-            activateSubTabScope()
-        }
-        .onChange(of: subTab) { _, _ in
-            activateSubTabScope()
-        }
-    }
-
-    /// 子 tab 切换时联动 scope：录屏子 tab 固定 .recordings filter，
-    /// 其他子 tab 恢复 .all。destinationID 不变时 GalleryView 的
-    /// activateScope 不触发，这里补上。
-    private func activateSubTabScope() {
-        switch subTab {
-        case "recordings":
-            GalleryContentScope.recordings.activate(in: viewModel)
-        default:
-            GalleryContentScope.recordings.deactivate(in: viewModel)
-        }
     }
 
     private func subTabButton(_ id: String, title: String, symbol: String) -> some View {
         Button {
-            subTab = id
+            ContentLibraryTabSession.shared.select(id)
         } label: {
             HStack(spacing: DS.s1) {
                 Image(systemName: symbol)
                     .font(.system(size: DS.font12, weight: .medium))
                 Text(title)
-                    .font(.system(size: DS.font13, weight: subTab == id ? .medium : .regular))
+                    .font(.system(size: DS.font13, weight: tabSelection.value == id ? .medium : .regular))
             }
-            .foregroundStyle(subTab == id ? Color.primary : Color.secondary)
+            .foregroundStyle(tabSelection.value == id ? Color.primary : Color.secondary)
             .padding(.horizontal, DS.s3)
             .frame(height: DS.s4 + DS.s3)
             .background(
-                subTab == id ? DS.accentFillSelected : .clear,
+                tabSelection.value == id ? DS.accentFillSelected : .clear,
                 in: Capsule()
             )
             .contentShape(Capsule())
@@ -115,41 +161,91 @@ struct ContentLibraryView: View {
     }
 }
 
-/// 图库的中间内容：页头 + 网格。
-struct LibraryContent: View {
+/// 大页面只观察延后一帧发布的 displayedTab。按钮选中态更新时这个子树保持稳定，
+/// 从而先把点击反馈提交给 WindowServer，再开始较重的页面布局。
+private struct ContentLibraryPageHost: View {
+    @ObservedObject private var displayedTab = ContentLibraryTabSession.shared.displayed
+    @ObservedObject var viewModel: GalleryViewModel
+
+    @ViewBuilder
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            GalleryPageHeader(style: .libraryPanel)
-                .padding(.horizontal, DS.s5)
-                .padding(.top, DS.s5)
-                .padding(.bottom, DS.s2)
-            GalleryGrid(chrome: .libraryPanel)
+        Group {
+            if displayedTab.value == "clipboard" {
+                ClipboardContent()
+            } else if displayedTab.value == "ai" {
+                AgentConversationListView()
+            } else {
+                MediaLibraryContent(
+                    scope: displayedTab.value == "recordings" ? .recordings : .library,
+                    viewModel: viewModel
+                )
+            }
         }
-        .floatingPanel()
+        .task { activateSubTabScope() }
+        .onChange(of: displayedTab.value) { _, _ in activateSubTabScope() }
+    }
+
+    private func activateSubTabScope() {
+        if displayedTab.value == "recordings" {
+            GalleryContentScope.recordings.activate(in: viewModel)
+        } else {
+            GalleryContentScope.recordings.deactivate(in: viewModel)
+        }
     }
 }
 
-// ============================================================
-// MARK: - 录屏
-// ============================================================
-
-struct RecordingsContent: View {
+/// 截图与录屏共用同一个结构身份，只改变 scope。两者来回切换时保留 GalleryGrid
+/// 的 StateObject、滚动位置与缩略图缓存，不再销毁后重建整棵网格。
+private struct MediaLibraryContent: View {
     @ObservedObject private var store: ShotStore
     @ObservedObject private var viewModel: GalleryViewModel
+    let scope: GalleryContentScope
 
-    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
+    init(
+        store: ShotStore = .shared,
+        scope: GalleryContentScope,
+        viewModel: GalleryViewModel? = nil
+    ) {
         _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
             ?? .resolve(for: store)
         _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        self.scope = scope
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.s3) {
-            GalleryPageHeader(store: store, viewModel: viewModel, scope: .recordings)
-                .padding(.horizontal, DS.s2)
-            GalleryGrid(store: store, viewModel: viewModel, scope: .recordings)
+        VStack(alignment: .leading, spacing: scope == .library ? 0 : DS.s3) {
+            if scope == .library {
+                GalleryPageHeader(
+                    store: store,
+                    viewModel: viewModel,
+                    scope: scope,
+                    style: .libraryPanel
+                )
+                .padding(.horizontal, DS.s5)
+                .padding(.top, DS.s5)
+                .padding(.bottom, DS.s2)
+            } else {
+                GalleryPageHeader(store: store, viewModel: viewModel, scope: scope)
+                    .padding(.horizontal, DS.s2)
+            }
+            GalleryGrid(
+                store: store,
+                viewModel: viewModel,
+                scope: scope,
+                chrome: scope == .library ? .libraryPanel : .standard
+            )
         }
+        .modifier(MediaLibraryPanelModifier(isLibrary: scope == .library))
+    }
+}
+
+private struct MediaLibraryPanelModifier: ViewModifier {
+    let isLibrary: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isLibrary { content.floatingPanel() } else { content }
     }
 }
 

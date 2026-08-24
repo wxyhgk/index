@@ -14,11 +14,7 @@ struct CollectionsDetailView: View {
     let route: CollectionsNavigationState.Route
     let collections: [ShotCollectionSummary]
     let clipboardFavorites: [ClipboardHistoryItem]
-    let clipboardFavoritesThumbnails: [Int64: NSImage]
-    let clipboardFavoritesAppIcons: [String: NSImage]
     let collectionClipboardItems: [ClipboardHistoryItem]
-    let collectionClipboardThumbnails: [Int64: NSImage]
-    let collectionClipboardAppIcons: [String: NSImage]
     let onClose: () -> Void
 
     @AppStorage("galleryInspectorShown") private var showInspector = true
@@ -68,11 +64,7 @@ struct CollectionsDetailView: View {
                 }
             }
         case .clipboardFavorites:
-            ClipboardFavoritesGrid(
-                items: clipboardFavorites,
-                thumbnails: clipboardFavoritesThumbnails,
-                appIcons: clipboardFavoritesAppIcons
-            )
+            ClipboardFavoritesGrid(items: clipboardFavorites)
         }
     }
 
@@ -86,10 +78,9 @@ struct CollectionsDetailView: View {
                 ForEach(collectionClipboardItems) { item in
                     ClipboardGridCard(
                         item: item,
-                        thumbnail: item.id.flatMap { collectionClipboardThumbnails[$0] },
-                        appIcon: item.sourceApp.flatMap { collectionClipboardAppIcons[$0] },
                         isSelected: ClipboardSelection.shared.selectedID == item.id
                     )
+                    .equatable()
                     .onTapGesture {
                         ClipboardSelection.shared.select(item.id)
                     }

@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 
-/// 图库窗口的模式（Snagit 的 Editor/Library 单窗口双模式）。
+/// 图库窗口的模式（图库 / 标注 / Markdown / 设置共用一个主窗口）。
 ///
 /// 这不是「选中了什么」（那是 GallerySelection 的事）而是「窗口整体处于哪个视图」，
 /// 所以单独建模。存的是 **ID 不是 Shot 快照** —— 需要 Shot 值的地方按 ID 现查
@@ -10,13 +10,15 @@ import Combine
 @MainActor
 final class GalleryWindowMode: ObservableObject {
 
-    /// 窗口整体处于哪个视图。三者互斥，整窗切换（不是 sheet）。
+    /// 窗口整体处于哪个视图。各模式互斥，整窗切换（不是 sheet）。
     /// 设置也在这里 —— 它此前是一个独立窗口，与「单窗口多模式」的设计不一致，
     /// 用起来也割裂（改个默认颜色要跳出去再跳回来）。
     enum Mode: Equatable {
         case library
         /// 胶片条换图 = 换成目标 ID（EditorView 按 id 重建）。
         case editing(Int64)
+        /// Markdown 与标注编辑器一样住在图库主窗口内，但两者的编辑状态互不混用。
+        case markdownEditing(Int64)
         case settings
     }
 
@@ -24,12 +26,24 @@ final class GalleryWindowMode: ObservableObject {
 
     init() {}
 
-    var isEditing: Bool { editingShotID != nil }
+    var isEditing: Bool { activeShotID != nil }
     var isSettings: Bool { mode == .settings }
+
+    var activeShotID: Int64? {
+        switch mode {
+        case .editing(let id), .markdownEditing(let id): return id
+        case .library, .settings: return nil
+        }
+    }
 
     /// 正在编辑的截图 ID；不在编辑模式时为 nil。
     var editingShotID: Int64? {
         if case .editing(let id) = mode { return id }
+        return nil
+    }
+
+    var markdownEditingShotID: Int64? {
+        if case .markdownEditing(let id) = mode { return id }
         return nil
     }
 
@@ -38,6 +52,12 @@ final class GalleryWindowMode: ObservableObject {
     func openEditor(shotID: Int64?) {
         guard let shotID else { return }
         mode = .editing(shotID)
+    }
+
+    /// 在图库主窗口内进入 Markdown 编辑器。
+    func openMarkdownEditor(shotID: Int64?) {
+        guard let shotID else { return }
+        mode = .markdownEditing(shotID)
     }
 
     /// 进入设置。
@@ -53,6 +73,14 @@ final class GalleryWindowMode: ObservableObject {
     /// 正在编辑的截图，按 ID 现查。nil = 没在编辑，或记录已被删除。
     func resolveEditingShot() -> Shot? {
         editingShotID.flatMap { Self.resolveShot(id: $0) }
+    }
+
+    func resolveMarkdownEditingShot() -> Shot? {
+        markdownEditingShotID.flatMap { Self.resolveShot(id: $0) }
+    }
+
+    func resolveActiveShot() -> Shot? {
+        activeShotID.flatMap { Self.resolveShot(id: $0) }
     }
 
     /// 按 ID 找 Shot：先查内存列表（语义结果可能不在常规列表里，两边都找），
@@ -90,6 +118,8 @@ enum GalleryKeyContext {
         switch GalleryWindowController.shared.mode.mode {
         case .library:  return .library
         case .editing:  return .editor
+        // Markdown 是文字编辑上下文，任何图库/标注快捷键都必须让位。
+        case .markdownEditing: return .none
         // 设置页里全是输入控件，空格/方向键/回车都该留给它们 ——
         // 焦点不在文本框时也不能让图库的网格导航接管。
         case .settings: return .none

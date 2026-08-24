@@ -15,11 +15,16 @@ struct MarkdownContentRenderer: ContentRenderer {
         let source = store.markdownSource(for: shot) ?? MarkdownGenerator.generate(for: shot)
 
         return AnyView(
-            ScrollView(.vertical, showsIndicators: false) {
-                Markdown(source)
-                    .markdownTheme(.gitHub)
-                    .padding(10)
-            }
+            Markdown(source)
+                .markdownTheme(.gitHub)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(10)
+                // A card preview is a viewport, not another scroll container.
+                // The outer card clips overflowing document content, so wheel
+                // events always continue to drive the virtualized gallery.
+                .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
+                .clipped()
         )
     }
 }

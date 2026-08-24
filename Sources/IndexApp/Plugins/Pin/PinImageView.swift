@@ -49,6 +49,9 @@ final class PinImageView: NSView {
     private let initialLayers: Layers<ImageSpace>
     /// 底图 + 已应用的马赛克。只在马赛克图层增减时重算，绝不逐帧跑 CoreImage。
     private var canvasImage: CGImage
+    /// `canvasImage` 对应的马赛克集合。普通箭头、文字等变化不能触发整图 CoreImage 合成。
+    private var canvasPixelates: Layers<ImageSpace>
+    private let canvasRenderer: (CGImage, Layers<ImageSpace>) -> CGImage
 
     /// 选字（Live Text）模式：系统 `ImageAnalysisOverlayView` 叠在图像区域上。
     /// 分析对象是 canvasImage（含已应用马赛克）—— 打了码的字不该还能选出来。
@@ -56,6 +59,8 @@ final class PinImageView: NSView {
     private var liveTextOverlay: ImageAnalysisOverlayView?
     /// 分析结果按当时的马赛克图层缓存 —— 撤销/重做增删了马赛克就过期。
     private var liveTextAnalysis: (pixelates: Layers<ImageSpace>, task: Task<ImageAnalysis?, Never>)?
+    /// 先让钉图窗口完成首帧，再自动进入选字，避免 VisionKit 初始化与窗口出现争抢主线程。
+    private var automaticLiveTextTask: Task<Void, Never>?
 
     /// 仅供窗口生命周期与测试核对：临时退出选字可以保留分析缓存，关闭窗口后则必须全空。
     var hasLiveTextResources: Bool {
@@ -66,25 +71,33 @@ final class PinImageView: NSView {
         base: CGImage,
         layers: Layers<ImageSpace>,
         capture: any CapturePreferences,
-        annotationStyle: any AnnotationStylePreferences
+        annotationStyle: any AnnotationStylePreferences,
+        canvasRenderer: @escaping (CGImage, Layers<ImageSpace>) -> CGImage = LayerRenderer.render
     ) {
         self.base = base
         self.capture = capture
         self.annotation = AnnotationState(styleStore: annotationStyle)
         self.initialLayers = layers
         let pixelates = layers.filter { $0.kind == .pixelate }
+        self.canvasPixelates = pixelates
+        self.canvasRenderer = canvasRenderer
         self.canvasImage = pixelates.isEmpty
             ? base
-            : LayerRenderer.render(base: base, layers: pixelates)
+            : canvasRenderer(base, pixelates)
 
         super.init(frame: .zero)
         wantsLayer = true
+        // 滚轮缩放时 AppKit 只缩放已有 backing layer，不在每个 frame change 上重新执行
+        // `draw(_:)`。控制器在滚轮停下后主动 needsDisplay，一次性补高清重画。
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        layerContentsPlacement = .scaleAxesIndependently
         // 效果层的注入上下文由 PinWindowController 统一设置（它有 shot 元数据）。
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
+        automaticLiveTextTask?.cancel()
         liveTextAnalysis?.task.cancel()
     }
 
@@ -177,9 +190,11 @@ final class PinImageView: NSView {
 
     private func refreshCanvas() {
         let pixelates = allLayers.filter { $0.kind == .pixelate }
+        guard pixelates != canvasPixelates else { return }
+        canvasPixelates = pixelates
         canvasImage = pixelates.isEmpty
             ? base
-            : LayerRenderer.render(base: base, layers: pixelates)
+            : canvasRenderer(base, pixelates)
     }
 
     // MARK: - AppKit 基础
@@ -224,10 +239,8 @@ final class PinImageView: NSView {
     func didZoom() {
         // layout 已在窗口 setFrame 后触发，这里再显式同步一次以覆盖动画期间的中间态
         liveTextOverlay?.frame = bounds
-        if isLiveTextActive {
-            // 重新绑定已有分析，避免 hasInteractiveItem 在缩放后的首帧误判为空白/文字
-            applyLiveTextAnalysis()
-        }
+        // ImageAnalysis 的坐标是归一化的，改 frame 已足够。不要在滚轮每一帧把同一份
+        // analysis 重新塞回系统 overlay；VisionKit 会为这次赋值重建交互几何。
     }
 
     override func updateTrackingAreas() {
@@ -434,12 +447,22 @@ final class PinImageView: NSView {
     /// 仅当设备支持且尚未进入时触发，切换工具/穿透等仍会按原逻辑退出。
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        automaticLiveTextTask?.cancel()
+        automaticLiveTextTask = nil
         if window != nil, !isLiveTextActive, LiveTextAnalyzer.isSupported {
-            enterLiveText()
+            automaticLiveTextTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard !Task.isCancelled, let self, self.window != nil,
+                      !self.isLiveTextActive else { return }
+                self.automaticLiveTextTask = nil
+                self.enterLiveText()
+            }
         }
     }
 
     func enterLiveText() {
+        automaticLiveTextTask?.cancel()
+        automaticLiveTextTask = nil
         guard !isLiveTextActive else { return }
         annotation.endTextEditing()
         annotation.select(nil)
@@ -470,6 +493,8 @@ final class PinImageView: NSView {
 
     /// 钉图窗口关闭时的最终收尾；不同于 `exitLiveText()`，缓存任务也必须取消并释放。
     func teardownLiveText() {
+        automaticLiveTextTask?.cancel()
+        automaticLiveTextTask = nil
         isLiveTextActive = false
         liveTextOverlay?.removeFromSuperview()
         liveTextOverlay = nil

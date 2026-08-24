@@ -140,38 +140,32 @@ final class ClipboardHistoryCoordinator {
         panel?.show()
     }
 
-    /// 粘贴前把焦点还给之前正在使用的应用。
-    func restoreFrontmostApp() {
-        if let app = previousFrontmostApp {
-            app.activate(options: [])
-            previousFrontmostApp = nil
-        } else {
-            // 之前前台就是 Index 自身（Agent 面板打开时），让 Agent 面板重新成为 key window
-            AgentCoordinator.shared.refocus()
-        }
-    }
-
     /// 面板钉住状态（点击外部不关闭）。
     var isPinned: Bool {
         get { panel?.isPinned ?? false }
         set { panel?.isPinned = newValue }
     }
 
-    /// 粘贴流程：关面板 → 恢复焦点到之前应用 → 模拟 Cmd+V。
-    /// 窗口生命周期和 CGEvent 注入收口在这里，ViewModel 只负责复制内容。
+    /// 粘贴流程：关面板 → 恢复焦点到之前应用 → 确认激活后模拟 Cmd+V。
+    /// 固定 150/300ms 延迟在较慢应用上会把 ⌘V 发给错误窗口；激活确认与
+    /// CGEvent 注入统一收在 Platform 的 ClipboardPasteDispatcher。
     func performPaste() {
-        togglePanel()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            self.restoreFrontmostApp()
+        // ViewModel 已同步把历史内容写回 NSPasteboard。先消费这次内部 changeCount，
+        // 否则下一轮 ClipboardWatcher 会把“粘贴历史”误当成一次新的外部复制。
+        watcher.suppressCurrentPasteboardChange()
+
+        let target = previousFrontmostApp
+        previousFrontmostApp = nil
+        if let panel, panel.isVisible {
+            panel.close()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            let source = CGEventSource(stateID: .combinedSessionState)
-            let vDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true)
-            vDown?.flags = .maskCommand
-            let vUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
-            vUp?.flags = .maskCommand
-            vDown?.post(tap: .cghidEventTap)
-            vUp?.post(tap: .cghidEventTap)
+
+        if let target {
+            ClipboardPasteDispatcher.paste(into: target)
+        } else {
+            // 之前前台就是 Index 自身（Agent 面板打开时），让 Agent 面板重新成为 key window。
+            AgentCoordinator.shared.refocus()
+            ClipboardPasteDispatcher.pasteIntoCurrentAppAfterFocusRestores()
         }
     }
 

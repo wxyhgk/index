@@ -8,7 +8,7 @@ import GRDB
 
 // MARK: - 模型
 
-struct AgentConversationRecord: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, Equatable {
+struct AgentConversationRecord: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, Equatable, Sendable {
     static let databaseTableName = "agentConversation"
 
     var id: Int64?
@@ -21,7 +21,7 @@ struct AgentConversationRecord: Codable, FetchableRecord, MutablePersistableReco
     }
 }
 
-struct AgentMessageRecord: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, Equatable {
+struct AgentMessageRecord: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, Equatable, Sendable {
     static let databaseTableName = "agentMessage"
 
     var id: Int64?

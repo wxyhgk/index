@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // ============================================================
@@ -9,19 +10,38 @@ import SwiftUI
 
 // MARK: - 中间内容：页头 + 网格
 
+private enum ClipboardGridMetrics {
+    static let cardWidth: CGFloat = 180
+    static let cardHeight: CGFloat = 160
+}
+
 struct ClipboardContent: View {
 
     @ObservedObject private var viewModel: ClipboardHistoryViewModel
     @ObservedObject private var selection = ClipboardSelection.shared
+    @StateObject private var thumbnailPreheater: ViewportThumbnailPreheater
     private let store: ClipboardHistoryStore
 
     @State private var renameItem: ClipboardHistoryItem?
     @State private var renameText = ""
     @State private var collectionItem: ClipboardHistoryItem?
+    @State private var columnCount = 4
+    @State private var isScrolling = false
+    @State private var isLiveResizing = false
 
-    init(store: ClipboardHistoryStore = .shared) {
+    init(
+        store: ClipboardHistoryStore = .shared,
+        viewModel: ClipboardHistoryViewModel? = nil
+    ) {
         self.store = store
-        _viewModel = ObservedObject(wrappedValue: .shared)
+        // 默认接图库 Tab 专用会话，使网格与右侧 Inspector 看到同一份数据；
+        // 浮动面板仍然拥有自己的 ViewModel。
+        let resolvedViewModel = viewModel
+            ?? (store === ClipboardHistoryStore.shared
+                ? ClipboardTabSession.shared.viewModel
+                : ClipboardHistoryViewModel(store: store))
+        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        _thumbnailPreheater = StateObject(wrappedValue: ViewportThumbnailPreheater())
     }
 
     var body: some View {
@@ -30,7 +50,32 @@ struct ClipboardContent: View {
             grid
         }
         .floatingPanel()
+        .background(widthReader)
         .onAppear { viewModel.refresh() }
+        .onDisappear { thumbnailPreheater.reset() }
+        .task(id: GalleryThumbnailDatasetKey(
+            keys: viewModel.filteredItems
+                .filter { $0.kind == .image }
+                .map { "\($0.viewportIdentity)#\($0.contentHash)" },
+            columnCount: columnCount
+        )) {
+            thumbnailPreheater.configure(
+                entries: viewModel.filteredItems.compactMap { item in
+                    guard item.kind == .image,
+                          let url = store.content(of: item).assetURL
+                    else { return nil }
+                    return ViewportThumbnailEntry(
+                        identity: item.viewportIdentity,
+                        key: item.thumbnailCacheKey,
+                        url: url
+                    )
+                },
+                columnCount: columnCount
+            )
+        }
+        .onChange(of: isLiveResizing, initial: true) { _, resizing in
+            thumbnailPreheater.setSuspended(resizing)
+        }
         .alert("重命名", isPresented: Binding(
             get: { renameItem != nil },
             set: { if !$0 { renameItem = nil } }
@@ -81,6 +126,28 @@ struct ClipboardContent: View {
 
     // MARK: 网格
 
+    private var widthReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onChange(of: proxy.size.width, initial: true) { _, width in
+                    applyWidth(width)
+                }
+                .onChange(of: isLiveResizing) { wasResizing, resizing in
+                    if wasResizing && !resizing { applyWidth(proxy.size.width) }
+                }
+        }
+    }
+
+    private func applyWidth(_ width: CGFloat) {
+        guard width > 0, !isLiveResizing else { return }
+        let usable = max(1, width - 2 * DS.s4)
+        let count = max(
+            1,
+            Int((usable + DS.s3) / (ClipboardGridMetrics.cardWidth + DS.s3))
+        )
+        if count != columnCount { columnCount = count }
+    }
+
     @ViewBuilder
     private var grid: some View {
         let visible = viewModel.filteredItems
@@ -92,51 +159,84 @@ struct ClipboardContent: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 180), spacing: DS.s3)],
-                    spacing: DS.s3
-                ) {
-                    ForEach(visible) { item in
-                        ClipboardGridCard(
-                            item: item,
-                            thumbnail: item.id.flatMap { viewModel.imageThumbnails[$0] },
-                            appIcon: item.sourceApp.flatMap { viewModel.appIcons[$0] },
-                            isSelected: selection.selectedID == item.id,
-                            onToggleFavorite: { viewModel.toggleFavorite(item) }
-                        )
-                        .onTapGesture {
-                            selection.select(item.id)
-                        }
-                        .contextMenu {
-                            Button("复制") {
-                                selection.selectedID = item.id
-                                viewModel.copyBack(item)
-                            }
-                            Button("重命名…") {
-                                selection.selectedID = item.id
-                                renameText = item.title ?? ""
-                                renameItem = item
-                            }
-                            Button(item.isFavorite ? "取消收藏" : "收藏") {
-                                selection.selectedID = item.id
-                                viewModel.toggleFavorite(item)
-                            }
-                            Button(item.pinned ? "取消固定" : "固定") {
-                                selection.selectedID = item.id
-                                viewModel.togglePin(item)
-                            }
-                            collectionMenu(for: item)
-                            Divider()
-                            Button("删除", role: .destructive) {
-                                viewModel.delete(item)
-                                ClipboardSelection.shared.clearIf(item.id)
-                            }
-                        }
-                    }
+            RecyclingCardCollectionView(
+                sections: [RecyclingCardSection(
+                    id: "clipboard",
+                    title: "",
+                    items: visible
+                )],
+                columnCount: columnCount,
+                fixedItemWidth: ClipboardGridMetrics.cardWidth,
+                itemHeight: ClipboardGridMetrics.cardHeight,
+                interitemSpacing: DS.s3,
+                lineSpacing: DS.s3,
+                contentInsets: NSEdgeInsets(
+                    top: DS.s3,
+                    left: DS.s4,
+                    bottom: DS.s3,
+                    right: DS.s4
+                ),
+                headerHeight: 0,
+                pinsHeaders: false,
+                scrollTarget: selection.selectedID,
+                card: { item in clipboardCard(for: item) },
+                header: { _ in EmptyView() },
+                onDisplay: { item in
+                    guard item.kind == .image else { return }
+                    thumbnailPreheater.mounted(item.viewportIdentity)
+                },
+                onEndDisplay: { item in
+                    guard item.kind == .image else { return }
+                    thumbnailPreheater.unmounted(item.viewportIdentity)
                 }
-                .padding(.horizontal, DS.s4)
-                .padding(.vertical, DS.s3)
+            )
+            .modifier(GalleryInteractionTracker(
+                isScrolling: $isScrolling,
+                isLiveResizing: $isLiveResizing
+            ))
+            .environment(\.galleryIsScrolling, isScrolling)
+            .environment(\.galleryDefersThumbnailLoading, isLiveResizing)
+        }
+    }
+
+    private func clipboardCard(for item: ClipboardHistoryItem) -> some View {
+        ClipboardGridCard(
+            item: item,
+            isSelected: selection.selectedID == item.id,
+            onToggleFavorite: { viewModel.toggleFavorite(item) },
+            store: store
+        )
+        .equatable()
+        .environment(\.galleryIsScrolling, isScrolling)
+        .environment(\.galleryDefersThumbnailLoading, isLiveResizing)
+        .onTapGesture {
+            selection.select(item.id)
+        }
+        .contextMenu {
+            if !isScrolling && !isLiveResizing {
+                Button("复制") {
+                    selection.selectedID = item.id
+                    viewModel.copyBack(item)
+                }
+                Button("重命名…") {
+                    selection.selectedID = item.id
+                    renameText = item.title ?? ""
+                    renameItem = item
+                }
+                Button(item.isFavorite ? "取消收藏" : "收藏") {
+                    selection.selectedID = item.id
+                    viewModel.toggleFavorite(item)
+                }
+                Button(item.pinned ? "取消固定" : "固定") {
+                    selection.selectedID = item.id
+                    viewModel.togglePin(item)
+                }
+                collectionMenu(for: item)
+                Divider()
+                Button("删除", role: .destructive) {
+                    viewModel.delete(item)
+                    ClipboardSelection.shared.clearIf(item.id)
+                }
             }
         }
     }
@@ -178,25 +278,33 @@ struct ClipboardContent: View {
 
 // MARK: - 网格卡片（比浮动面板卡片稍小，适配网格）
 
-struct ClipboardGridCard: View {
+struct ClipboardGridCard: View, Equatable {
 
     let item: ClipboardHistoryItem
-    let thumbnail: NSImage?
-    let appIcon: NSImage?
     var isSelected: Bool = false
     var onToggleFavorite: (() -> Void)? = nil
+    var store: ClipboardHistoryStore = .shared
 
     @State private var isHovering = false
+
+    static func == (lhs: ClipboardGridCard, rhs: ClipboardGridCard) -> Bool {
+        lhs.item == rhs.item
+            && lhs.isSelected == rhs.isSelected
+            && lhs.store === rhs.store
+    }
 
     var body: some View {
         ClipboardCardBody(
             item: item,
-            thumbnail: thumbnail,
-            appIcon: appIcon,
-            textLineLimit: 4
+            textLineLimit: 4,
+            store: store
         )
+        .equatable()
         .overlay(alignment: .topLeading) { favoriteButton }
-        .frame(height: 160)
+        .frame(
+            width: ClipboardGridMetrics.cardWidth,
+            height: ClipboardGridMetrics.cardHeight
+        )
         .modifier(ClipboardCardChrome(isSelected: isSelected, isHovering: isHovering))
         .onHover { isHovering = $0 }
     }
@@ -206,17 +314,12 @@ struct ClipboardGridCard: View {
     private var favoriteButton: some View {
         if let onToggleFavorite, (isHovering || item.isFavorite) {
             Button(action: onToggleFavorite) {
-                ZStack {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .frame(width: 24, height: 24)
-                    Image(systemName: item.isFavorite ? "star.fill" : "star")
-                        .font(.system(size: DS.font12, weight: .semibold))
-                        .foregroundStyle(item.isFavorite ? .yellow : .primary)
-                        .symbolEffect(.bounce, value: item.isFavorite)
-                }
-                .frame(width: 32, height: 32)
-                .contentShape(Rectangle())
+                Image(systemName: item.isFavorite ? "star.fill" : "star")
+                    .font(.system(size: DS.font12, weight: .semibold))
+                    .foregroundStyle(item.isFavorite ? .yellow : .primary)
+                    .frame(width: 28, height: 28)
+                    .background(DS.panelFill(.overlay).opacity(0.9), in: Circle())
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .padding(DS.s1)

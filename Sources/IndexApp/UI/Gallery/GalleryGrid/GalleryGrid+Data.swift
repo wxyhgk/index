@@ -31,12 +31,27 @@ extension GalleryGrid {
     /// 绑在一起，没有“保留查询快照但只丢后续页”的仓储接口，不在 UI 偷改。
     func releaseSessionDerivedSnapshots() {
         metadataGeneration &+= 1
-        sections = []
+        // 保留最多一页（300 条）的轻量分组骨架：重开图库时滚动条第一帧就有
+        // 正确的已加载页高度。图片缓存和元数据仍照常释放。
         metadataSnapshot = .empty
         selectedCollectionMembershipCounts = [:]
         selectedCollectionSnapshotGeneration = -1
         timelineShot = nil
         similarShot = nil
+    }
+
+    /// 从当前已加载页同步建立分组。只处理分页缓存，不读取数据库、不解码图片。
+    func primeSectionsFromLoadedPage() {
+        let shots = visibleShots
+        let primed: [ShotSection]
+        if presentation.semanticMode,
+           presentation.semanticResults != nil,
+           !shots.isEmpty {
+            primed = [ShotSection(id: "语义", title: "按相似度排序", shots: shots)]
+        } else {
+            primed = ShotSection.group(shots)
+        }
+        if sections != primed { sections = primed }
     }
 
     func refreshGridSnapshot(forceFullMetadata: Bool = false) async {
@@ -51,14 +66,16 @@ extension GalleryGrid {
         // 纯追加（分页）：只对新增 shots 做分组，合并到已有 sections 尾部。
         // 避免整体重建 sections 导致全网格 ForEach diff + body 重算。
         if presentation.semanticMode, presentation.semanticResults != nil {
-            sections = shots.isEmpty
+            let regrouped = shots.isEmpty
                 ? []
                 : [ShotSection(id: "语义", title: "按相似度排序", shots: shots)]
+            if sections != regrouped { sections = regrouped }
         } else if isPureAppend, !sections.isEmpty {
             let newShots = Array(shots.dropFirst(previous.shotIDs.count))
             sections = ShotSection.mergeAppend(existing: sections, newShots: newShots)
         } else {
-            sections = ShotSection.group(shots)
+            let regrouped = ShotSection.group(shots)
+            if sections != regrouped { sections = regrouped }
         }
 
         if !hasReportedFirstPage, !shots.isEmpty {

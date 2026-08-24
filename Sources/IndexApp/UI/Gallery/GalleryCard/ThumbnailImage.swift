@@ -381,21 +381,29 @@ final class ThumbnailLoader: ThumbnailLoading {
 struct CachedImage: View {
     let url: URL
     let key: String
+    let contentMode: SwiftUI.ContentMode
 
     @State private var image: NSImage?
     @ObservedObject private var invalidation: ThumbnailInvalidationToken
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.galleryDefersThumbnailLoading) private var defersLoading
     private let loader: ThumbnailLoader
 
     @MainActor
-    init(url: URL, key: String) {
-        self.init(url: url, key: key, loader: .shared)
+    init(url: URL, key: String, contentMode: SwiftUI.ContentMode = .fit) {
+        self.init(url: url, key: key, contentMode: contentMode, loader: .shared)
     }
 
     @MainActor
-    init(url: URL, key: String, loader: ThumbnailLoader) {
+    init(
+        url: URL,
+        key: String,
+        contentMode: SwiftUI.ContentMode = .fit,
+        loader: ThumbnailLoader
+    ) {
         self.url = url
         self.key = key
+        self.contentMode = contentMode
         self.loader = loader
         _invalidation = ObservedObject(wrappedValue: loader.invalidationToken(forKey: key))
     }
@@ -406,17 +414,20 @@ struct CachedImage: View {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.medium)
-                    .aspectRatio(contentMode: .fit)
-                    .transition(.opacity)
+                    .aspectRatio(contentMode: contentMode)
             } else {
                 Rectangle().fill(DS.thumbnailBacking(colorScheme))
             }
         }
-        .task(id: "\(key)#\(invalidation.version)") { await load() }
+        // Live window resize is a layout-critical path: keep already-decoded
+        // pixels but cancel new per-cell work until the resize ends. Fast scroll
+        // remains loadable because the gallery-level differential preheater now
+        // owns cancellation and priority instead of globally blanking new cells.
+        .task(id: "\(key)#\(invalidation.version)#\(defersLoading)") {
+            guard !defersLoading else { return }
+            await load()
+        }
     }
-
-    /// 快速滚动时批量图同时完成加载，跳过动画避免一批并行淡入事务叠加在滚动帧里。
-    private static var lastLoadFinishTime: TimeInterval = 0
 
     private func load() async {
         if let hit = loader.cachedImage(forKey: key) {
@@ -425,13 +436,8 @@ struct CachedImage: View {
         }
         image = nil
         guard let decoded = await loader.load(url: url, key: key), !Task.isCancelled else { return }
-        let now = Date.timeIntervalSinceReferenceDate
-        let isBurst = now - Self.lastLoadFinishTime < 0.1
-        Self.lastLoadFinishTime = now
-        if isBurst {
-            image = decoded
-        } else {
-            withAnimation(.easeOut(duration: 0.15)) { image = decoded }
-        }
+        // 新缩略图出现不改变布局，不值得在滚动帧里额外开启一次 SwiftUI 动画事务。
+        // 快速滚动时即使只给每批第一张淡入，也会形成约 10 次/秒的持续动画。
+        image = decoded
     }
 }

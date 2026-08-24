@@ -5,33 +5,29 @@ import AppKit
 // MARK: - 剪贴板卡片公共组件
 //
 // 浮动面板（ClipboardHistoryCard）和主窗口 tab（ClipboardGridCard）
-// 共享的视觉部分：内容区 + 装饰层。
-// 两个卡片只保留尺寸差异和各自的 overlay（如收藏星）。
+// 共享的视觉部分只保留内容预览与必要状态。类型、时间、来源 App、尺寸等
+// 元数据已经存在于筛选器和详情面板，不在每张卡片上重复布局。
 // ============================================================
 
-// MARK: 卡片内容（header + content + footer）
+// MARK: 卡片内容
 
-struct ClipboardCardBody: View {
+struct ClipboardCardBody: View, Equatable {
     let item: ClipboardHistoryItem
-    let thumbnail: NSImage?
-    let appIcon: NSImage?
     var textLineLimit: Int = 6
+    var store: ClipboardHistoryStore = .shared
 
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    static func == (lhs: ClipboardCardBody, rhs: ClipboardCardBody) -> Bool {
+        lhs.item == rhs.item
+            && lhs.textLineLimit == rhs.textLineLimit
+            && lhs.store === rhs.store
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            CardHeaderBar(
-                label: item.kind.displayLabel,
-                time: item.capturedAt,
-                appIcon: appIcon,
-                barColor: item.kind.barColor,
-                pinned: item.pinned
-            )
-            contentArea
-            footer
-        }
+        contentArea
+            .overlay(alignment: .topTrailing) { pinnedBadge }
+            .overlay(alignment: .bottomLeading) { customTitle }
     }
 
     @ViewBuilder
@@ -49,44 +45,65 @@ struct ClipboardCardBody: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(DS.s2)
             case .image:
-                if let thumbnail {
-                    Color.clear
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .overlay(
-                            Image(nsImage: thumbnail)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        )
-                        .clipped()
+                if let url = store.content(of: item).assetURL {
+                    CachedImage(
+                        url: url,
+                        key: item.thumbnailCacheKey,
+                        contentMode: .fill
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
                 } else {
                     placeholderIcon("photo")
                 }
             case .file:
-                placeholderIcon("doc")
+                VStack(spacing: DS.s2) {
+                    Image(systemName: "doc")
+                        .font(.system(size: DS.font20))
+                        .foregroundStyle(.tertiary)
+                    Text(item.displayName)
+                        .font(.system(size: DS.font12, weight: .medium))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(DS.s2)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
         .overlay {
             let rim = DS.rim(.content, scheme, hovering: false)
             RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
-                .strokeBorder(rim.gradient, lineWidth: rim.lineWidth)
-                .blendMode(reduceTransparency ? .normal : rim.blend)
+                .strokeBorder(rim.solidColor, lineWidth: rim.lineWidth)
                 .allowsHitTesting(false)
         }
     }
 
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(item.displayName)
-                .font(.system(size: DS.font12, weight: .medium))
-                .lineLimit(1)
-            Text(item.kind.footerText(for: item))
-                .font(.system(size: DS.font11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+    @ViewBuilder
+    private var pinnedBadge: some View {
+        if item.pinned {
+            Image(systemName: "pin.fill")
+                .font(.system(size: DS.font11, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(DS.panelFill(.overlay).opacity(0.88), in: Circle())
+                .padding(DS.s1)
+                .allowsHitTesting(false)
         }
-        .padding(.horizontal, DS.s2)
-        .padding(.vertical, DS.s1)
+    }
+
+    @ViewBuilder
+    private var customTitle: some View {
+        if let title = item.title, !title.isEmpty, item.kind == .image {
+            Text(title)
+                .font(.system(size: DS.font11, weight: .medium))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .padding(.horizontal, DS.s2)
+                .padding(.vertical, DS.s1)
+                .background(DS.panelFill(.overlay).opacity(0.82), in: Capsule())
+                .padding(DS.s1)
+                .allowsHitTesting(false)
+        }
     }
 
     private func placeholderIcon(_ name: String) -> some View {
@@ -105,28 +122,15 @@ struct ClipboardCardChrome: ViewModifier {
     let isSelected: Bool
     let isHovering: Bool
     var showsSelection: Bool = true
+    var selectionOrdinal: Int? = nil
 
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
     func body(content: Content) -> some View {
         content
-            .background(DS.panelFill(.resting))
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
             .overlay { cardRim }
-            .compositingGroup()
             .overlay { if showsSelection { selectionRing } }
             .overlay(alignment: .topTrailing) { if showsSelection { selectionBadge } }
-            .scaleEffect(isHovering ? DS.Lift.hoverScale : 1)
-            .offset(y: isHovering && !reduceMotion ? DS.Lift.hoverY : 0)
-            .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
-            .animation(showsSelection ? DS.Motion.standard(reduced: reduceMotion) : .none, value: isSelected)
-            .shadow(
-                color: hoverShadow.color,
-                radius: hoverShadow.radius,
-                y: hoverShadow.y
-            )
             .contentShape(Rectangle())
     }
 
@@ -143,14 +147,19 @@ struct ClipboardCardChrome: ViewModifier {
             )
             .padding(-DS.Glow.ringOffset)
             .allowsHitTesting(false)
-            .transition(.opacity)
         }
     }
 
     @ViewBuilder
     private var selectionBadge: some View {
         if isSelected {
-            Image(systemName: "checkmark")
+            Group {
+                if let selectionOrdinal {
+                    Text("\(selectionOrdinal)")
+                } else {
+                    Image(systemName: "checkmark")
+                }
+            }
                 .font(.system(size: DS.font11, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 22)
@@ -159,7 +168,6 @@ struct ClipboardCardChrome: ViewModifier {
                     Circle().strokeBorder(DS.badgeStroke, lineWidth: 1)
                 }
                 .padding(DS.s2)
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
                 .allowsHitTesting(false)
         }
     }
@@ -167,14 +175,8 @@ struct ClipboardCardChrome: ViewModifier {
     private var cardRim: some View {
         let rim = DS.rim(isHovering ? .raised : .content, scheme, hovering: isHovering)
         return RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
-            .strokeBorder(rim.gradient, lineWidth: rim.lineWidth)
-            .blendMode(reduceTransparency ? .normal : rim.blend)
+            .strokeBorder(rim.solidColor, lineWidth: rim.lineWidth)
             .allowsHitTesting(false)
-    }
-
-    private var hoverShadow: DS.Shadow {
-        guard scheme != .dark, isHovering else { return .none }
-        return DS.shadow(.raised, scheme)
     }
 }
 
@@ -228,34 +230,9 @@ struct ClipboardFilterBar: View {
     }
 }
 
-// MARK: 类型元数据（消灭三份 switch）
-
-extension ClipboardHistoryKind {
-    var displayLabel: String {
-        switch self {
-        case .text: return "文本"
-        case .image: return "图片"
-        case .file: return "文件"
-        }
-    }
-
-    var barColor: Color {
-        switch self {
-        case .text: return DS.clipboardTextBar
-        case .image: return DS.clipboardImageBar
-        case .file: return DS.clipboardFileBar
-        }
-    }
-
-    func footerText(for item: ClipboardHistoryItem) -> String {
-        switch self {
-        case .text:
-            let count = (item.text ?? "").count
-            return "\(count) 个字符"
-        case .image:
-            return item.summary ?? "图片"
-        case .file:
-            return item.summary ?? "文件"
-        }
+extension ClipboardHistoryItem {
+    var thumbnailCacheKey: String { "clipboard:\(contentHash)" }
+    var viewportIdentity: String {
+        id.map { "clipboard-item:\($0)" } ?? "clipboard-hash:\(contentHash)"
     }
 }

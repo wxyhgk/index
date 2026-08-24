@@ -4,6 +4,69 @@ import XCTest
 @testable import IndexApp
 
 final class ThumbnailLoadingTests: XCTestCase {
+    func testPreheatWindowExtendsFurtherInTravelDirection() {
+        let range = ViewportPreheatWindow.desiredRange(
+            mountedIndices: [20, 21, 22, 23],
+            itemCount: 100,
+            columnCount: 4,
+            midpointDelta: 4
+        )
+
+        XCTAssertEqual(range, 12..<40)
+    }
+
+    func testFastPreheatWindowDeepensLeadingEdgeAndClampsToDataset() {
+        let forward = ViewportPreheatWindow.desiredRange(
+            mountedIndices: [88, 89, 90, 91],
+            itemCount: 100,
+            columnCount: 4,
+            midpointDelta: 12
+        )
+        let backward = ViewportPreheatWindow.desiredRange(
+            mountedIndices: [4, 5, 6, 7],
+            itemCount: 100,
+            columnCount: 4,
+            midpointDelta: -12
+        )
+
+        XCTAssertEqual(forward, 84..<100)
+        XCTAssertEqual(backward, 0..<12)
+    }
+
+    func testPreheatWindowIsEmptyWithoutMountedCards() {
+        XCTAssertEqual(
+            ViewportPreheatWindow.desiredRange(
+                mountedIndices: [],
+                itemCount: 100,
+                columnCount: 4,
+                midpointDelta: 0
+            ),
+            0..<0
+        )
+    }
+
+    @MainActor
+    func testPreheaterSeparatesCardIdentityFromSharedThumbnailCacheKey() {
+        let cache = ThumbnailCache(observesMemoryPressure: false)
+        let pipeline = ThumbnailLoadPipeline(
+            decoder: CountingDecoder(delay: 0),
+            maximumConcurrentLoads: 1
+        )
+        let preheater = ViewportThumbnailPreheater(
+            loader: ThumbnailLoader(cache: cache, pipeline: pipeline)
+        )
+        let url = URL(fileURLWithPath: "/tmp/duplicate-thumbnail.jpg")
+
+        preheater.configure(
+            entries: [
+                ViewportThumbnailEntry(identity: "shot:1", key: "same-sha", url: url),
+                ViewportThumbnailEntry(identity: "shot:2", key: "same-sha", url: url),
+            ],
+            columnCount: 2
+        )
+        preheater.reset()
+    }
+
     func testDecodedCostUsesPixelMemoryInsteadOfCompressedByteCount() {
         XCTAssertEqual(ThumbnailCache.decodedCost(width: 640, height: 360), 921_600)
         XCTAssertEqual(ThumbnailCache.decodedCost(width: 0, height: 360), 0)

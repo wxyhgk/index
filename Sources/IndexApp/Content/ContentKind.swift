@@ -55,6 +55,6 @@ enum ContentPayload: Sendable {
 enum CardDoubleClickAction: Equatable {
     /// 无特殊动作（走默认的录屏/预览逻辑）。
     case none
-    /// 打开 Markdown 编辑器。
+    /// 在图库主窗口内打开 Markdown 编辑器。
     case openMarkdownEditor
 }

@@ -155,12 +155,6 @@ private struct ClipboardHistoryScrollBridge: NSViewRepresentable {
 
         private func handle(_ event: NSEvent) -> NSEvent? {
             guard let view, let window = view.window, event.window === window else { return event }
-            // bridge 是 ScrollView 的 .background()（兄弟视图），自身 bounds 不可靠，
-            // 改为检查鼠标是否在窗口内容区域内。
-            guard let content = window.contentView,
-                  content.bounds.contains(content.convert(event.locationInWindow, from: nil))
-            else { return event }
-
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard modifiers.isEmpty else { return event }
 
@@ -172,6 +166,11 @@ private struct ClipboardHistoryScrollBridge: NSViewRepresentable {
                 let scrollView = findHorizontalScrollView(in: window.contentView),
                 let documentView = scrollView.documentView
             else { return event }
+
+            // 连续选择模式左侧还有一个纵向队列。只拦截鼠标位于右侧横向
+            // 卡片流内的滚轮事件，避免左侧队列被错误地带着横向滚动。
+            let pointInScrollView = scrollView.convert(event.locationInWindow, from: nil)
+            guard scrollView.bounds.contains(pointInScrollView) else { return event }
 
             let clipView = scrollView.contentView
             let delta = abs(deltaX) > abs(deltaY) ? deltaX : deltaY
@@ -215,6 +214,7 @@ struct ClipboardHistoryView: View {
 
     @ObservedObject var viewModel: ClipboardHistoryViewModel
     let store: ClipboardHistoryStore
+    @StateObject private var thumbnailPreheater = ViewportThumbnailPreheater()
 
     @FocusState private var searchFocused: Bool
     @State private var isPinned = false
@@ -226,6 +226,25 @@ struct ClipboardHistoryView: View {
         }
         .frame(width: 1100, height: 320)
         .background(.regularMaterial)
+        .task(id: viewModel.filteredItems
+            .filter { $0.kind == .image }
+            .map { "\($0.viewportIdentity)#\($0.contentHash)" }
+        ) {
+            thumbnailPreheater.configure(
+                entries: viewModel.filteredItems.compactMap { item in
+                    guard item.kind == .image,
+                          let url = store.content(of: item).assetURL
+                    else { return nil }
+                    return ViewportThumbnailEntry(
+                        identity: item.viewportIdentity,
+                        key: item.thumbnailCacheKey,
+                        url: url
+                    )
+                },
+                columnCount: 1
+            )
+        }
+        .onDisappear { thumbnailPreheater.reset() }
     }
 
     // MARK: 顶部栏
@@ -234,7 +253,36 @@ struct ClipboardHistoryView: View {
         HStack(spacing: DS.s3) {
             ClipboardFilterBar(viewModel: viewModel, searchWidth: 160)
 
+            Button {
+                viewModel.setContinuousSelectionEnabled(!viewModel.isContinuousSelectionEnabled)
+            } label: {
+                Label(
+                    "连续选择",
+                    systemImage: viewModel.isContinuousSelectionEnabled
+                        ? "rectangle.stack.fill"
+                        : "rectangle.stack.badge.plus"
+                )
+                .font(.system(size: DS.font11, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(viewModel.isContinuousSelectionEnabled ? DS.accent : nil)
+            .help(viewModel.isContinuousSelectionEnabled
+                ? "已开启：点击搜索结果会加入左侧固定队列"
+                : "开启后可跨搜索连续选择")
+
             Spacer()
+
+            if let feedback = viewModel.pasteFeedback {
+                Text(feedback)
+                    .font(.system(size: DS.font11))
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+            } else if viewModel.isContinuousSelectionEnabled {
+                Text("左侧队列固定，右侧可继续搜索")
+                    .font(.system(size: DS.font11))
+                    .foregroundStyle(.tertiary)
+            }
 
             // 钉住按钮
             Button {
@@ -263,42 +311,177 @@ struct ClipboardHistoryView: View {
     @ViewBuilder
     private var cardFlow: some View {
         let visible = viewModel.filteredItems
+        if viewModel.isContinuousSelectionEnabled {
+            HStack(spacing: 0) {
+                pasteQueueRail
+                    .frame(width: 220)
+
+                Divider()
+
+                candidateArea(visible)
+            }
+        } else {
+            candidateArea(visible)
+        }
+    }
+
+    @ViewBuilder
+    private func candidateArea(_ visible: [ClipboardHistoryItem]) -> some View {
         if visible.isEmpty {
             emptyState
         } else {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: DS.s3) {
-                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
-                        ClipboardHistoryCard(
-                            item: item,
-                            thumbnail: item.id.flatMap { viewModel.imageThumbnails[$0] },
-                            appIcon: item.sourceApp.flatMap { viewModel.appIcons[$0] },
-                            isSelected: index == viewModel.selectedIndex
-                        )
-                        .onTapGesture {
-                            if viewModel.selectedIndex == index {
-                                // 第二次点同一张卡片：粘贴。
-                                viewModel.pasteSelected()
-                            } else {
-                                // 第一次点：选中。
-                                viewModel.selectedIndex = index
-                            }
-                        }
-                        .onDrag {
-                            viewModel.dragProvider(for: item)
-                        }
-                        .contextMenu {
-                            Button("复制") { viewModel.copyBack(item) }
-                            Button(item.pinned ? "取消固定" : "固定") { viewModel.togglePin(item) }
-                            Divider()
-                            Button("删除", role: .destructive) { viewModel.delete(item) }
+            RecyclingCardCollectionView(
+                sections: [RecyclingCardSection(
+                    id: "clipboard-panel",
+                    title: "",
+                    items: visible
+                )],
+                columnCount: 1,
+                fixedItemWidth: 190,
+                itemHeight: 190,
+                interitemSpacing: DS.s3,
+                lineSpacing: DS.s3,
+                contentInsets: NSEdgeInsets(
+                    top: DS.s3,
+                    left: DS.s4,
+                    bottom: DS.s3,
+                    right: DS.s4
+                ),
+                headerHeight: 0,
+                pinsHeaders: false,
+                scrollAxis: .horizontal,
+                handlesSelection: true,
+                scrollTarget: viewModel.selectedItemID,
+                card: { item in popupCard(for: item) },
+                header: { _ in EmptyView() },
+                onDisplay: { item in
+                    guard item.kind == .image else { return }
+                    thumbnailPreheater.mounted(item.viewportIdentity)
+                },
+                onEndDisplay: { item in
+                    guard item.kind == .image else { return }
+                    thumbnailPreheater.unmounted(item.viewportIdentity)
+                },
+                onSelect: { item, modifiers in
+                    viewModel.select(
+                        item,
+                        extending: modifiers.contains(.command),
+                        continuingQueue: viewModel.isContinuousSelectionEnabled
+                    )
+                },
+                onDoubleClick: { item in viewModel.paste(item) }
+            )
+            .background(ClipboardHistoryScrollBridge())
+        }
+    }
+
+    private var pasteQueueRail: some View {
+        VStack(spacing: DS.s2) {
+            HStack {
+                Label("粘贴队列", systemImage: "list.number")
+                    .font(.system(size: DS.font12, weight: .semibold))
+                Spacer()
+                Text("\(viewModel.selectedCount)")
+                    .font(.system(size: DS.font11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            if viewModel.pasteQueueItems.isEmpty {
+                Text("在右侧点击卡片加入队列")
+                    .font(.system(size: DS.font11))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: DS.s1) {
+                        ForEach(Array(viewModel.pasteQueueItems.enumerated()), id: \.offset) { index, item in
+                            pasteQueueRow(item, ordinal: index + 1)
                         }
                     }
                 }
-                .padding(.horizontal, DS.s4)
-                .padding(.vertical, DS.s3)
             }
-            .background(ClipboardHistoryScrollBridge())
+
+            HStack(spacing: DS.s2) {
+                Button("清空") {
+                    viewModel.clearPasteQueue()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(viewModel.pasteQueueItems.isEmpty)
+
+                Button("粘贴") {
+                    viewModel.pasteSelected()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(viewModel.pasteQueueItems.isEmpty)
+            }
+        }
+        .padding(DS.s3)
+        .background(DS.panelFill(.resting))
+    }
+
+    private func pasteQueueRow(_ item: ClipboardHistoryItem, ordinal: Int) -> some View {
+        HStack(spacing: DS.s2) {
+            Text("\(ordinal)")
+                .font(.system(size: DS.font11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(DS.accent, in: Circle())
+
+            Image(systemName: queueIcon(for: item.kind))
+                .font(.system(size: DS.font12))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Text(item.displayName)
+                .font(.system(size: DS.font11))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                viewModel.removeFromPasteQueue(item)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: DS.font11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help("从粘贴队列移除")
+        }
+        .padding(.horizontal, DS.s2)
+        .padding(.vertical, DS.s1)
+        .background(DS.panelFill(.overlay), in: RoundedRectangle(
+            cornerRadius: DS.radiusSmall,
+            style: .continuous
+        ))
+    }
+
+    private func queueIcon(for kind: ClipboardHistoryKind) -> String {
+        switch kind {
+        case .text: return "text.alignleft"
+        case .image: return "photo"
+        case .file: return "doc"
+        }
+    }
+
+    private func popupCard(for item: ClipboardHistoryItem) -> some View {
+        let ordinal = viewModel.selectionOrdinal(for: item)
+        return ClipboardHistoryCard(
+            item: item,
+            isSelected: ordinal != nil,
+            selectionOrdinal: viewModel.isContinuousSelectionEnabled ? ordinal : nil,
+            store: store
+        )
+        .equatable()
+        .onDrag {
+            viewModel.dragProvider(for: item)
+        }
+        .contextMenu {
+            Button("复制") { viewModel.copyBack(item) }
+            Button(item.pinned ? "取消固定" : "固定") { viewModel.togglePin(item) }
+            Divider()
+            Button("删除", role: .destructive) { viewModel.delete(item) }
         }
     }
 

@@ -19,6 +19,24 @@ struct ClipboardSnapshot: Sendable {
     let sourceApp: String?
 }
 
+/// `NSPasteboard.changeCount` 的消费门。
+///
+/// 监听器只关心“尚未消费”的代数。Index 从历史记录写回剪贴板准备粘贴时，
+/// 会把该代数直接标记为已消费，避免自己的写入再次进入历史记录。
+struct ClipboardChangeGate {
+    private(set) var consumedChangeCount: Int = 0
+
+    mutating func synchronize(to changeCount: Int) {
+        consumedChangeCount = changeCount
+    }
+
+    mutating func consumeIfChanged(_ changeCount: Int) -> Bool {
+        guard changeCount != consumedChangeCount else { return false }
+        consumedChangeCount = changeCount
+        return true
+    }
+}
+
 @MainActor
 final class ClipboardWatcher {
 
@@ -29,13 +47,13 @@ final class ClipboardWatcher {
     var onChange: ((ClipboardSnapshot) -> Void)?
 
     private var timer: Timer?
-    private var lastChangeCount: Int = 0
+    private var changeGate = ClipboardChangeGate()
 
     nonisolated init() {}
 
     func start() {
         guard timer == nil else { return }
-        lastChangeCount = NSPasteboard.general.changeCount
+        changeGate.synchronize(to: NSPasteboard.general.changeCount)
         let t = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.poll() }
         }
@@ -50,10 +68,15 @@ final class ClipboardWatcher {
 
     var isRunning: Bool { timer != nil }
 
+    /// 消费当前剪贴板代数，但不触发 `onChange`。
+    /// 仅供“从历史记录写回并粘贴”使用；普通复制仍会被正常记录。
+    func suppressCurrentPasteboardChange() {
+        changeGate.synchronize(to: NSPasteboard.general.changeCount)
+    }
+
     private func poll() {
         let current = NSPasteboard.general.changeCount
-        guard current != lastChangeCount else { return }
-        lastChangeCount = current
+        guard changeGate.consumeIfChanged(current) else { return }
 
         let snapshot = Self.extract()
         onChange?(snapshot)

@@ -10,6 +10,15 @@ import AppKit
 
 struct CardHeaderBar: View {
 
+    /// Formatter 构造会初始化 ICU 数据。卡片高速进出懒网格时每张现造一份，
+    /// 会把本可复用的工作放到主线程滚动路径；所有访问都来自 SwiftUI 主线程。
+    @MainActor private static let relativeTimeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+
     let label: String
     let time: Date
     let appIcon: NSImage?
@@ -44,10 +53,6 @@ struct CardHeaderBar: View {
     }
 
     private var timeString: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: time, relativeTo: Date())
+        Self.relativeTimeFormatter.localizedString(for: time, relativeTo: Date())
     }
 }
-

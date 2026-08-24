@@ -43,6 +43,52 @@ final class CaptureLifecycleTests: XCTestCase {
         XCTAssertFalse(view.hasLiveTextResources)
     }
 
+    func testPinCanvasOnlyRerendersWhenPixelateLayersChange() {
+        let base = makeImage()
+        let initialPixelate = Layer(
+            kind: .pixelate,
+            rect: LRect(CGRect(x: 1, y: 1, width: 3, height: 3))
+        )
+        var renderCount = 0
+        let view = PinImageView(
+            base: base,
+            layers: Layers([initialPixelate]),
+            capture: FakeStyleStore(),
+            annotationStyle: FakeStyleStore(),
+            canvasRenderer: { image, _ in
+                renderCount += 1
+                return image
+            }
+        )
+        XCTAssertEqual(renderCount, 1)
+
+        view.annotation.tool = .rect
+        XCTAssertTrue(view.annotation.beginDraw(at: CGPoint(x: 1, y: 1)))
+        XCTAssertTrue(view.annotation.updateDraw(to: CGPoint(x: 6, y: 6)))
+        XCTAssertTrue(view.annotation.endDraw(pixelSource: { _ in nil }))
+        view.commitAnnotationChange()
+        XCTAssertEqual(renderCount, 1, "普通标注不应重新合成整张马赛克底图")
+
+        view.annotation.tool = .pixelate
+        XCTAssertTrue(view.annotation.beginDraw(at: CGPoint(x: 2, y: 2)))
+        XCTAssertTrue(view.annotation.updateDraw(to: CGPoint(x: 7, y: 7)))
+        XCTAssertTrue(view.annotation.endDraw(pixelSource: { _ in nil }))
+        view.commitAnnotationChange()
+        XCTAssertEqual(renderCount, 2, "马赛克集合变化后应恰好重算一次底图")
+    }
+
+    func testPinViewScalesBackingLayerInsteadOfRedrawingEveryResizeStep() {
+        let view = PinImageView(
+            base: makeImage(),
+            layers: Layers(),
+            capture: FakeStyleStore(),
+            annotationStyle: FakeStyleStore()
+        )
+
+        XCTAssertEqual(view.layerContentsRedrawPolicy, .onSetNeedsDisplay)
+        XCTAssertEqual(view.layerContentsPlacement, .scaleAxesIndependently)
+    }
+
     private func makeImage() -> CGImage {
         let context = CGContext(
             data: nil,

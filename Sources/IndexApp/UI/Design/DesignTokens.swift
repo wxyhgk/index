@@ -354,6 +354,12 @@ extension DS {
                 startPoint: .top, endPoint: .bottom
             )
         }
+        /// 密集网格的低成本版本：以两端平均强度保留同一层级语义，避免逐卡
+        /// 轴向渐变与混合组进入每一帧滚动合成。
+        var solidColor: Color {
+            let alpha = (top + bottom) / 2
+            return (isLight ? Color.white : Color.black).opacity(alpha)
+        }
         var blend: BlendMode { isLight ? .plusLighter : .normal }
     }
 

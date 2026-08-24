@@ -35,6 +35,9 @@ let package = Package(
                 "Platform/README.md",
                 "Toolbar/README.md"
             ],
+            resources: [
+                .process("Resources")
+            ],
             swiftSettings: [
                 // 先用 v5 语言模式，避免 Swift 6 严格并发在 AppKit 桥接处大量报错。
                 .swiftLanguageMode(.v5)

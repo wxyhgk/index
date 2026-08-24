@@ -35,6 +35,13 @@ final class WindowRegistry {
         if dockIcon {
             dockWindows.insert(key)
             NSApp.setActivationPolicy(.regular)
+            // 从菜单栏 accessory 切到 regular 时 Dock 会新建 Tile，重新覆盖一次；
+            // 下一轮 runloop 再刷一次，避开 LaunchServices 的延迟注册。
+            IndexApplicationBranding.installApplicationIcon(on: NSApp)
+            DispatchQueue.main.async {
+                guard !WindowRegistry.shared.dockWindows.isEmpty else { return }
+                IndexApplicationBranding.installApplicationIcon(on: NSApp)
+            }
             NSApp.activate(ignoringOtherApps: true)
             controller.showWindow(nil)
             window.makeKeyAndOrderFront(nil)

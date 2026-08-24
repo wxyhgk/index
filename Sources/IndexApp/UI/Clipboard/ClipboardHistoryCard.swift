@@ -3,31 +3,41 @@ import SwiftUI
 // ============================================================
 // MARK: - 剪贴板历史卡片（浮动面板）
 //
-// 尺寸 200×220，适配横向滚动面板。
+// 纯内容方卡，适配横向滚动面板。
 // 视觉部分全部走 ClipboardCardBody + ClipboardCardChrome。
 // ============================================================
 
-struct ClipboardHistoryCard: View {
+struct ClipboardHistoryCard: View, Equatable {
 
     let item: ClipboardHistoryItem
-    let thumbnail: NSImage?
-    let appIcon: NSImage?
     let isSelected: Bool
+    let selectionOrdinal: Int?
+    var store: ClipboardHistoryStore = .shared
 
-    private let cardWidth: CGFloat = 200
-    private let cardHeight: CGFloat = 220
+    private let cardSize: CGFloat = 190
 
     @State private var isHovering = false
+
+    static func == (lhs: ClipboardHistoryCard, rhs: ClipboardHistoryCard) -> Bool {
+        lhs.item == rhs.item
+            && lhs.isSelected == rhs.isSelected
+            && lhs.selectionOrdinal == rhs.selectionOrdinal
+            && lhs.store === rhs.store
+    }
 
     var body: some View {
         ClipboardCardBody(
             item: item,
-            thumbnail: thumbnail,
-            appIcon: appIcon,
-            textLineLimit: 6
+            textLineLimit: 6,
+            store: store
         )
-        .frame(width: cardWidth, height: cardHeight)
-        .modifier(ClipboardCardChrome(isSelected: isSelected, isHovering: isHovering))
+        .equatable()
+        .frame(width: cardSize, height: cardSize)
+        .modifier(ClipboardCardChrome(
+            isSelected: isSelected,
+            isHovering: isHovering,
+            selectionOrdinal: selectionOrdinal
+        ))
         .onHover { isHovering = $0 }
     }
 }

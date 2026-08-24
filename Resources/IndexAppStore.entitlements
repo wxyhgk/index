@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Mac App Store 的硬性要求。只用于商店分发副本，不改变日常直装版。 -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- AI 端点、模型下载、图床和 Web 内容均为用户主动触发的出站连接。 -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- 导入、导出只访问用户通过系统面板明确选择的文件。 -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- 用户在录屏设置中明确开启麦克风后才会请求系统授权。 -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+</dict>
+</plist>

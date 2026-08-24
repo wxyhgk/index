@@ -140,11 +140,14 @@ final class ShotStore: ObservableObject {
     // MARK: - 路径
 
     func originalURL(for shot: Shot) -> URL {
-        originalsDirectory.appendingPathComponent(shot.originalFileName)
+        originalsDirectory.appendingPathComponent(shot.originalFileName, isDirectory: false)
     }
 
     func thumbnailURL(for shot: Shot) -> URL {
-        thumbnailsDirectory.appendingPathComponent(shot.thumbnailFileName)
+        // File kind is known. If it is omitted Foundation may query the base URL
+        // on disk; live-resize sampling caught that synchronous getattr in every
+        // card body evaluation.
+        thumbnailsDirectory.appendingPathComponent(shot.thumbnailFileName, isDirectory: false)
     }
 
     /// 导出一个可由未来 Windows 客户端导入的独立图库目录。

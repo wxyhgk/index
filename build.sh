@@ -35,7 +35,8 @@ trap cleanup EXIT
 echo "==> swift build -c $CONFIG"
 swift build -c "$CONFIG"
 
-BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$SWIFTPM_EXECUTABLE"
+BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+BIN_PATH="$BIN_DIR/$SWIFTPM_EXECUTABLE"
 if [[ ! -x "$BIN_PATH" ]]; then
     echo "构建产物不存在: $BIN_PATH" >&2
     exit 1
@@ -46,6 +47,12 @@ mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 cp "$BIN_PATH" "$STAGED_APP/Contents/MacOS/$EXECUTABLE_NAME"
 cp Resources/Info.plist "$STAGED_APP/Contents/Info.plist"
 cp Resources/Index.icns "$STAGED_APP/Contents/Resources/Index.icns"
+RESOURCE_BUNDLE="$BIN_DIR/Index_IndexApp.bundle"
+if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
+    echo "SwiftPM 品牌资源包不存在: $RESOURCE_BUNDLE" >&2
+    exit 1
+fi
+cp -R "$RESOURCE_BUNDLE" "$STAGED_APP/Contents/Resources/"
 printf 'APPL????' > "$STAGED_APP/Contents/PkgInfo"
 
 # 签名身份优先级：Developer ID > 本地自签的「Index Dev」。

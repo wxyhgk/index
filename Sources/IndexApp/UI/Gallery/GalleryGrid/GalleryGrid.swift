@@ -28,6 +28,7 @@ struct GalleryGrid: View {
     @ObservedObject var sessionLifecycle: GallerySessionLifecycle
     let viewModel: GalleryViewModel
     @StateObject var presentation: GalleryGridPresentation
+    @StateObject var thumbnailPreheater: ViewportThumbnailPreheater
     @ObservedObject private var imageImporter: ImageImportCoordinator
     @EnvironmentObject var selection: GallerySelection
     @EnvironmentObject var batchActivity: GalleryBatchActivity
@@ -48,7 +49,24 @@ struct GalleryGrid: View {
         let resolvedViewModel = viewModel
             ?? .resolve(for: store)
         self.viewModel = resolvedViewModel
+        let initialShots = resolvedViewModel.displayShots
+        let initialSections: [ShotSection]
+        if resolvedViewModel.semanticMode,
+           resolvedViewModel.semanticResults != nil,
+           !initialShots.isEmpty {
+            initialSections = [ShotSection(
+                id: "语义",
+                title: "按相似度排序",
+                shots: initialShots
+            )]
+        } else {
+            // 首帧直接用内存中的当前页建立网格高度。数据库分页仍然只有 300 条，
+            // 这里不会因为十万图库而扫描十万行；它只消除异步 task 完成前的空滚动条。
+            initialSections = ShotSection.group(initialShots)
+        }
+        _sections = State(initialValue: initialSections)
         _presentation = StateObject(wrappedValue: GalleryGridPresentation(viewModel: resolvedViewModel))
+        _thumbnailPreheater = StateObject(wrappedValue: ViewportThumbnailPreheater())
         _imageImporter = ObservedObject(wrappedValue: .resolve(for: store))
         _settings = ObservedObject(wrappedValue: settings)
         self.scope = scope
@@ -108,6 +126,15 @@ struct GalleryGrid: View {
     /// 中间的几十帧一次 state 都不写 → GalleryGrid.body 也就不重算。
     /// 默认 4 = 默认窗宽（900）在默认缩放档（200）下的列数，首帧不跳。
     @State private var columnCount = 4
+
+    /// Coarse scroll phase only: no offsets are published into SwiftUI. Cards use
+    /// it to suppress hover/menu/effect work while the preheater moves the image
+    /// window independently.
+    @State var isScrolling = false
+
+    /// Live resize is a frame-critical mode. Keep the current discrete grid
+    /// topology and decoded pixels until AppKit reports the drag has ended.
+    @State var isLiveResizing = false
 
     /// 瀑布模式的**数值**列宽（网格模式不用，见 `gridItems`）。
     @State private var waterfallColumnWidth: CGFloat = 200
@@ -243,6 +270,7 @@ struct GalleryGrid: View {
         // 和它历史上待的位置（GalleryView 里 `.background(gridWidthReader)`）是同一层几何，
         // 只是写的 state 从三栏共同父层挪进了网格子树。
         .onAppear { MouseModifierCache.shared.install() }
+        .onDisappear { thumbnailPreheater.reset() }
         .background(widthReader)
         .dropDestination(for: URL.self) { urls, _ in
             guard scope == .library else { return false }
@@ -286,6 +314,21 @@ struct GalleryGrid: View {
         .task(id: selection.generation) {
             await refreshSelectedCollectionMemberships()
         }
+        .task(id: GalleryThumbnailDatasetKey(
+            keys: visibleShots.map { "\(thumbnailIdentity(for: $0))#\($0.sha256)" },
+            columnCount: columnCount
+        )) {
+            thumbnailPreheater.configure(
+                entries: visibleShots.map {
+                    ViewportThumbnailEntry(
+                        identity: thumbnailIdentity(for: $0),
+                        key: $0.sha256,
+                        url: store.thumbnailURL(for: $0)
+                    )
+                },
+                columnCount: columnCount
+            )
+        }
         .onReceive(store.libraryDidChangePublisher) {
             // 相同 ID 的标题/属性变化不会改变 task identity，由库存完成信号补这一轮。
             sessionLifecycle.runReplacing(.gridSnapshot) {
@@ -293,7 +336,15 @@ struct GalleryGrid: View {
             }
         }
         .onReceive(sessionLifecycle.$isActive.removeDuplicates()) { isActive in
-            if !isActive { releaseSessionDerivedSnapshots() }
+            if !isActive {
+                thumbnailPreheater.reset()
+                releaseSessionDerivedSnapshots()
+            } else {
+                primeSectionsFromLoadedPage()
+            }
+        }
+        .onChange(of: isLiveResizing, initial: true) { _, resizing in
+            thumbnailPreheater.setSuspended(resizing)
         }
         .onChange(of: selection.pendingRenameID) { _, requestedID in
             guard let requestedID else { return }
@@ -378,12 +429,18 @@ struct GalleryGrid: View {
                 // 在这里各补一遍（proxy 给的是当前帧的宽度）。
                 .onChange(of: zoom) { _, _ in applyMetrics(width: proxy.size.width) }
                 .onChange(of: layoutMode) { _, _ in applyMetrics(width: proxy.size.width) }
+                .onChange(of: isLiveResizing) { wasResizing, resizing in
+                    if wasResizing && !resizing {
+                        applyMetrics(width: proxy.size.width)
+                    }
+                }
         }
     }
 
     /// 宽度 → 状态。**值没变就不写**，这是本文件里唯一挡住「每帧失效」的地方。
     private func applyMetrics(width: CGFloat) {
         guard width > 0 else { return }
+        guard !isLiveResizing else { return }
         let count = resolvedColumnCount(for: width)
         if count != columnCount { columnCount = count }
         // 数值列宽只有瀑布模式读（网格模式交给 `.flexible`），
@@ -394,39 +451,79 @@ struct GalleryGrid: View {
     }
 
     private var grid: some View {
+        Group {
+            if layoutMode == .waterfall {
+                waterfallScrollView
+            } else {
+                recyclingGrid
+            }
+        }
+    }
+
+    /// Snagit-style regular grid: AppKit owns a small reusable pool of visible
+    /// cells. SwiftUI still authors each card, but offscreen cards no longer stay
+    /// in a growing LazyVGrid view graph.
+    private var recyclingGrid: some View {
+        RecyclingCardCollectionView(
+            sections: sections.map {
+                RecyclingCardSection(id: $0.id, title: $0.title, items: $0.shots)
+            },
+            columnCount: columnCount,
+            fixedItemWidth: nil,
+            itemHeight: zoom * 0.68,
+            interitemSpacing: DS.s4,
+            lineSpacing: DS.s4,
+            contentInsets: NSEdgeInsets(
+                top: 0,
+                left: Self.contentInset,
+                bottom: contentBottomInset,
+                right: Self.contentInset
+            ),
+            headerHeight: 40,
+            pinsHeaders: true,
+            scrollTarget: selection.primaryID,
+            card: { shot in
+                card(for: shot, height: zoom * 0.68, reportsVisibility: false)
+                    .environment(\.galleryIsScrolling, isScrolling)
+                    .environment(\.galleryDefersThumbnailLoading, isLiveResizing)
+            },
+            header: { section in
+                sectionHeader(for: ShotSection(
+                    id: section.id,
+                    title: section.title,
+                    shots: section.items
+                ))
+            },
+            onDisplay: { shot in
+                thumbnailPreheater.mounted(thumbnailIdentity(for: shot))
+                loadMoreIfNeeded(reaching: shot)
+            },
+            onEndDisplay: { shot in
+                thumbnailPreheater.unmounted(thumbnailIdentity(for: shot))
+            }
+        )
+        .modifier(GalleryInteractionTracker(
+            isScrolling: $isScrolling,
+            isLiveResizing: $isLiveResizing
+        ))
+    }
+
+    private var waterfallScrollView: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                if layoutMode == .waterfall {
-                    waterfall
-                } else {
-                    // 单层 LazyVGrid + Section：嵌套懒容器（LazyVStack>LazyVGrid）
-                    // 在内容尾部有已知的重排抖动，扁平化后吸顶头由网格自己管。
-                    LazyVGrid(
-                        columns: gridItems,
-                        alignment: .leading,
-                        spacing: DS.s4,
-                        pinnedViews: [.sectionHeaders]
-                    ) {
-                        ForEach(sections) { section in
-                            Section {
-                                ForEach(section.shots) { shot in
-                                    card(for: shot, height: zoom * 0.68)
-                                        .onAppear { loadMoreIfNeeded(reaching: shot) }
-                                }
-                            } header: {
-                                sectionHeader(for: section)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, Self.contentInset)
-                    .padding(.bottom, contentBottomInset)
-                }
+                waterfall
             }
             // ScrollView 在 macOS 上自带一层不透明底（windowBackgroundColor）。
             // **画布交还窗口底色之后这一行反而更要紧了**：以前它盖住的是我们自己铺的
             // 画布色（两种灰打架），现在它会直接盖住 `DS.windowBase`，
             // 中栏就成了一块和窗口不同色的方纸。
             .scrollContentBackground(.hidden)
+            .modifier(GalleryInteractionTracker(
+                isScrolling: $isScrolling,
+                isLiveResizing: $isLiveResizing
+            ))
+            .environment(\.galleryIsScrolling, isScrolling)
+            .environment(\.galleryDefersThumbnailLoading, isLiveResizing)
             //
             // ⚠️ 这里**故意不挂** `.scrollEdgeMask(topInset:)`。
             //

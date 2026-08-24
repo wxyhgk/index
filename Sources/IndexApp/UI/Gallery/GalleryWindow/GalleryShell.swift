@@ -209,7 +209,10 @@ struct GalleryInspectorPanel: View {
 
     @ObservedObject private var store: ShotStore
     @ObservedObject private var viewModel: GalleryViewModel
-    @ObservedObject private var selection = GalleryWindowController.shared.selection
+    /// 窗口级选择状态由 GalleryWindowController 在根视图注入。
+    /// 这里不能用 `GalleryWindowController.shared` 作属性默认值：本视图会在
+    /// controller 自身 init 期间被 SwiftUI 求值，递归进入同一个 dispatch_once。
+    @EnvironmentObject private var selection: GallerySelection
 
     init(
         isPresented: Binding<Bool>,

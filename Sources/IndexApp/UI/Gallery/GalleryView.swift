@@ -21,11 +21,11 @@ import AppKit
 // 232pt 的固定栏正好吃掉整整一列缩略图，而顶栏本来就在那儿（理由见
 // `GalleryTopBar.destinationTabs`）。
 //
-// 本文件只剩窗口壳：模式分支（图库 / 编辑器 / 设置）+ 三块的位置关系。
+// 本文件只剩窗口壳：模式分支（图库 / 标注 / Markdown / 设置）+ 三块的位置关系。
 
 struct GalleryView: View {
 
-    /// 窗口模式（图库 / 编辑器），整窗切换的依据。由 controller 注入。
+    /// 窗口模式（图库 / 标注 / Markdown / 设置），整窗切换的依据。由 controller 注入。
     @EnvironmentObject var mode: GalleryWindowMode
 
     /// 存储订阅：编辑中的 shot 被删时退回图库。注入式，默认走 ShotStore.shared。
@@ -68,12 +68,15 @@ struct GalleryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        // 单窗口多模式：图库 / 编辑器 / 设置，整窗切换而不是弹窗。
+        // 单窗口多模式：图库 / 标注 / Markdown / 设置，整窗切换而不是弹窗。
         // 返回图库 = `mode.returnToGallery()`（选中状态原样保留）。
         // Shot 值按 ID **现查** —— store 更新后编辑器拿到的永远是最新值。
         Group {
             if mode.isSettings {
                 settingsMode
+            } else if let shot = mode.resolveMarkdownEditingShot() {
+                MarkdownEditorModeView(shot: shot)
+                    .id(shot.id)
             } else if let shot = mode.resolveEditingShot() {
                 // 编辑会话按 shot ID 重建；Filmstrip 由稳定外壳保留，避免切图时
                 // 同时丢失其数据和横向滚动位置。
@@ -191,10 +194,10 @@ struct GalleryView: View {
 
     /// 正在编辑的记录已不存在（图库外的删除 / 清理）→ 退回图库模式。
     /// 编辑一条已删除的记录没有意义，保存也无处可去。
-    /// 「不存在」的判定就是 `resolveEditingShot()` 按 ID 现查失败 ——
+    /// 「不存在」的判定就是 `resolveActiveShot()` 按 ID 现查失败 ——
     /// 与 body 的分支同一个口径，不会出现「模式在编辑、视图在图库」的错位。
     private func closeEditorIfShotDeleted() {
-        guard mode.isEditing, mode.resolveEditingShot() == nil else { return }
+        guard mode.isEditing, mode.resolveActiveShot() == nil else { return }
         mode.returnToGallery()
     }
 }

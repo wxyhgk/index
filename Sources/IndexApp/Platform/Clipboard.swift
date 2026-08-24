@@ -34,33 +34,46 @@ enum Clipboard {
         return nil
     }
 
-    static func copy(text: String) {
+    @discardableResult
+    static func copy(text: String) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        return pasteboard.setString(text, forType: .string)
     }
 
-    static func copy(_ image: CGImage) {
-        guard let data = ImageCodec.pngData(from: image) else { return }
+    @discardableResult
+    static func copy(_ image: CGImage) -> Bool {
+        guard let data = ImageCodec.pngData(from: image) else { return false }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setData(data, forType: .png)
+        return pasteboard.setData(data, forType: .png)
     }
 
     /// 多张图片。每张写成一个独立的剪贴板条目（`NSPasteboardItem`）——
     /// 多数接收方只读第一条，但访达、邮件、Keynote 这类支持多条的会全部收下。
     /// 单张时行为与 `copy(_:)` 完全一致。
-    static func copy(_ images: [CGImage]) {
+    @discardableResult
+    static func copy(_ images: [CGImage]) -> Bool {
         let items: [NSPasteboardItem] = images.compactMap { image in
             guard let data = ImageCodec.pngData(from: image) else { return nil }
             let item = NSPasteboardItem()
             item.setData(data, forType: .png)
             return item
         }
-        guard !items.isEmpty else { return }
+        guard !items.isEmpty, items.count == images.count else { return false }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.writeObjects(items)
+        return pasteboard.writeObjects(items)
+    }
+
+    /// 一组文件 URL。一个系统粘贴动作即可把整组文件交给支持多文件的接收方。
+    /// URL 的数组顺序与用户建立粘贴队列的顺序保持一致。
+    @discardableResult
+    static func copy(fileURLs: [URL]) -> Bool {
+        guard !fileURLs.isEmpty else { return false }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.writeObjects(fileURLs as [NSURL])
     }
 
     // MARK: 结构化复制（屏幕剪贴板）

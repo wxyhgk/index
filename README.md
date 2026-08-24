@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Resources/Brand/index-app-icon.svg" width="112" alt="Index app icon">
+  <img src="Sources/IndexApp/Resources/index-app-icon.svg" width="112" alt="Index app icon">
 </p>
 
 <h1 align="center">Index</h1>
@@ -67,6 +67,6 @@ SwiftPM target、可执行文件、Bundle ID 和 `~/Library/Application Support/
 
 ## 文档与许可
 
-[架构](ARCHITECTURE.md) · [隐私](PRIVACY.md) · [安全](SECURITY.md) · [第三方声明](THIRD_PARTY_NOTICES.md) · [CI](docs/ci.md)
+[架构](ARCHITECTURE.md) · [隐私](PRIVACY.md) · [安全](SECURITY.md) · [第三方声明](THIRD_PARTY_NOTICES.md) · [Mac App Store](docs/app-store.md) · [CI](docs/ci.md)
 
 [GNU General Public License v3.0 or later](LICENSE)（`GPL-3.0-or-later`）。
