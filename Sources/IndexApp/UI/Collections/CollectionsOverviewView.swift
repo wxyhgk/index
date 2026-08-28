@@ -70,7 +70,7 @@ struct CollectionsOverviewView: View {
             HStack(alignment: .top, spacing: DS.s4) {
                 VStack(alignment: .leading, spacing: DS.s1) {
                     Text("收藏")
-                        .font(.largeTitle.weight(.bold))
+                        .font(.title2.weight(.semibold))
                     Text("快速收藏 + \(collections.count) 个专题集")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

@@ -1,31 +1,95 @@
 import SwiftUI
-import MarkdownUI
 
 // MARK: - AI 对话历史（内容库子 tab）
 //
 // 左侧：对话列表（按时间倒序，显示会话名 + 首条消息摘要 + 消息数）
 // 右侧：对话详情（Markdown 渲染 + 工具调用卡片，复用 AgentPanel 组件）
 
+/// AI 历史页的窗口级会话。页面在子 Tab 间切换时会被 SwiftUI 移出视图树，
+/// 数据不能跟着临时 View 的 @State 一起归零，否则每次回来都会先画空态再加载。
+@MainActor
+final class AgentConversationListSession: ObservableObject {
+    static let shared = AgentConversationListSession()
+
+    @Published private(set) var conversations: [AgentConversationRecord] = []
+    @Published private(set) var selectedID: Int64?
+    @Published private(set) var selectedMessages: [AgentMessageRecord] = []
+    @Published private(set) var isRefreshing = false
+    @Published private(set) var hasLoaded = false
+
+    private var refreshGeneration = 0
+
+    func loadIfNeeded() async {
+        guard !hasLoaded, !isRefreshing else { return }
+        await refresh()
+    }
+
+    func refresh() async {
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
+        isRefreshing = true
+        let loaded = await Task.detached(priority: .userInitiated) {
+            try? AgentConversationStore.shared.listConversations(limit: 100)
+        }.value ?? []
+        guard generation == refreshGeneration else { return }
+
+        conversations = loaded
+        hasLoaded = true
+        isRefreshing = false
+        if let selectedID, !loaded.contains(where: { $0.id == selectedID }) {
+            self.selectedID = nil
+            selectedMessages = []
+        }
+    }
+
+    func select(_ conversation: AgentConversationRecord) {
+        selectedID = conversation.id
+        guard let id = conversation.id else {
+            selectedMessages = []
+            return
+        }
+        do {
+            selectedMessages = try AgentConversationStore.shared.messages(for: id)
+        } catch {
+            NSLog("[Agent] 加载对话消息失败: \(error)")
+            selectedMessages = []
+        }
+    }
+
+    func delete(_ conversation: AgentConversationRecord) async {
+        guard let id = conversation.id else { return }
+        do {
+            try AgentConversationStore.shared.deleteConversation(id: id)
+            if selectedID == id {
+                selectedID = nil
+                selectedMessages = []
+            }
+            await refresh()
+        } catch {
+            NSLog("[Agent] 删除对话失败: \(error)")
+        }
+    }
+}
+
 struct AgentConversationListView: View {
 
-    @State private var conversations: [AgentConversationRecord] = []
-    @State private var selectedID: Int64?
-    @State private var selectedMessages: [AgentMessageRecord] = []
-    @State private var isRefreshing = false
+    @StateObject private var session: AgentConversationListSession
+
+    @MainActor
+    init(session: AgentConversationListSession? = nil) {
+        _session = StateObject(wrappedValue: session ?? .shared)
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // 左侧：对话列表
+        HStack(spacing: DS.s3) {
             conversationList
-                .frame(width: 260)
+                .frame(width: AgentUIMetrics.conversationListWidth)
 
-            Divider()
-
-            // 右侧：对话详情
             conversationDetail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task { await refresh() }
+        .padding(DS.s3)
+        .task { await session.loadIfNeeded() }
     }
 
     // MARK: - 对话列表
@@ -33,24 +97,32 @@ struct AgentConversationListView: View {
     private var conversationList: some View {
         VStack(alignment: .leading, spacing: 0) {
             // 页头
-            HStack {
+            HStack(spacing: DS.s2) {
                 Text("AI 对话")
-                    .font(.headline)
+                    .font(.title3.weight(.semibold))
                 Spacer()
                 Button {
-                    Task { await refresh() }
+                    Task { await session.refresh() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: DS.font12))
+                    if session.isRefreshing {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .buttonStyle(ShellIconButtonStyle(side: 28))
+                .disabled(session.isRefreshing)
+                .help("刷新对话")
             }
             .padding(.horizontal, DS.s3)
-            .padding(.top, DS.s4)
-            .padding(.bottom, DS.s2)
+            .padding(.top, DS.s3)
+            .padding(.bottom, DS.s3)
 
-            if conversations.isEmpty {
+            if !session.hasLoaded {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if session.conversations.isEmpty {
                 ContentUnavailableView(
                     "暂无对话",
                     systemImage: "bubble.left.and.bubble.right",
@@ -59,37 +131,46 @@ struct AgentConversationListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(conversations) { conv in
+                    LazyVStack(spacing: DS.s1) {
+                        ForEach(session.conversations) { conv in
                             ConversationRow(
                                 conversation: conv,
-                                isSelected: conv.id == selectedID
+                                isSelected: conv.id == session.selectedID,
+                                onDelete: { Task { await session.delete(conv) } }
                             ) {
-                                select(conv)
+                                session.select(conv)
                             }
                         }
                     }
                     .padding(.horizontal, DS.s2)
-                    .padding(.bottom, DS.s2)
+                    .padding(.bottom, DS.s3)
                 }
+                .scrollContentBackground(.hidden)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(DS.insetSurface, in: RoundedRectangle(
+            cornerRadius: DS.radiusPanel,
+            style: .continuous
+        ))
     }
 
     // MARK: - 对话详情
 
     @ViewBuilder
     private var conversationDetail: some View {
-        if let selectedID, !selectedMessages.isEmpty {
+        if session.selectedID != nil, !session.selectedMessages.isEmpty {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.s3) {
-                    ForEach(selectedMessages) { record in
-                        ConversationMessageBubble(record: record)
+                    ForEach(session.selectedMessages) { record in
+                        if let presentation = AgentMessagePresentation(record: record) {
+                            AgentMessageBubble(presentation: presentation)
+                        }
                     }
                 }
-                .padding(DS.s4)
+                .padding(.horizontal, DS.s5)
+                .padding(.vertical, DS.s4)
             }
+            .scrollContentBackground(.hidden)
         } else {
             ContentUnavailableView(
                 "选择一条对话",
@@ -100,32 +181,6 @@ struct AgentConversationListView: View {
         }
     }
 
-    // MARK: - 数据
-
-    private func refresh() async {
-        isRefreshing = true
-        let loaded = await Task.detached(priority: .userInitiated) {
-            try? AgentConversationStore.shared.listConversations(limit: 100)
-        }.value
-        guard !Task.isCancelled else { return }
-        conversations = loaded ?? []
-        // 保持选中
-        if let selectedID, !conversations.contains(where: { $0.id == selectedID }) {
-            self.selectedID = nil
-            self.selectedMessages = []
-        }
-        isRefreshing = false
-    }
-
-    private func select(_ conv: AgentConversationRecord) {
-        selectedID = conv.id
-        do {
-            selectedMessages = try AgentConversationStore.shared.messages(for: conv.id!)
-        } catch {
-            NSLog("[Agent] 加载对话消息失败: \(error)")
-            selectedMessages = []
-        }
-    }
 }
 
 // MARK: - 对话列表行
@@ -133,113 +188,46 @@ struct AgentConversationListView: View {
 private struct ConversationRow: View {
     let conversation: AgentConversationRecord
     let isSelected: Bool
+    let onDelete: () -> Void
     let action: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(conversation.name)
+            HStack(alignment: .top, spacing: DS.s2) {
+                Image(systemName: "bubble.left.and.text.bubble.right")
                     .font(.system(size: DS.font13, weight: .medium))
-                    .monospaced()
+                    .foregroundStyle(isSelected ? DS.accent : Color.secondary)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(conversation.updatedAt.formatted(.dateTime.month().day()) + " 的对话")
+                        .font(.system(size: DS.font13, weight: .medium))
+                        .lineLimit(1)
+                    HStack(spacing: DS.s1) {
+                        Text(conversation.updatedAt.formatted(.dateTime.hour().minute()))
+                        Text("·")
+                        Text(conversation.name)
+                            .monospaced()
+                    }
+                    .font(.system(size: DS.font10))
+                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
-                Text(conversation.updatedAt.formatted(.dateTime.month().day().hour().minute()))
-                    .font(.system(size: DS.font11))
-                    .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, DS.s3)
-            .padding(.vertical, DS.s2)
+            .padding(DS.s2)
             .background(
                 isSelected ? DS.accentFillSelected : (isHovering ? DS.hoverFill : .clear),
-                in: RoundedRectangle(cornerRadius: DS.radiusSmall)
+                in: RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .contextMenu {
-            Button("删除", role: .destructive) {
-                if let id = conversation.id {
-                    try? AgentConversationStore.shared.deleteConversation(id: id)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - 对话消息气泡（复用 AgentPanel 的渲染逻辑）
-
-private struct ConversationMessageBubble: View {
-    let record: AgentMessageRecord
-
-    var body: some View {
-        switch record.role {
-        case "user":
-            HStack {
-                Spacer()
-                Text(record.text)
-                    .padding(.horizontal, DS.s3)
-                    .padding(.vertical, DS.s2)
-                    .background(DS.accent.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-
-        case "assistant":
-            VStack(alignment: .leading, spacing: DS.s2) {
-                // 工具调用
-                if let calls = parseToolCalls(), !calls.isEmpty {
-                    ForEach(calls) { call in
-                        ToolCallCard(call: call)
-                    }
-                }
-                // 回答
-                if !record.text.isEmpty {
-                    if calls.isEmpty {
-                        Markdown(record.text)
-                            .markdownTheme(.gitHub)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, DS.s3)
-                            .padding(.vertical, DS.s2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(nsColor: .controlBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    } else {
-                        Markdown(record.text)
-                            .markdownTheme(.gitHub)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-
-        default:
-            EmptyView()
-        }
-    }
-
-    private var calls: [AgentMessage.ToolCallInfo] {
-        parseToolCalls() ?? []
-    }
-
-    private func parseToolCalls() -> [AgentMessage.ToolCallInfo]? {
-        guard let json = record.toolCallsJSON,
-              let data = json.data(using: .utf8),
-              let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        else { return nil }
-        return items.compactMap { item in
-            guard let name = item["name"] as? String else { return nil }
-            let args = item["args"] as? String ?? ""
-            let statusStr = item["status"] as? String ?? "done"
-            let result = item["result"] as? String
-            let status: AgentMessage.ToolCallInfo.Status
-            switch statusStr {
-            case "running": status = .running
-            case "error": status = .error
-            default: status = .done
-            }
-            return AgentMessage.ToolCallInfo(name: name, args: args, status: status, result: result)
+            Button("删除", role: .destructive, action: onDelete)
         }
     }
 }

@@ -17,9 +17,40 @@ struct CollectionsDetailView: View {
     let collectionClipboardItems: [ClipboardHistoryItem]
     let onClose: () -> Void
 
-    @AppStorage("galleryInspectorShown") private var showInspector = true
+    @AppStorage(PagePreferences.galleryInspectorShown.key)
+    private var showInspector = PagePreferences.galleryInspectorShown.defaultValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ObservedObject private var clipboardSelection = ClipboardSelection.shared
+    @EnvironmentObject private var gallerySelection: GallerySelection
+    @StateObject private var clipboardSession: ClipboardPageSession
+    @ObservedObject private var clipboardSelection: ClipboardSelection
+
+    init(
+        store: ShotStore,
+        viewModel: GalleryViewModel,
+        route: CollectionsNavigationState.Route,
+        collections: [ShotCollectionSummary],
+        clipboardFavorites: [ClipboardHistoryItem],
+        collectionClipboardItems: [ClipboardHistoryItem],
+        clipboardSession: ClipboardPageSession? = nil,
+        onClose: @escaping () -> Void
+    ) {
+        self.store = store
+        self.viewModel = viewModel
+        self.route = route
+        self.collections = collections
+        self.clipboardFavorites = clipboardFavorites
+        self.collectionClipboardItems = collectionClipboardItems
+        self.onClose = onClose
+
+        let resolvedSession = clipboardSession ?? ClipboardPageSession()
+        resolvedSession.setScopedItems(Self.clipboardItems(
+            for: route,
+            favorites: clipboardFavorites,
+            collectionItems: collectionClipboardItems
+        ))
+        _clipboardSession = StateObject(wrappedValue: resolvedSession)
+        _clipboardSelection = ObservedObject(wrappedValue: resolvedSession.selection)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.Shell.panelGap) {
@@ -37,6 +68,15 @@ struct CollectionsDetailView: View {
             }
         }
         .animation(DS.Motion.standard(reduced: reduceMotion), value: showInspector)
+        .onAppear { synchronizeClipboardSession() }
+        .onChange(of: route) { _, _ in synchronizeClipboardSession() }
+        .onChange(of: clipboardFavorites) { _, _ in synchronizeClipboardSession() }
+        .onChange(of: collectionClipboardItems) { _, _ in synchronizeClipboardSession() }
+        .onChange(of: gallerySelection.generation) { _, _ in
+            if gallerySelection.primaryID != nil {
+                clipboardSelection.clear()
+            }
+        }
     }
 
     // MARK: 内容分支
@@ -59,12 +99,12 @@ struct CollectionsDetailView: View {
                     scope: scope,
                     chrome: .libraryPanel
                 )
-                if !collectionClipboardItems.isEmpty {
+                if !clipboardSession.visibleItems.isEmpty {
                     collectionClipboardSection
                 }
             }
         case .clipboardFavorites:
-            ClipboardFavoritesGrid(items: clipboardFavorites)
+            clipboardFavoritesSection
         }
     }
 
@@ -75,28 +115,8 @@ struct CollectionsDetailView: View {
                 columns: [GridItem(.adaptive(minimum: 180), spacing: DS.s4)],
                 spacing: DS.s4
             ) {
-                ForEach(collectionClipboardItems) { item in
-                    ClipboardGridCard(
-                        item: item,
-                        isSelected: ClipboardSelection.shared.selectedID == item.id
-                    )
-                    .equatable()
-                    .onTapGesture {
-                        ClipboardSelection.shared.select(item.id)
-                    }
-                    .contextMenu {
-                        Button("复制") {
-                            ClipboardHistoryViewModel.shared.copyBack(item)
-                        }
-                        Button(item.isFavorite ? "取消收藏" : "收藏") {
-                            ClipboardHistoryViewModel.shared.toggleFavorite(item)
-                        }
-                        Divider()
-                        Button("删除", role: .destructive) {
-                            ClipboardHistoryViewModel.shared.delete(item)
-                            ClipboardSelection.shared.clearIf(item.id)
-                        }
-                    }
+                ForEach(clipboardSession.visibleItems) { item in
+                    clipboardCard(for: item)
                 }
             }
             .padding(.horizontal, DS.s4)
@@ -105,12 +125,98 @@ struct CollectionsDetailView: View {
     }
 
     @ViewBuilder
+    private var clipboardFavoritesSection: some View {
+        if clipboardSession.visibleItems.isEmpty {
+            ContentUnavailableView(
+                "暂无剪贴板收藏",
+                systemImage: "doc.on.clipboard",
+                description: Text("在剪贴板 tab 右键条目选择「收藏」即可加入")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 180), spacing: DS.s3)],
+                    spacing: DS.s3
+                ) {
+                    ForEach(clipboardSession.visibleItems) { item in
+                        clipboardCard(for: item)
+                    }
+                }
+                .padding(.horizontal, DS.s4)
+                .padding(.vertical, DS.s3)
+            }
+        }
+    }
+
+    private func clipboardCard(for item: ClipboardHistoryItem) -> some View {
+        ClipboardGridCard(
+            item: item,
+            isSelected: clipboardSelection.selectedID == item.id,
+            store: clipboardSession.viewModel.store
+        )
+        .equatable()
+        .onTapGesture {
+            clipboardSelection.select(item.id)
+            if clipboardSelection.selectedID != nil {
+                gallerySelection.select(only: nil)
+            }
+        }
+        .contextMenu {
+            Button("复制") {
+                clipboardSession.viewModel.copyBack(item)
+            }
+            Button(item.isFavorite ? "取消收藏" : "收藏") {
+                clipboardSession.viewModel.toggleFavorite(item)
+                var updated = item
+                updated.isFavorite.toggle()
+                if route == .clipboardFavorites, !updated.isFavorite {
+                    clipboardSession.removeScopedItem(item)
+                } else {
+                    clipboardSession.updateScopedItem(updated)
+                }
+            }
+            Divider()
+            Button("删除", role: .destructive) {
+                clipboardSession.viewModel.delete(item)
+                clipboardSession.removeScopedItem(item)
+            }
+        }
+    }
+
+    @ViewBuilder
     private var inspector: some View {
         switch route {
-        case .favorites, .collection:
+        case .favorites:
             GalleryInspectorPanel(isPresented: $showInspector, store: store, viewModel: viewModel)
+        case .collection:
+            if clipboardSession.selectedItem != nil {
+                ClipboardInspectorPanel(isPresented: $showInspector, session: clipboardSession)
+            } else {
+                GalleryInspectorPanel(isPresented: $showInspector, store: store, viewModel: viewModel)
+            }
         case .clipboardFavorites:
-            ClipboardInspectorPanelHost()
+            ClipboardInspectorPanel(isPresented: $showInspector, session: clipboardSession)
+        }
+    }
+
+    private func synchronizeClipboardSession() {
+        clipboardSession.setScopedItems(Self.clipboardItems(
+            for: route,
+            favorites: clipboardFavorites,
+            collectionItems: collectionClipboardItems
+        ))
+    }
+
+    private static func clipboardItems(
+        for route: CollectionsNavigationState.Route,
+        favorites: [ClipboardHistoryItem],
+        collectionItems: [ClipboardHistoryItem]
+    ) -> [ClipboardHistoryItem] {
+        switch route {
+        case .favorites: return []
+        case .collection: return collectionItems
+        case .clipboardFavorites: return favorites
         }
     }
 

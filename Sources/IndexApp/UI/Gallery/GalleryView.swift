@@ -31,6 +31,12 @@ struct GalleryView: View {
     /// 存储订阅：编辑中的 shot 被删时退回图库。注入式，默认走 ShotStore.shared。
     @ObservedObject private var store: ShotStore
     private let viewModel: GalleryViewModel
+    /// 顶层页面注册表由窗口装配点注入。顶栏、内容区和 scope 激活必须读取
+    /// 同一个实例，不能各自回退到全局注册表形成两份路由真相。
+    private let destinationRegistry: GalleryDestinationRegistry
+    /// 页面 chrome 只在 destination / 子路由切换时发布，用于决定底栏能力和
+    /// Inspector 是否进入视图树；它不承载滚动或窗口尺寸等高频状态。
+    @StateObject private var destinationChrome: GalleryDestinationChromeState
     /// 编辑器会话的设置切片。窗口装配点（GalleryWindowController）注入，
     /// 沿 GalleryView → EditorModeView → EditorView → EditorModel 传递。
     private let styleStore: any AnnotationStylePreferences
@@ -38,13 +44,17 @@ struct GalleryView: View {
     init(
         styleStore: any AnnotationStylePreferences,
         store: ShotStore = .shared,
-        viewModel: GalleryViewModel? = nil
+        viewModel: GalleryViewModel? = nil,
+        destinationRegistry: GalleryDestinationRegistry = .shared
     ) {
         _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
             ?? .resolve(for: store)
         self.viewModel = resolvedViewModel
         self.styleStore = styleStore
+        self.destinationRegistry = destinationRegistry
+        let destinationChrome = GalleryDestinationChromeState()
+        _destinationChrome = StateObject(wrappedValue: destinationChrome)
     }
 
     // ⚠️ 这里**没有** store / selection 的订阅，也**没有**任何宽度状态，两条都是有意的。
@@ -56,14 +66,17 @@ struct GalleryView: View {
     // store / selection：详情栏的内容解析要扫两趟全列表，那份订阅现在住在
     // `GalleryInspectorPanel` 里。放在这一层的话，任何一次选中变化都要重算整棵外壳的
     // body（顶栏、胶囊行、面板容器全部跟着走一遍），而真正需要重算的只有详情栏。
-    // 现在本视图的 body 只依赖 `mode` 和 `showInspector` 两个值。
+    // 现在本视图的 body 只额外订阅低频的 destination/chrome 切换；卡片选择、
+    // 滚动和窗口尺寸仍不会让整棵外壳失效。
 
     /// 详情栏开关，跨启动记住。顶栏的开关按钮和详情面板右上角的 ✕ 都写它。
-    @AppStorage("galleryInspectorShown") private var showInspector = true
+    @AppStorage(PagePreferences.galleryInspectorShown.key)
+    private var showInspector = PagePreferences.galleryInspectorShown.defaultValue
 
     /// 选中的侧边栏选项。存 id 不存序号 —— 插入新选项不会让用户上次停留的位置漂移；
     /// 解析不到（选项被移除、旧值）时 `resolve` 退回第一个。
-    @AppStorage("galleryDestination") private var destinationID = "destination.library"
+    @AppStorage(PagePreferences.galleryDestination.key)
+    private var destinationID = PagePreferences.galleryDestination.defaultValue
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -138,7 +151,8 @@ struct GalleryView: View {
 
             VStack(spacing: 0) {
                 GalleryTopBar(
-                    destinationID: $destinationID
+                    destinationID: $destinationID,
+                    destinationRegistry: destinationRegistry
                 )
 
                 // 中间内容 │ 右侧面板 —— 两块都由**选中的那个选项**提供
@@ -147,12 +161,14 @@ struct GalleryView: View {
                 // 顶层选项从左侧一整条侧边栏搬到了顶栏（理由见 GalleryTopBar
                 // 的 `destinationTabs`），于是这一行少了一栏，中间直接从窗口左边缘开始。
                 HStack(alignment: .top, spacing: DS.Shell.panelGap) {
-                    let destination = GalleryDestinationRegistry.shared.resolve(id: destinationID)
+                    let destination = destinationRegistry.resolve(id: destinationID)
 
-                    (destination?.content() ?? AnyView(EmptyView()))
+                    (destination?.content(context: destinationContext) ?? AnyView(EmptyView()))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                    if showInspector, let inspector = destination?.inspector() {
+                    if currentChrome.showsInspector,
+                       showInspector,
+                       let inspector = destination?.inspector(context: destinationContext) {
                         inspector
                             .frame(width: DS.Shell.inspectorWidth)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -163,9 +179,10 @@ struct GalleryView: View {
                 GalleryBottomBar(
                     showInspector: $showInspector,
                     destinationID: $destinationID,
-                    viewModel: viewModel
+                    viewModel: viewModel,
+                    destinationRegistry: destinationRegistry,
+                    destinationChrome: destinationChrome
                 )
-                .padding(.bottom, DS.Shell.windowMargin)
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
@@ -173,6 +190,9 @@ struct GalleryView: View {
         // 内容伸到红绿灯底下，避让由 `DS.Shell.trafficLightInset` 在顶栏内部完成。
         .ignoresSafeArea(.container, edges: .top)
         .animation(DS.Motion.standard(reduced: reduceMotion), value: showInspector)
+        // 页面能力切换（例如 AI 对话没有 Inspector）必须在同一帧完成。
+        // 若对 currentChrome.showsInspector 做整页宽度动画，中间内容会先缩放再铺开，
+        // 视觉上就是用户看到的“闪一下”。只有用户主动点详情栏按钮才保留动效。
         .frame(minWidth: 1000, minHeight: 600)
         // ZStack 下所有 tab 始终存在，onAppear/onDisappear 不再可靠。
         // scope 切换统一在这里处理：destinationID 变化时激活对应 scope。
@@ -187,8 +207,24 @@ struct GalleryView: View {
     /// 按 destinationID 激活对应的 GalleryContentScope。
     /// 只有需要固定范围的 destination（如录屏）才有非 .library scope。
     private func activateScope(for id: String) {
-        guard let destination = GalleryDestinationRegistry.shared.resolve(id: id) else { return }
+        guard let destination = destinationRegistry.resolve(id: id) else { return }
         destination.contentScope.activate(in: viewModel)
+    }
+
+    private var currentChrome: GalleryDestinationChrome {
+        let fallback = destinationRegistry.resolve(id: destinationID)?.defaultChrome ?? .standard
+        return destinationChrome.resolve(for: destinationID, fallback: fallback)
+    }
+
+    /// 用 StateObject 当前真正持有的实例生成上下文。若 SwiftUI 复用 GalleryView
+    /// 身份并保留旧 StateObject，这里也不会把 destination 指向 init 时新建但已被
+    /// SwiftUI 丢弃的临时 chrome 对象。
+    private var destinationContext: GalleryDestinationContext {
+        GalleryDestinationContext(
+            store: store,
+            viewModel: viewModel,
+            chrome: destinationChrome
+        )
     }
 
 

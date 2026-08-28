@@ -88,7 +88,7 @@ enum GalleryContentScope: Equatable {
 
     @MainActor
     func deactivate(in viewModel: GalleryViewModel) {
-        guard fixedFilter != nil else { return }
+        guard let fixedFilter, viewModel.filter == fixedFilter else { return }
         // 清状态 + 异步 reload：切走的 tab 不再可见，但 store.shots 要更新为 .all，
         // 这样切回图库 tab 时数据已就绪。异步 reload 不阻塞渲染帧；
         // 若紧接着的 activate 也 reload，generation 防迟到保证只有最新的生效。

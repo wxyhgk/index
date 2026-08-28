@@ -42,6 +42,14 @@
 - OpenCLIP：MIT；[mlfoundations/open_clip](https://github.com/mlfoundations/open_clip)，
   [LICENSE](https://github.com/mlfoundations/open_clip/blob/main/LICENSE)。
 
+## Android Open Source Project PinyinIME
+
+- 用途：`Index 搜索` 输入源的本地简体中文拼音解码、候选排序和用户词频学习。
+- 分发内容：上游 C++ 解码核心与 `dict_pinyin.dat` 系统词库；Index 只增加一层 C/Swift 桥接。
+- 许可证：Apache License 2.0，Copyright © 2009 The Android Open Source Project。
+- 上游：[AOSP PinyinIME](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/)；
+  完整声明随输入法存放在 `Contents/Resources/PinyinIME/NOTICE`。
+
 ## Apple 系统框架
 
 AppKit、ScreenCaptureKit、Vision、Core ML、WebKit 等由 macOS 提供，不作为第三方源码随本仓库

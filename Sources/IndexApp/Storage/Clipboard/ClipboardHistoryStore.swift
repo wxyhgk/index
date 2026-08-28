@@ -63,6 +63,11 @@ struct ClipboardCollectionItem: Codable, FetchableRecord, PersistableRecord, Equ
 /// 剪贴板历史的读写。非 MainActor：写入走 DatabasePool，不阻塞主线程。
 final class ClipboardHistoryStore: @unchecked Sendable {
 
+    struct PageCursor: Equatable, Sendable {
+        let capturedAt: Date
+        let id: Int64
+    }
+
     static let shared: ClipboardHistoryStore = {
         do {
             return try ClipboardHistoryStore()
@@ -149,20 +154,66 @@ final class ClipboardHistoryStore: @unchecked Sendable {
 
     /// 按时间倒序取最近 limit 条；query 非空时按 title/summary/text 模糊过滤。
     func recent(limit: Int = 100, query: String? = nil) throws -> [ClipboardHistoryItem] {
+        try page(limit: limit, query: query, before: nil)
+    }
+
+    /// 稳定游标分页。三字符以上走 trigram FTS；短查询保持 LIKE 子串语义。
+    func page(
+        limit: Int,
+        query: String? = nil,
+        before cursor: PageCursor? = nil
+    ) throws -> [ClipboardHistoryItem] {
         try writer.read { db in
-            var request = ClipboardHistoryItem
-                .order(Column("capturedAt").desc)
-                .limit(limit)
-            if let query, !query.isEmpty {
-                let pattern = "%\(query)%"
-                request = request.filter(
-                    Column("title").like(pattern)
-                        || Column("summary").like(pattern)
-                        || Column("text").like(pattern)
-                )
+            let trimmed = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            var predicates: [String] = []
+            var arguments: [any DatabaseValueConvertible] = []
+            if let cursor {
+                predicates.append("(h.capturedAt, h.id) < (?, ?)")
+                arguments.append(cursor.capturedAt)
+                arguments.append(cursor.id)
             }
-            return try request.fetchAll(db)
+            let fromClause: String
+            if trimmed.count >= 3, try db.tableExists("clipboardHistoryFts") {
+                fromClause = """
+                    clipboardHistory h
+                    JOIN clipboardHistoryFts ON clipboardHistoryFts.rowid = h.id
+                    """
+                predicates.append("clipboardHistoryFts MATCH ?")
+                arguments.append(Self.quotedFTSQuery(trimmed))
+            } else {
+                fromClause = "clipboardHistory h"
+                if !trimmed.isEmpty {
+                    predicates.append("""
+                        (h.title LIKE ? ESCAPE '\\'
+                         OR h.summary LIKE ? ESCAPE '\\'
+                         OR h.text LIKE ? ESCAPE '\\')
+                        """)
+                    let pattern = "%\(Self.escapedLIKE(trimmed))%"
+                    arguments.append(contentsOf: [pattern, pattern, pattern])
+                }
+            }
+            arguments.append(max(1, limit))
+            let whereClause = predicates.isEmpty
+                ? ""
+                : "WHERE " + predicates.joined(separator: " AND ")
+            return try ClipboardHistoryItem.fetchAll(db, sql: """
+                SELECT h.* FROM \(fromClause)
+                \(whereClause)
+                ORDER BY h.capturedAt DESC, h.id DESC
+                LIMIT ?
+                """, arguments: StatementArguments(arguments))
         }
+    }
+
+    private static func quotedFTSQuery(_ value: String) -> String {
+        "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+
+    private static func escapedLIKE(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
     }
 
     /// 收藏的条目（收藏 tab 的剪贴板 section 用），按时间倒序。
@@ -202,10 +253,24 @@ final class ClipboardHistoryStore: @unchecked Sendable {
     // MARK: 更新 / 删除
 
     func markUsed(_ item: ClipboardHistoryItem) {
+        markUsed([item])
+    }
+
+    func markUsed(_ items: [ClipboardHistoryItem]) {
+        guard !items.isEmpty else { return }
         try? writer.write { db in
-            var updated = item
-            updated.lastUsedAt = Date()
-            try updated.update(db)
+            let usedAt = Date()
+            let ids = items.compactMap(\.id)
+            guard !ids.isEmpty else { return }
+            for start in stride(from: 0, to: ids.count, by: 500) {
+                let chunk = Array(ids[start..<min(start + 500, ids.count)])
+                var arguments: [any DatabaseValueConvertible] = [usedAt]
+                arguments.append(contentsOf: chunk)
+                try db.execute(sql: """
+                    UPDATE clipboardHistory SET lastUsedAt = ?
+                    WHERE id IN (\(chunk.map { _ in "?" }.joined(separator: ",")))
+                    """, arguments: StatementArguments(arguments))
+            }
         }
     }
 

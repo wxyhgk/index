@@ -22,22 +22,31 @@ struct SearchPanelView: View {
         HStack(spacing: 0) {
             listSection
             Divider()
-                .frame(height: 360)
+                .frame(height: SearchPanelMetrics.dividerHeight)
             SearchPreviewPanel(viewModel: viewModel)
-                .frame(width: 240)
+                .frame(width: SearchPanelMetrics.previewWidth)
         }
-        .frame(width: 640, height: 420)
+        .frame(
+            width: SearchPanelMetrics.panelSize.width,
+            height: SearchPanelMetrics.panelSize.height
+        )
         .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.white.opacity(0.06), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
+                .strokeBorder(
+                    SearchPanelMetrics.panelBorder,
+                    lineWidth: SearchPanelMetrics.hairlineWidth
+                )
         }
-        .scaleEffect(appeared ? 1 : 0.96)
+        .scaleEffect(appeared ? 1 : SearchPanelMetrics.initialScale)
         .opacity(appeared ? 1 : 0)
         .onAppear {
             searchFocused = true
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.88)) {
+            withAnimation(.spring(
+                response: SearchPanelMetrics.appearanceResponse,
+                dampingFraction: SearchPanelMetrics.appearanceDamping
+            )) {
                 appeared = true
             }
         }
@@ -57,13 +66,13 @@ struct SearchPanelView: View {
     private var searchBar: some View {
         HStack(spacing: DS.s3) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 18, weight: .ultraLight))
+                .font(.system(size: DS.font18, weight: .ultraLight))
                 .foregroundStyle(.secondary)
             TextField("", text: $viewModel.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 20, weight: .light))
+                .font(.system(size: DS.font20, weight: .light))
                 .focused($searchFocused)
-                .onChange(of: viewModel.query) { _ in
+                .onChange(of: viewModel.query) { _, _ in
                     viewModel.searchChanged()
                 }
             if !viewModel.query.isEmpty {
@@ -71,10 +80,13 @@ struct SearchPanelView: View {
                     viewModel.clear()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .light))
+                        .font(.system(size: DS.font12, weight: .light))
                         .foregroundStyle(.tertiary)
-                        .frame(width: 18, height: 18)
-                        .background(.primary.opacity(0.06), in: Circle())
+                        .frame(
+                            width: SearchPanelMetrics.clearButtonSide,
+                            height: SearchPanelMetrics.clearButtonSide
+                        )
+                        .background(SearchPanelMetrics.controlHoverFill, in: Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -106,7 +118,7 @@ struct SearchPanelView: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 1) {
+                    LazyVStack(spacing: SearchPanelMetrics.resultSpacing) {
                         ForEach(Array(viewModel.entries.enumerated()), id: \.element.id) { index, entry in
                             SearchResultRow(
                                 entry: entry,
@@ -121,7 +133,7 @@ struct SearchPanelView: View {
                     .padding(.horizontal, DS.s2)
                     .padding(.vertical, DS.s1)
                 }
-                .onChange(of: viewModel.selectedIndex) { newIndex in
+                .onChange(of: viewModel.selectedIndex) { _, newIndex in
                     withAnimation(.none) {
                         proxy.scrollTo(newIndex, anchor: nil)
                     }
@@ -133,10 +145,10 @@ struct SearchPanelView: View {
     private var emptyHint: some View {
         VStack(spacing: DS.s3) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 24, weight: .ultraLight))
+                .font(.system(size: DS.font24, weight: .ultraLight))
                 .foregroundStyle(.quaternary)
             Text("搜索截图和剪贴板")
-                .font(.system(size: 13, weight: .light))
+                .font(.system(size: DS.font13, weight: .light))
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

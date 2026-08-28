@@ -37,23 +37,22 @@ struct FloatingPanelModifier: ViewModifier {
     var level: DS.PanelLevel
 
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: radius, style: .continuous)
     }
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        let rim = DS.rim(.floating, scheme, hovering: false)
         let surface = content
             .background(DS.panelFill(level), in: shape)
             .clipShape(shape)
-            // strokeBorder 而不是 stroke：stroke 把线画在路径中心线上，
-            // 一半会被 clipShape 削掉，得到毛边的 0.5px。
+            // 大页面不再使用高对比渐变框。当前 Mac 设计把层级交给材质与
+            // 亮度差；这里保留一条低对比发丝线，只用于明确窗口边界。
             .overlay {
-                shape.strokeBorder(rim.gradient, lineWidth: rim.lineWidth)
-                    .blendMode(reduceTransparency ? .normal : rim.blend)
+                shape.strokeBorder(
+                    DS.panelStroke(scheme, level: level),
+                    lineWidth: 1
+                )
                     .allowsHitTesting(false)
             }
 

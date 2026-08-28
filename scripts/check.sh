@@ -242,6 +242,75 @@ if [ -n "$window_subclass_hits" ]; then
         fi
     done <<< "$window_subclass_hits"
 fi
+
+section "纪律十二：输入即检索的输入法 bundle 与主 App 分离"
+input_method_ok=1
+if ! plutil -lint Resources/IndexInputMethod-Info.plist >/dev/null; then
+    bad "输入法 Info.plist 不是有效 plist"
+    input_method_ok=0
+fi
+input_controller=$(/usr/libexec/PlistBuddy -c 'Print :InputMethodServerControllerClass' \
+    Resources/IndexInputMethod-Info.plist 2>/dev/null || true)
+input_bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+    Resources/IndexInputMethod-Info.plist 2>/dev/null || true)
+input_connection=$(/usr/libexec/PlistBuddy -c 'Print :InputMethodConnectionName' \
+    Resources/IndexInputMethod-Info.plist 2>/dev/null || true)
+input_mode=$(/usr/libexec/PlistBuddy -c \
+    'Print :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0' \
+    Resources/IndexInputMethod-Info.plist 2>/dev/null || true)
+input_platform=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' \
+    Resources/IndexInputMethod-Info.plist 2>/dev/null || true)
+input_background_only=$(/usr/libexec/PlistBuddy -c 'Print :LSBackgroundOnly' \
+    Resources/IndexInputMethod-Info.plist 2>/dev/null || true)
+if [ "$input_bundle_id" != "com.wxyhgk.index.inputmethod.contentshelf" ] \
+    || [ "$input_controller" != "IndexSearchInputController" ] \
+    || [ "$input_connection" != "com.wxyhgk.index.inputmethod.contentshelf_Connection" ] \
+    || [ "$input_mode" != "com.wxyhgk.index.inputmethod.contentshelf.Search" ] \
+    || [ "$input_platform" != "MacOSX" ] \
+    || [ "$input_background_only" != "true" ]; then
+    bad "输入法必须使用 .inputmethod. Bundle ID，并声明稳定的 controller 与 connection name"
+    input_method_ok=0
+fi
+if ! grep -q 'CommandLine.arguments.contains("--install")' Sources/IndexInputMethod/main.swift \
+    || ! grep -q 'TISRegisterInputSource' \
+        Sources/IndexInputMethod/Platform/IndexInputSourceRegistrar.swift; then
+    bad "输入法必须由安装路径内的自身进程完成注册"
+    input_method_ok=0
+fi
+if ! grep -q 'TISEnableInputSource(parentSource)' \
+    Sources/IndexInputMethod/Platform/IndexInputSourceRegistrar.swift; then
+    bad "安装器必须先请求启用 parent source，由系统完成用户确认"
+    input_method_ok=0
+fi
+if ! grep -q '<key>TISInputSourceID</key>' Resources/IndexInputMethod-Info.plist \
+    || ! grep -A1 '<key>tsInputModeDefaultStateKey</key>' Resources/IndexInputMethod-Info.plist \
+        | grep -q '<true/>'; then
+    bad "输入法必须声明顶层 source ID，且唯一主模式必须是默认模式"
+    input_method_ok=0
+fi
+if ! grep -q 'name: "IndexInputMethod"' Package.swift \
+    || ! grep -q 'INPUT_METHOD_APP_BUNDLE=' build.sh \
+    || ! grep -q 'STAGED_INPUT_METHOD=' build.sh \
+    || ! grep -q 'Resources/Index.icns' build.sh \
+    || ! grep -q 'Resources/IndexInputMethod/PinyinIME' build.sh \
+    || ! grep -q 'Resources/IndexInputMethod/\*.lproj' build.sh \
+    || [ ! -f Resources/IndexInputMethod/PinyinIME/dict_pinyin.dat ] \
+    || [ ! -f Resources/IndexInputMethod/PinyinIME/NOTICE ] \
+    || [ ! -f Resources/IndexInputMethod/en.lproj/InfoPlist.strings ] \
+    || [ ! -f Resources/IndexInputMethod/zh-Hans.lproj/InfoPlist.strings ]; then
+    bad "输入法 target 必须由 build.sh 在旁路目录组装，不能另起替换脚本"
+    input_method_ok=0
+fi
+input_side_effect_hits=$(grep -rn "NSPanel(" --include="*.swift" Sources/IndexInputMethod 2>/dev/null \
+    | grep -v "/Platform/" | code_only || true)
+if [ -n "$input_side_effect_hits" ]; then
+    printf "%s\n" "$input_side_effect_hits" | sed 's/^/    /'
+    bad "输入法窗口副作用必须收在自己的 Platform/ 目录"
+    input_method_ok=0
+fi
+if [ "$input_method_ok" -eq 1 ]; then
+    ok "输入法 target、Info.plist 与安全组装入口有效"
+fi
 if [ -z "$window_violations" ]; then
     ok "Plugins/ 层窗口/视图子类均在白名单内"
 else
@@ -253,10 +322,23 @@ fi
 
 if [ "${1:-}" = "--full" ]; then
     section "组装 .app（release）"
-    if ./build.sh release >/tmp/index-bundle.log 2>&1; then
+    if INDEX_BUILD_INPUT_METHOD=1 ./build.sh release >/tmp/index-bundle.log 2>&1; then
         ok "$(du -h build/Index.app/Contents/MacOS/Index | cut -f1) 可执行文件已签名"
         codesign --verify --deep build/Index.app 2>/dev/null \
             && ok "签名校验通过" || bad "签名校验失败"
+        if [ -d build/IndexSearchInputMethod.app ]; then
+            input_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+                build/IndexSearchInputMethod.app/Contents/Info.plist 2>/dev/null || true)
+            app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+                build/Index.app/Contents/Info.plist 2>/dev/null || true)
+            [ "$input_version" = "$app_version" ] \
+                && ok "输入法版本与主 App 一致（${input_version}）" \
+                || bad "输入法版本与主 App 不一致"
+            codesign --verify --deep build/IndexSearchInputMethod.app 2>/dev/null \
+                && ok "输入法签名校验通过" || bad "输入法签名校验失败"
+        else
+            bad "build.sh 未生成 IndexSearchInputMethod.app"
+        fi
     else
         tail -20 /tmp/index-bundle.log | sed 's/^/    /'
         bad "build.sh 失败"

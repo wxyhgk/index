@@ -22,6 +22,7 @@ final class URLCommandRouter {
     private let imageImporter: ImageImportCoordinator
     private let browserInboxRoot: URL?
     private let showGallery: @MainActor () -> Void
+    private let canCapture: @MainActor () -> Bool
     private var browserImportTask: Task<Void, Never>?
 
     /// `capture?delay=N` 的一次性延时覆盖.
@@ -35,6 +36,7 @@ final class URLCommandRouter {
         captureCoordinator: CaptureCoordinator? = nil,
         imageImporter: ImageImportCoordinator? = nil,
         browserInboxRoot: URL? = nil,
+        canCapture: @escaping @MainActor () -> Bool = { true },
         showGallery: @escaping @MainActor () -> Void = { GalleryWindowController.shared.show() }
     ) {
         let resolvedStore = shotStore ?? ShotStore.shared
@@ -43,6 +45,7 @@ final class URLCommandRouter {
         self.captureCoordinator = captureCoordinator ?? .shared
         self.imageImporter = imageImporter ?? Self.resolveImporter(for: resolvedStore)
         self.browserInboxRoot = browserInboxRoot
+        self.canCapture = canCapture
         self.showGallery = showGallery
     }
 
@@ -81,6 +84,10 @@ final class URLCommandRouter {
 
         switch (host, subpath) {
         case ("capture", ""):
+            guard canCapture() else {
+                NSLog("[Index] URL 截图命令被忽略：截图插件未启用")
+                return
+            }
             if let delay = query["delay"].flatMap(Int.init), delay > 0 {
                 oneShotDelay = delay
                 captureCoordinator.begin(sourceID: CaptureSourceID.delayed)

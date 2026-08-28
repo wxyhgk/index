@@ -25,6 +25,8 @@ final class CaptureCoordinator {
     var scrollHandler: (@MainActor (CGRect, DisplayInfo) -> Void)?
     /// 互斥检查：录屏/框选录制区域是否进行中（由 AppDelegate 注入）。
     var isOtherCaptureActive: (@MainActor () -> Bool)?
+    /// 装配根注入插件可用性；预览和单测未注入时保持可用。
+    var isCaptureEnabled: (@MainActor () -> Bool)?
     private var isPreparing = false
     /// 进行中的准备任务（冻结屏幕 / 延时等待）。取消它就打断整次捕获。
     private var prepareTask: Task<Void, Never>?
@@ -75,6 +77,10 @@ final class CaptureCoordinator {
     var isBusy: Bool { isPreparing || overlay.isActive }
 
     func begin(sourceID: String = CaptureSourceID.immediate) {
+        guard isCaptureEnabled?() ?? true else {
+            NSLog("[Index] 截图请求被忽略：截图插件未启用")
+            return
+        }
         // 延时等待期间再按快捷键 = 取消，而不是叠加第二次捕获。
         if isPreparing {
             if pendingIsCancellable { prepareTask?.cancel() }
@@ -307,7 +313,9 @@ final class CaptureCoordinator {
             run(actionID: result.actionID, context: context)
 
             // 暂存卡片：拖出去就是文件。钉图除外 —— 用户已经得到一个窗口了。
-            if result.actionID != ActionID.pin, styleStore.showShelfCard {
+            if result.actionID != ActionID.pin,
+               styleStore.showShelfCard,
+               BuiltinPluginHost.shared.isActive("shelf") {
                 ShelfController.shared.present(image: context.rendered(), shot: shot)
             }
         } catch {

@@ -27,6 +27,7 @@ struct SimilarShotsSheet: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.galleryPageCommands) private var pageCommands
     /// nil = 还在比对；空数组 = 比对完但没有可比的候选。
     @State private var results: [Shot]?
 
@@ -93,7 +94,7 @@ struct SimilarShotsSheet: View {
                             SimilarShotCard(shot: result, store: store)
                                 .onTapGesture {
                                     // 定位类场景：清空多选后单选目标。
-                                    GalleryWindowController.shared.selection.select(only: result.id)
+                                    pageCommands.select(only: result.id)
                                     dismiss()
                                 }
                         }

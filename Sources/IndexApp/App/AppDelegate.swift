@@ -27,7 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.settings = settings ?? AppSettings.shared
         self.shotStore = shotStore ?? ShotStore.shared
         self.pipeline = pipeline ?? CapturePipeline.shared
-        self.urlRouter = urlRouter ?? URLCommandRouter()
+        self.urlRouter = urlRouter ?? URLCommandRouter(
+            canCapture: { BuiltinPluginHost.shared.isActive("capture") }
+        )
         self.clipboardReader = clipboardReader ?? MacClipboard.shared
         self.moleculePinner = moleculePinner ?? MacMoleculePinPresenter.shared
         super.init()
@@ -63,13 +65,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // SwiftPM 裸 Debug 不会回退成系统的通用 exec 图标。
         IndexApplicationBranding.installApplicationIcon(on: NSApp)
         _ = shotStore          // 提前建库，避免第一次截图时卡顿
-        CaptureActionRegistry.registerBuiltins(into: .shared, styleStore: settings)
+        CaptureActionRegistry.registerBuiltins(
+            into: .shared,
+            styleStore: settings,
+            includePluginActions: false
+        )
         ToolbarRegistry.registerBuiltins(into: .shared)
         GalleryDestinationRegistry.registerBuiltins(into: .shared)
         PluginRegistry.registerBuiltins()
         ImageExporter.nameTemplateProvider = { AppSettings.shared.export.exportNameTemplate }
 
-        // 插件激活：截图/录屏/钉图/暂存架各是一个动作包。
+        // 插件激活：截图/录屏/钉图/暂存架/输入即检索各是一个动作包。
         // 截图后处理器（OCR/分类/Markdown 生成...）由 CapturePlugin 注册到 pipeline。
         let pluginCtx = PluginContext(
             settings: settings,
@@ -84,21 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 GalleryWindowController.shared.showEditor(for: shot)
             }
         )
-        // 插件激活：按 enabledPluginIDs 过滤（空列表 = 全部启用）。
-        let pluginManager = PluginManager.shared
-        let allPlugins: [any Plugin] = [
-            CapturePlugin(),
-            RecordingPlugin(),
-            PinPlugin(),
-            ShelfPlugin(),
-            AgentPlugin.shared,
-        ]
-        let enabledIDs = settings.enabledPluginIDs
-        for plugin in allPlugins {
-            if enabledIDs.isEmpty || enabledIDs.contains(plugin.id) {
-                pluginManager.activate(plugin, ctx: pluginCtx)
-            }
-        }
+        BuiltinPluginHost.shared.configure(
+            context: pluginCtx,
+            enabledPluginIDs: settings.enabledPluginIDs
+        )
 
         // 3D 窗口只负责产生当前相机视角；图片落库、来源附件与普通钉图的编排
         // 留在 App 层，避免 Platform 反向依赖 Storage / Pin。
@@ -125,7 +120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ScrollCaptureController.shared.begin(with: region, display: display)
         }
         CaptureCoordinator.shared.isOtherCaptureActive = {
-            ScreenRecorder.shared.isRecording || RecordingCoordinator.shared.isSelecting
+            ScreenRecorder.shared.isRecording
+                || RecordingCoordinator.shared.isSelecting
+                || ScrollCaptureController.shared.isActive
+        }
+        CaptureCoordinator.shared.isCaptureEnabled = {
+            BuiltinPluginHost.shared.isActive("capture")
         }
 
         registerCaptureSources()
@@ -142,6 +142,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             appSettings.onShortcutsChanged = { [weak self] in self?.refreshHotKeys() }
             appSettings.onClipboardHistoryChanged = { [weak self] in
                 self?.applyClipboardHistorySettings()
+            }
+            appSettings.onPluginsChanged = { [weak self] in
+                guard let self else { return }
+                BuiltinPluginHost.shared.applyLiveSettings(
+                    enabledPluginIDs: self.settings.enabledPluginIDs
+                )
             }
         }
         applyClipboardHistorySettings()
@@ -173,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        BuiltinPluginHost.shared.shutdown()
         // Hook 事件（= Emacs before-quit-hook）：插件挂 appWillQuit 就能响应。
         Task {
             await HookRegistry.shared.fire(
@@ -273,6 +280,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardHistory.tag = Tag.clipboardHistory
         menu.addItem(clipboardHistory)
 
+        let contextSearch = NSMenuItem(
+            title: "输入即检索（兼容中文输入法）",
+            action: #selector(toggleFocusedTextSearch),
+            keyEquivalent: ""
+        )
+        contextSearch.target = self
+        contextSearch.tag = Tag.contextSearch
+        menu.addItem(contextSearch)
+
         // 穿透中的钉图收不到任何鼠标键盘事件（⌘T 按不进去），这里是唯一的解除入口。
         // 平时藏起来，menuNeedsUpdate 里按需显示。
         let liftPassthrough = NSMenuItem(
@@ -315,6 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         static let recordPause = 7
         static let moleculePin = 8
         static let clipboardHistory = 9
+        static let contextSearch = 10
     }
 
     // MARK: - 快捷键
@@ -368,15 +385,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 动作
 
     @objc private func startCapture() {
+        guard BuiltinPluginHost.shared.isActive("capture") else { return }
         CaptureCoordinator.shared.begin()
     }
 
     /// 倒计时期间再触发一次 = 取消（begin 内部处理）。
     @objc private func startDelayedCapture() {
+        guard BuiltinPluginHost.shared.isActive("capture") else { return }
         CaptureCoordinator.shared.begin(sourceID: CaptureSourceID.delayed)
     }
 
     @objc private func toggleRecording() {
+        guard BuiltinPluginHost.shared.isActive("recording") else { return }
         RecordingCoordinator.shared.toggle()
     }
 
@@ -386,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 采集期间再触发一次 = 完成（begin 内部处理）。
     @objc private func startScrollCapture() {
+        guard BuiltinPluginHost.shared.isActive("capture") else { return }
         ScrollCaptureController.shared.begin()
     }
 
@@ -394,6 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func pinMoleculeFromClipboard() {
+        guard BuiltinPluginHost.shared.isActive("pin") else { return }
         guard let text = clipboardReader.readText(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             AppAlert.error(
                 "无法创建 3D 分子钉图",
@@ -413,6 +435,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ClipboardHistoryCoordinator.shared.togglePanel()
     }
 
+    @objc private func toggleFocusedTextSearch() {
+        guard BuiltinPluginHost.shared.isActive(InputSearchPlugin.pluginID) else { return }
+        let plugin = InputSearchPlugin.shared
+        plugin.setSearchEnabled(!plugin.isSearchEnabled)
+        statusItem?.menu?.item(withTag: Tag.contextSearch)?.state =
+            plugin.isSearchEnabled ? .on : .off
+    }
+
     @objc private func toggleSearchPanel() {
         SearchPanelCoordinator.shared.togglePanel()
     }
@@ -422,6 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleAgent() {
+        guard BuiltinPluginHost.shared.isActive("agent") else { return }
         AgentCoordinator.shared.toggle()
     }
 
@@ -696,6 +727,16 @@ extension AppDelegate: NSMenuDelegate {
         menu.item(withTag: Tag.gallery)?.title = "图库…\t\(settings.galleryShortcut.displayString)"
         menu.item(withTag: Tag.moleculePin)?.title =
             "从剪贴板钉住 3D 分子\t\(settings.moleculePinShortcut.displayString)"
+        let captureIsActive = BuiltinPluginHost.shared.isActive("capture")
+        menu.item(withTag: Tag.capture)?.isHidden = !captureIsActive
+        menu.item(withTag: Tag.delayedCapture)?.isHidden = !captureIsActive
+        menu.item(withTag: Tag.scrollCapture)?.isHidden = !captureIsActive
+        menu.item(withTag: Tag.record)?.isHidden = !BuiltinPluginHost.shared.isActive("recording")
+        menu.item(withTag: Tag.moleculePin)?.isHidden = !BuiltinPluginHost.shared.isActive("pin")
+        let inputSearchIsActive = BuiltinPluginHost.shared.isActive(InputSearchPlugin.pluginID)
+        menu.item(withTag: Tag.contextSearch)?.isHidden = !inputSearchIsActive
+        menu.item(withTag: Tag.contextSearch)?.state =
+            InputSearchPlugin.shared.isSearchEnabled ? .on : .off
         // 有穿透中的钉图才显示「解除钉图穿透」。
         menu.item(withTag: Tag.liftPassthrough)?.isHidden =
             !PinPassthroughRegistry.shared.hasPassthroughPins

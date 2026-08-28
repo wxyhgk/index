@@ -117,10 +117,12 @@ final class QuickNotePanel: NSPanel {
         do {
             if let shotID = currentShotID {
                 try store.saveContent(for: shotID, kind: .markdown, payload: .markdown(text), updateKind: false)
+                MarkdownPreviewCache.shared.update(text, shotID: shotID)
             } else {
                 let title = String(text.prefix(30).replacingOccurrences(of: "\n", with: " "))
                 let shot = try store.createMarkdownShot(title: title.isEmpty ? "便签" : title, source: text)
                 currentShotID = shot.id
+                MarkdownPreviewCache.shared.update(text, shotID: shot.id)
             }
             lastSavedText = text
         } catch {

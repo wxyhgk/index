@@ -11,7 +11,8 @@ import SwiftUI
 struct CollectionsContent: View {
     @ObservedObject var store: ShotStore
     @ObservedObject var viewModel: GalleryViewModel
-    @ObservedObject var navigation = CollectionsNavigationState.shared
+    @ObservedObject var navigation: CollectionsNavigationState
+    @ObservedObject var destinationChrome: GalleryDestinationChromeState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var collections: [ShotCollectionSummary] = []
@@ -25,11 +26,18 @@ struct CollectionsContent: View {
     @State private var clipboardFavorites: [ClipboardHistoryItem] = []
     @State private var collectionClipboardItems: [ClipboardHistoryItem] = []
 
-    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
+    init(
+        store: ShotStore = .shared,
+        viewModel: GalleryViewModel? = nil,
+        navigation: CollectionsNavigationState? = nil,
+        destinationChrome: GalleryDestinationChromeState
+    ) {
         _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
             ?? .resolve(for: store)
         _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        _navigation = ObservedObject(wrappedValue: navigation ?? CollectionsNavigationState())
+        _destinationChrome = ObservedObject(wrappedValue: destinationChrome)
     }
 
     var body: some View {
@@ -64,11 +72,14 @@ struct CollectionsContent: View {
                 )
             }
         }
+        .onAppear { publishChrome() }
+        .onChange(of: navigation.route) { _, _ in publishChrome() }
         .task { reload() }
         .onReceive(store.libraryDidChangePublisher) { reload() }
         .onDisappear {
             clearScopedFilter()
             navigation.route = nil
+            destinationChrome.clear(for: CollectionsDestination.destinationID)
         }
         .alert("重命名收藏集", isPresented: Binding(
             get: { renameTarget != nil },
@@ -173,6 +184,13 @@ struct CollectionsContent: View {
             clearScopedFilter()
             navigation.route = nil
         }
+    }
+
+    private func publishChrome() {
+        destinationChrome.set(
+            navigation.chrome,
+            for: CollectionsDestination.destinationID
+        )
     }
 
     private func clearScopedFilter() {

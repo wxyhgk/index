@@ -312,22 +312,7 @@ final class SearchPanelViewModel: ObservableObject {
     /// 复制 + 恢复前台应用 + Cmd+V（一步到位粘贴）。
     func copyAndPasteSelected() {
         copySelected()
-        SearchPanelCoordinator.shared.closePanel()
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            if let app = frontmost, app.bundleIdentifier != Bundle.main.bundleIdentifier {
-                app.activate(options: [])
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            let source = CGEventSource(stateID: .combinedSessionState)
-            let vDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true)
-            vDown?.flags = .maskCommand
-            let vUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
-            vUp?.flags = .maskCommand
-            vDown?.post(tap: .cghidEventTap)
-            vUp?.post(tap: .cghidEventTap)
-        }
+        SearchPanelCoordinator.shared.closeAndPasteIntoPreviousApp()
     }
 
     /// 剪贴板条目保存到截图库。

@@ -14,7 +14,10 @@ import CoreGraphics
 /// 一次剪贴板快照：提取到的内容 + 来源 App。
 struct ClipboardSnapshot: Sendable {
     let text: String?
-    let image: CGImage?
+    /// Pasteboard 原始图片字节；解码、PNG 规范化与哈希全部交给后台 recorder。
+    let imageData: Data?
+    /// Finder 复制图片文件时只在主线程取得 URL，文件读取同样留给后台。
+    let imageFileURL: URL?
     let fileURLs: [URL]
     let sourceApp: String?
 }
@@ -88,22 +91,55 @@ final class ClipboardWatcher {
         let pasteboard = NSPasteboard.general
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
 
-        // 图片（PNG / TIFF / 文件 URL 中的图片）
-        if let image = Clipboard.readImage() {
-            return ClipboardSnapshot(text: nil, image: image, fileURLs: [], sourceApp: sourceApp)
+        // 主线程只从 NSPasteboard 复制原始表示，不在轮询回调里解码像素。
+        if let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) {
+            return ClipboardSnapshot(
+                text: nil,
+                imageData: data,
+                imageFileURL: nil,
+                fileURLs: [],
+                sourceApp: sourceApp
+            )
         }
 
-        // 文件 URL（非图片的文件）
+        // 文件 URL：图片文件延后解码，普通文件仍按路径记录。
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
            !urls.isEmpty {
-            return ClipboardSnapshot(text: nil, image: nil, fileURLs: urls, sourceApp: sourceApp)
+            if let imageURL = urls.first(where: { ImageImportCoordinator.supports($0) }) {
+                return ClipboardSnapshot(
+                    text: nil,
+                    imageData: nil,
+                    imageFileURL: imageURL,
+                    fileURLs: [],
+                    sourceApp: sourceApp
+                )
+            }
+            return ClipboardSnapshot(
+                text: nil,
+                imageData: nil,
+                imageFileURL: nil,
+                fileURLs: urls,
+                sourceApp: sourceApp
+            )
         }
 
         // 文本
         if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            return ClipboardSnapshot(text: text, image: nil, fileURLs: [], sourceApp: sourceApp)
+            return ClipboardSnapshot(
+                text: text,
+                imageData: nil,
+                imageFileURL: nil,
+                fileURLs: [],
+                sourceApp: sourceApp
+            )
         }
 
-        return ClipboardSnapshot(text: nil, image: nil, fileURLs: [], sourceApp: sourceApp)
+        return ClipboardSnapshot(
+            text: nil,
+            imageData: nil,
+            imageFileURL: nil,
+            fileURLs: [],
+            sourceApp: sourceApp
+        )
     }
 }

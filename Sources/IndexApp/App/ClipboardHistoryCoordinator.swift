@@ -19,6 +19,7 @@ final class ClipboardHistoryCoordinator {
 
     private let watcher: ClipboardWatcher
     private let store: ClipboardHistoryStore
+    private let recorder: ClipboardHistoryRecorder
     private var panel: ClipboardHistoryPanel?
     /// 面板打开前的前台应用，粘贴时恢复焦点到它。
     private var previousFrontmostApp: NSRunningApplication?
@@ -30,8 +31,9 @@ final class ClipboardHistoryCoordinator {
          store: ClipboardHistoryStore = .shared) {
         self.watcher = watcher
         self.store = store
-        watcher.onChange = { [weak self] snapshot in
-            self?.handle(snapshot)
+        self.recorder = ClipboardHistoryRecorder(store: store)
+        watcher.onChange = { [recorder] snapshot in
+            Task { await recorder.record(snapshot) }
         }
     }
 
@@ -43,71 +45,6 @@ final class ClipboardHistoryCoordinator {
 
     func stop() {
         watcher.stop()
-    }
-
-    // MARK: 剪贴板变化处理
-
-    private func handle(_ snapshot: ClipboardSnapshot) {
-        do {
-            if let image = snapshot.image {
-                try recordImage(image, sourceApp: snapshot.sourceApp)
-            } else if !snapshot.fileURLs.isEmpty {
-                try recordFiles(snapshot.fileURLs, sourceApp: snapshot.sourceApp)
-            } else if let text = snapshot.text {
-                try recordText(text, sourceApp: snapshot.sourceApp)
-            }
-        } catch {
-            NSLog("[Index] 剪贴板历史记录失败: \(error)")
-        }
-    }
-
-    private func recordText(_ text: String, sourceApp: String?) throws {
-        let hash = Self.hash(text.data(using: .utf8) ?? Data())
-        let summary = Self.summary(for: text)
-        try store.record(
-            kind: .text,
-            contentHash: hash,
-            text: text,
-            assetPath: nil,
-            summary: summary,
-            sourceApp: sourceApp
-        )
-    }
-
-    private func recordImage(_ image: CGImage, sourceApp: String?) throws {
-        guard let data = ImageCodec.pngData(from: image) else { return }
-        let sha = Self.hash(data)
-        let assetPath = try store.writeImageAsset(data, sha: sha)
-        try store.record(
-            kind: .image,
-            contentHash: sha,
-            text: nil,
-            assetPath: assetPath,
-            summary: "图片 \(image.width)×\(image.height)",
-            sourceApp: sourceApp
-        )
-    }
-
-    private func recordFiles(_ urls: [URL], sourceApp: String?) throws {
-        // 多个文件合并为一条记录（hash 覆盖全部路径），摘要用第一个文件名。
-        let paths = urls.map(\.path).sorted()
-        let hash = Self.hash(paths.joined(separator: "\n").data(using: .utf8) ?? Data())
-        let summary = urls.first?.lastPathComponent ?? "文件"
-        // 文件条目不复制内容，只记路径（文件本身在用户磁盘上）。
-        // assetPath 存 JSON 数组（多文件）。
-        let fileName = "\(hash).json"
-        try JSONEncoder().encode(urls.map(\.path)).write(
-            to: store.assetDirectory.appendingPathComponent(fileName),
-            options: .atomic
-        )
-        try store.record(
-            kind: .file,
-            contentHash: hash,
-            text: nil,
-            assetPath: fileName,
-            summary: summary,
-            sourceApp: sourceApp
-        )
     }
 
     // MARK: 面板
@@ -146,6 +83,10 @@ final class ClipboardHistoryCoordinator {
         set { panel?.isPinned = newValue }
     }
 
+    var supportsDirectPaste: Bool {
+        IndexDistribution.supportsGlobalAccessibilityFeatures
+    }
+
     /// 粘贴流程：关面板 → 恢复焦点到之前应用 → 确认激活后模拟 Cmd+V。
     /// 固定 150/300ms 延迟在较慢应用上会把 ⌘V 发给错误窗口；激活确认与
     /// CGEvent 注入统一收在 Platform 的 ClipboardPasteDispatcher。
@@ -158,6 +99,17 @@ final class ClipboardHistoryCoordinator {
         previousFrontmostApp = nil
         if let panel, panel.isVisible {
             panel.close()
+        }
+
+        // Mac App Store 版本启用 App Sandbox，不能承诺向其他进程注入键盘事件。
+        // 内容已经在剪贴板中：只恢复目标应用，让用户按一次系统 Cmd+V。
+        guard supportsDirectPaste else {
+            if let target {
+                target.activate(options: [])
+            } else {
+                AgentCoordinator.shared.refocus()
+            }
+            return
         }
 
         if let target {
@@ -182,5 +134,76 @@ final class ClipboardHistoryCoordinator {
         let trimmed = firstLine.trimmingCharacters(in: .whitespaces)
         if trimmed.count <= 120 { return trimmed }
         return String(trimmed.prefix(120)) + "…"
+    }
+}
+
+/// 串行后台记录器：保持剪贴板事件顺序，同时把像素、哈希、文件和数据库工作移出主线程。
+private actor ClipboardHistoryRecorder {
+    let store: ClipboardHistoryStore
+
+    init(store: ClipboardHistoryStore) {
+        self.store = store
+    }
+
+    func record(_ snapshot: ClipboardSnapshot) {
+        do {
+            if let data = snapshot.imageData,
+               let image = ImageCodec.load(from: data) {
+                try recordImage(image, sourceApp: snapshot.sourceApp)
+            } else if let url = snapshot.imageFileURL,
+                      let image = ImageCodec.load(from: url) {
+                try recordImage(image, sourceApp: snapshot.sourceApp)
+            } else if !snapshot.fileURLs.isEmpty {
+                try recordFiles(snapshot.fileURLs, sourceApp: snapshot.sourceApp)
+            } else if let text = snapshot.text {
+                try recordText(text, sourceApp: snapshot.sourceApp)
+            }
+        } catch {
+            NSLog("[Index] 剪贴板历史记录失败: \(error)")
+        }
+    }
+
+    private func recordText(_ text: String, sourceApp: String?) throws {
+        let hash = ClipboardHistoryCoordinator.hash(Data(text.utf8))
+        try store.record(
+            kind: .text,
+            contentHash: hash,
+            text: text,
+            assetPath: nil,
+            summary: ClipboardHistoryCoordinator.summary(for: text),
+            sourceApp: sourceApp
+        )
+    }
+
+    private func recordImage(_ image: CGImage, sourceApp: String?) throws {
+        guard let data = ImageCodec.pngData(from: image) else { return }
+        let sha = ClipboardHistoryCoordinator.hash(data)
+        let assetPath = try store.writeImageAsset(data, sha: sha)
+        try store.record(
+            kind: .image,
+            contentHash: sha,
+            text: nil,
+            assetPath: assetPath,
+            summary: "图片 \(image.width)×\(image.height)",
+            sourceApp: sourceApp
+        )
+    }
+
+    private func recordFiles(_ urls: [URL], sourceApp: String?) throws {
+        let paths = urls.map(\.path).sorted()
+        let hash = ClipboardHistoryCoordinator.hash(Data(paths.joined(separator: "\n").utf8))
+        let fileName = "\(hash).json"
+        try JSONEncoder().encode(urls.map(\.path)).write(
+            to: store.assetDirectory.appendingPathComponent(fileName),
+            options: .atomic
+        )
+        try store.record(
+            kind: .file,
+            contentHash: hash,
+            text: nil,
+            assetPath: fileName,
+            summary: urls.first?.lastPathComponent ?? "文件",
+            sourceApp: sourceApp
+        )
     }
 }

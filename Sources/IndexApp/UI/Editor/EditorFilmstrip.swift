@@ -179,7 +179,8 @@ struct EditorFilmstrip: View, Equatable {
     let onSelect: (Shot) -> Void
 
     /// 收起状态跨窗口、跨启动记住 —— 胶片条是屏幕空间的取舍，偏好因人而异。
-    @AppStorage("editorFilmstripCollapsed") private var collapsed = false
+    @AppStorage(PagePreferences.editorFilmstripCollapsed.key)
+    private var collapsed = PagePreferences.editorFilmstripCollapsed.defaultValue
 
     @State private var shots: [Shot] = []
     @Environment(\.colorScheme) private var colorScheme

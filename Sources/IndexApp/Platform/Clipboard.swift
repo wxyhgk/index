@@ -44,9 +44,14 @@ enum Clipboard {
     @discardableResult
     static func copy(_ image: CGImage) -> Bool {
         guard let data = ImageCodec.pngData(from: image) else { return false }
+        return copy(pngData: data)
+    }
+
+    @discardableResult
+    static func copy(pngData: Data) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        return pasteboard.setData(data, forType: .png)
+        return pasteboard.setData(pngData, forType: .png)
     }
 
     /// 多张图片。每张写成一个独立的剪贴板条目（`NSPasteboardItem`）——
@@ -54,13 +59,20 @@ enum Clipboard {
     /// 单张时行为与 `copy(_:)` 完全一致。
     @discardableResult
     static func copy(_ images: [CGImage]) -> Bool {
-        let items: [NSPasteboardItem] = images.compactMap { image in
-            guard let data = ImageCodec.pngData(from: image) else { return nil }
+        let dataItems = images.compactMap { ImageCodec.pngData(from: $0) }
+        guard dataItems.count == images.count else { return false }
+        return copy(pngDataItems: dataItems)
+    }
+
+    /// 历史图片已经以 PNG 落盘，回粘时直接写原字节，避免主线程重复解码和编码。
+    @discardableResult
+    static func copy(pngDataItems: [Data]) -> Bool {
+        let items: [NSPasteboardItem] = pngDataItems.map { data in
             let item = NSPasteboardItem()
             item.setData(data, forType: .png)
             return item
         }
-        guard !items.isEmpty, items.count == images.count else { return false }
+        guard !items.isEmpty else { return false }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         return pasteboard.writeObjects(items)

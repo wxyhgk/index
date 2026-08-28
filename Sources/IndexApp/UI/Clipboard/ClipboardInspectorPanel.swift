@@ -9,10 +9,16 @@ import SwiftUI
 
 struct ClipboardInspectorPanelHost: View {
 
-    @AppStorage("galleryInspectorShown") private var showInspector = true
+    @AppStorage(PagePreferences.galleryInspectorShown.key)
+    private var showInspector = PagePreferences.galleryInspectorShown.defaultValue
+    @ObservedObject private var session: ClipboardPageSession
+
+    init(session: ClipboardPageSession? = nil) {
+        _session = ObservedObject(wrappedValue: session ?? .shared)
+    }
 
     var body: some View {
-        ClipboardInspectorPanel(isPresented: $showInspector)
+        ClipboardInspectorPanel(isPresented: $showInspector, session: session)
     }
 }
 
@@ -20,22 +26,35 @@ struct ClipboardInspectorPanel: View {
 
     @Binding var isPresented: Bool
 
-    @ObservedObject private var selection = ClipboardSelection.shared
+    @ObservedObject private var session: ClipboardPageSession
+    @ObservedObject private var selection: ClipboardSelection
     @ObservedObject private var viewModel: ClipboardHistoryViewModel
     private let store: ClipboardHistoryStore
 
     init(
         isPresented: Binding<Bool>,
         store: ClipboardHistoryStore = .shared,
-        viewModel: ClipboardHistoryViewModel? = nil
+        viewModel: ClipboardHistoryViewModel? = nil,
+        selection: ClipboardSelection? = nil,
+        session: ClipboardPageSession? = nil
     ) {
         self._isPresented = isPresented
-        self.store = store
-        let resolvedViewModel = viewModel
-            ?? (store === ClipboardHistoryStore.shared
-                ? ClipboardTabSession.shared.viewModel
-                : ClipboardHistoryViewModel(store: store))
-        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        let resolvedSession: ClipboardPageSession
+        if let session {
+            resolvedSession = session
+        } else if viewModel == nil, selection == nil, store === ClipboardHistoryStore.shared {
+            resolvedSession = .shared
+        } else {
+            resolvedSession = ClipboardPageSession(
+                store: store,
+                viewModel: viewModel,
+                selection: selection ?? ClipboardSelection()
+            )
+        }
+        self.store = resolvedSession.viewModel.store
+        _session = ObservedObject(wrappedValue: resolvedSession)
+        _selection = ObservedObject(wrappedValue: resolvedSession.selection)
+        _viewModel = ObservedObject(wrappedValue: resolvedSession.viewModel)
     }
 
     var body: some View {
@@ -63,8 +82,7 @@ struct ClipboardInspectorPanel: View {
     }
 
     private var selectedItem: ClipboardHistoryItem? {
-        guard let id = selection.selectedID else { return nil }
-        return viewModel.filteredItems.first { $0.id == id }
+        session.selectedItem
     }
 
     // MARK: 详情内容
@@ -115,6 +133,9 @@ struct ClipboardInspectorPanel: View {
 
                 Button {
                     viewModel.togglePin(item)
+                    var updated = item
+                    updated.pinned.toggle()
+                    session.updateScopedItem(updated)
                 } label: {
                     Label(item.pinned ? "取消固定" : "固定", systemImage: item.pinned ? "pin.slash" : "pin")
                         .frame(maxWidth: .infinity)
@@ -124,7 +145,7 @@ struct ClipboardInspectorPanel: View {
 
                 Button {
                     viewModel.delete(item)
-                    selection.clearIf(item.id)
+                    session.removeScopedItem(item)
                 } label: {
                     Label("删除", systemImage: "trash")
                         .frame(maxWidth: .infinity)

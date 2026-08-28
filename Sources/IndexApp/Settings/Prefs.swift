@@ -160,9 +160,9 @@ struct ClipboardHistoryPrefs: Equatable {
 /// 插件管理：启停 + agent 配置。
 ///
 /// 启用的插件 id 列表（不在列表里的插件不激活）。
-/// agent 的 LLM 端点 / 模型 / API key（key 走 Keychain，这里只存引用名）。
+/// agent 的 LLM 端点 / 模型 / API key（key 只在运行期内存中保留，持久化走 Keychain）。
 struct PluginPrefs: Equatable {
-    /// 已启用的插件 id（空 = 全部启用，内置默认）。
+    /// 已启用的插件 id（空 = 全部关闭；旧用户的全开默认由 AppSettings 注册）。
     var enabledPluginIDs: [String]
     /// agent 是否启用。
     var agentEnabled: Bool
@@ -170,7 +170,7 @@ struct PluginPrefs: Equatable {
     var agentBaseURL: String
     /// agent 模型名。
     var agentModel: String
-    /// agent API key（当前明文存 UserDefaults，后续迁 Keychain）。
+    /// agent API key（运行期内存值；AppSettings 持久化时写入 Keychain）。
     var agentAPIKey: String
 
     static let defaults = PluginPrefs(

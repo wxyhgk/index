@@ -106,6 +106,7 @@ struct MarkdownEditorModeView: View {
                 payload: .markdown(source),
                 updateKind: false
             )
+            MarkdownPreviewCache.shared.update(source, shotID: shotID)
             savedSource = source
             saveError = nil
         } catch {

@@ -21,6 +21,7 @@ struct TimelineSheet: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.galleryPageCommands) private var pageCommands
 
     /// nil = 还在查库；查完少于 2 张不会走到这里（入口已禁用），但仍兜底显示空态。
     @State private var related: [Shot]?
@@ -112,7 +113,7 @@ struct TimelineSheet: View {
     /// 把当前选中张带回图库并关闭 sheet。定位类场景：清空多选后单选目标。
     private func locateInGallery() {
         guard let selectedID else { return }
-        GalleryWindowController.shared.selection.select(only: selectedID)
+        pageCommands.select(only: selectedID)
         dismiss()
     }
 

@@ -10,15 +10,11 @@ import SwiftUI
 
 // MARK: - 中间内容：页头 + 网格
 
-private enum ClipboardGridMetrics {
-    static let cardWidth: CGFloat = 180
-    static let cardHeight: CGFloat = 160
-}
-
 struct ClipboardContent: View {
 
+    @ObservedObject private var session: ClipboardPageSession
     @ObservedObject private var viewModel: ClipboardHistoryViewModel
-    @ObservedObject private var selection = ClipboardSelection.shared
+    @ObservedObject private var selection: ClipboardSelection
     @StateObject private var thumbnailPreheater: ViewportThumbnailPreheater
     private let store: ClipboardHistoryStore
 
@@ -31,16 +27,26 @@ struct ClipboardContent: View {
 
     init(
         store: ClipboardHistoryStore = .shared,
-        viewModel: ClipboardHistoryViewModel? = nil
+        viewModel: ClipboardHistoryViewModel? = nil,
+        selection: ClipboardSelection? = nil,
+        session: ClipboardPageSession? = nil
     ) {
-        self.store = store
-        // 默认接图库 Tab 专用会话，使网格与右侧 Inspector 看到同一份数据；
-        // 浮动面板仍然拥有自己的 ViewModel。
-        let resolvedViewModel = viewModel
-            ?? (store === ClipboardHistoryStore.shared
-                ? ClipboardTabSession.shared.viewModel
-                : ClipboardHistoryViewModel(store: store))
-        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        let resolvedSession: ClipboardPageSession
+        if let session {
+            resolvedSession = session
+        } else if viewModel == nil, selection == nil, store === ClipboardHistoryStore.shared {
+            resolvedSession = .shared
+        } else {
+            resolvedSession = ClipboardPageSession(
+                store: store,
+                viewModel: viewModel,
+                selection: selection ?? ClipboardSelection()
+            )
+        }
+        self.store = resolvedSession.viewModel.store
+        _session = ObservedObject(wrappedValue: resolvedSession)
+        _viewModel = ObservedObject(wrappedValue: resolvedSession.viewModel)
+        _selection = ObservedObject(wrappedValue: resolvedSession.selection)
         _thumbnailPreheater = StateObject(wrappedValue: ViewportThumbnailPreheater())
     }
 
@@ -49,7 +55,9 @@ struct ClipboardContent: View {
             header
             grid
         }
-        .floatingPanel()
+        // ClipboardContent 只作为内容库子页使用。外层 ContentLibraryView 已经拥有
+        // floatingPanel 表面；这里再画一层会形成双重圆角、双重背景，并让窗口缩放时
+        // 多出一层无意义的合成与布局工作。
         .background(widthReader)
         .onAppear { viewModel.refresh() }
         .onDisappear { thumbnailPreheater.reset() }
@@ -107,7 +115,7 @@ struct ClipboardContent: View {
         HStack(alignment: .top, spacing: DS.s3) {
             VStack(alignment: .leading, spacing: DS.s1) {
                 Text("剪贴板历史")
-                    .font(.largeTitle.weight(.bold))
+                    .font(.title2.weight(.semibold))
                     .lineLimit(1)
                 Text("\(viewModel.filteredItems.count) 个项目")
                     .font(.subheadline)
@@ -143,7 +151,7 @@ struct ClipboardContent: View {
         let usable = max(1, width - 2 * DS.s4)
         let count = max(
             1,
-            Int((usable + DS.s3) / (ClipboardGridMetrics.cardWidth + DS.s3))
+            Int((usable + DS.s3) / (ClipboardCardMetrics.gridWidth + DS.s3))
         )
         if count != columnCount { columnCount = count }
     }
@@ -166,8 +174,8 @@ struct ClipboardContent: View {
                     items: visible
                 )],
                 columnCount: columnCount,
-                fixedItemWidth: ClipboardGridMetrics.cardWidth,
-                itemHeight: ClipboardGridMetrics.cardHeight,
+                fixedItemWidth: ClipboardCardMetrics.gridWidth,
+                itemHeight: ClipboardCardMetrics.gridHeight,
                 interitemSpacing: DS.s3,
                 lineSpacing: DS.s3,
                 contentInsets: NSEdgeInsets(
@@ -182,6 +190,7 @@ struct ClipboardContent: View {
                 card: { item in clipboardCard(for: item) },
                 header: { _ in EmptyView() },
                 onDisplay: { item in
+                    viewModel.loadMoreIfNeeded(reaching: item)
                     guard item.kind == .image else { return }
                     thumbnailPreheater.mounted(item.viewportIdentity)
                 },
@@ -213,30 +222,30 @@ struct ClipboardContent: View {
             selection.select(item.id)
         }
         .contextMenu {
-            if !isScrolling && !isLiveResizing {
-                Button("复制") {
-                    selection.selectedID = item.id
-                    viewModel.copyBack(item)
-                }
-                Button("重命名…") {
-                    selection.selectedID = item.id
-                    renameText = item.title ?? ""
-                    renameItem = item
-                }
-                Button(item.isFavorite ? "取消收藏" : "收藏") {
-                    selection.selectedID = item.id
-                    viewModel.toggleFavorite(item)
-                }
-                Button(item.pinned ? "取消固定" : "固定") {
-                    selection.selectedID = item.id
-                    viewModel.togglePin(item)
-                }
-                collectionMenu(for: item)
-                Divider()
-                Button("删除", role: .destructive) {
-                    viewModel.delete(item)
-                    ClipboardSelection.shared.clearIf(item.id)
-                }
+            // NSCollectionView 会复用已经滚出/滚入的卡片。不能在滚动时返回空菜单，
+            // 否则被复用的 hosting view 可能一直保留空 contextMenu。
+            Button("复制") {
+                selection.selectedID = item.id
+                viewModel.copyBack(item)
+            }
+            Button("重命名…") {
+                selection.selectedID = item.id
+                renameText = item.title ?? ""
+                renameItem = item
+            }
+            Button(item.isFavorite ? "取消收藏" : "收藏") {
+                selection.selectedID = item.id
+                viewModel.toggleFavorite(item)
+            }
+            Button(item.pinned ? "取消固定" : "固定") {
+                selection.selectedID = item.id
+                viewModel.togglePin(item)
+            }
+            collectionMenu(for: item)
+            Divider()
+            Button("删除", role: .destructive) {
+                viewModel.delete(item)
+                selection.clearIf(item.id)
             }
         }
     }
@@ -286,6 +295,7 @@ struct ClipboardGridCard: View, Equatable {
     var store: ClipboardHistoryStore = .shared
 
     @State private var isHovering = false
+    @Environment(\.galleryIsScrolling) private var isScrolling
 
     static func == (lhs: ClipboardGridCard, rhs: ClipboardGridCard) -> Bool {
         lhs.item == rhs.item
@@ -302,11 +312,16 @@ struct ClipboardGridCard: View, Equatable {
         .equatable()
         .overlay(alignment: .topLeading) { favoriteButton }
         .frame(
-            width: ClipboardGridMetrics.cardWidth,
-            height: ClipboardGridMetrics.cardHeight
+            width: ClipboardCardMetrics.gridWidth,
+            height: ClipboardCardMetrics.gridHeight
         )
         .modifier(ClipboardCardChrome(isSelected: isSelected, isHovering: isHovering))
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            isHovering = isScrolling ? false : hovering
+        }
+        .onChange(of: isScrolling) { _, scrolling in
+            if scrolling { isHovering = false }
+        }
     }
 
     /// 收藏星：悬停浮出，已收藏常显实心黄星。
@@ -325,22 +340,6 @@ struct ClipboardGridCard: View, Equatable {
             .padding(DS.s1)
             .help(item.isFavorite ? "取消收藏" : "收藏")
         }
-    }
-}
-
-// MARK: - 剪贴板选中状态（独立于 GallerySelection）
-
-@MainActor
-final class ClipboardSelection: ObservableObject {
-    static let shared = ClipboardSelection()
-    @Published var selectedID: Int64?
-
-    func select(_ id: Int64?) {
-        selectedID = (selectedID == id) ? nil : id
-    }
-
-    func clearIf(_ id: Int64?) {
-        if selectedID == id { selectedID = nil }
     }
 }
 

@@ -93,6 +93,27 @@ final class GalleryContentScopeTests: XCTestCase {
         XCTAssertFalse(store.shots.compactMap(\.id).contains(try XCTUnwrap(screenshot.id)))
     }
 
+    func testDeactivatingRecordingsOnlyResetsAnActiveRecordingsScope() throws {
+        let database = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(database)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GalleryContentScopeTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ShotStore(rootDirectory: root, database: database)
+        let viewModel = GalleryViewModel(store: store)
+
+        viewModel.filter = .favorites
+        viewModel.searchText = "保留"
+        GalleryContentScope.recordings.deactivate(in: viewModel)
+        XCTAssertEqual(viewModel.filter, .favorites)
+        XCTAssertEqual(viewModel.searchText, "保留")
+
+        viewModel.filter = .recordings
+        GalleryContentScope.recordings.deactivate(in: viewModel)
+        XCTAssertEqual(viewModel.filter, .all)
+        XCTAssertEqual(viewModel.searchText, "")
+    }
+
     private func image(gray: CGFloat) throws -> CGImage {
         let context = try XCTUnwrap(CGContext(
             data: nil,

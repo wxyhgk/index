@@ -26,7 +26,10 @@ import AppKit
 /// 等那一轮开始，第一件事就该是把这个枚举提成共享类型、删掉网格里的私有副本。
 enum GalleryLayoutKind: String, CaseIterable {
     case grid
+    /// 兼容旧偏好值；非虚拟化瀑布流不再暴露给用户。
     case waterfall
+
+    static var allCases: [GalleryLayoutKind] { [.grid] }
 
     var symbol: String {
         switch self {
@@ -47,19 +50,27 @@ struct GalleryTopBar: View {
 
     /// 当前选中的顶层选项 id。真相在 `GalleryView` 的 @AppStorage 上。
     @Binding var destinationID: String
+    let destinationRegistry: GalleryDestinationRegistry
+
+    init(
+        destinationID: Binding<String>,
+        destinationRegistry: GalleryDestinationRegistry = .shared
+    ) {
+        _destinationID = destinationID
+        self.destinationRegistry = destinationRegistry
+    }
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
-            // 左侧占位：红绿灯避让区（不画内容，只留宽度）
+            // 红绿灯仍由系统绘制，顶层导航保持视觉居中。
             HStack {
                 Spacer()
                 Spacer()
             }
             .frame(width: DS.Shell.trafficLightInset)
 
-            // tabs 绝对居中
             destinationTabs
         }
         .frame(maxWidth: .infinity)
@@ -83,7 +94,7 @@ struct GalleryTopBar: View {
     /// 真到那一步该换回侧边栏 —— 同样只是换一个呈现，契约照旧。
     private var destinationTabs: some View {
         HStack(spacing: DS.s1 / 2) {
-            ForEach(GalleryDestinationRegistry.shared.ordered(), id: \.id) { destination in
+            ForEach(destinationRegistry.ordered(), id: \.id) { destination in
                 DestinationTab(
                     title: destination.title,
                     symbol: destination.symbol,

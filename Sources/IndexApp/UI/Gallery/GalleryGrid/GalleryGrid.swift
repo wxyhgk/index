@@ -33,6 +33,7 @@ struct GalleryGrid: View {
     @EnvironmentObject var selection: GallerySelection
     @EnvironmentObject var batchActivity: GalleryBatchActivity
     @Environment(\.galleryKeyboard) private var keyboard
+    @Environment(\.galleryPageCommands) var pageCommands
     private let scope: GalleryContentScope
     private let chrome: GalleryGridChrome
 
@@ -81,15 +82,17 @@ struct GalleryGrid: View {
 
     /// 缩略图基准宽度，底部滑杆控制，跨启动记住。
     /// 瀑布模式下同一个值语义变成「列宽基准」，滑杆行为自然成立。
-    @AppStorage("galleryZoom") private var zoom = 200.0
+    @AppStorage(PagePreferences.galleryZoom.key)
+    private var zoom = PagePreferences.galleryZoom.defaultValue
 
     /// 显示模式，底部悬浮工具条切换，跨启动记住。
     ///
     /// 类型是 `GalleryLayoutKind`（定义在 `GalleryTopBar.swift`）。这里曾经有一个
-    /// 私有的 `GalleryLayoutMode` 副本 —— 同一个 `@AppStorage("galleryLayout")` 键、
+    /// 私有的 `GalleryLayoutMode` 副本 —— 同一个 `PagePreferences.galleryLayout` 键、
     /// 同一组 rawValue，**两份定义、一份数据**。副本已删除：加一个 case 却只改一边
     /// 就会得到「顶栏能切到、网格不认识」的静默错位，这种坑不留。
-    @AppStorage("galleryLayout") private var layoutMode = GalleryLayoutKind.grid
+    @AppStorage(PagePreferences.galleryLayout.key)
+    private var layoutMode = PagePreferences.galleryLayout.enumDefault(as: GalleryLayoutKind.self)
 
     /// 按时间段分好组的结果，随 store.shots 变化重算一次（+Data 扩展写它）。
     @State var sections: [ShotSection] = []
@@ -213,7 +216,7 @@ struct GalleryGrid: View {
     /// 键盘导航拿到的列数。瀑布模式各列行高不齐，「上下 = ±列数」的网格假设失效 ——
     /// 报 1，上下键退化为顺序前后（和左右一致）。
     private var keyboardColumnCount: Int {
-        layoutMode == .waterfall ? 1 : columnCount
+        columnCount
     }
 
     /// destination 的最终可见集合（+Card / +Data 扩展也读它）。
@@ -269,7 +272,12 @@ struct GalleryGrid: View {
         // 宽度感知：测量点是**本视图的根帧**（= 网格列的容器帧，滚动条在它内部），
         // 和它历史上待的位置（GalleryView 里 `.background(gridWidthReader)`）是同一层几何，
         // 只是写的 state 从三栏共同父层挪进了网格子树。
-        .onAppear { MouseModifierCache.shared.install() }
+        .onAppear {
+            MouseModifierCache.shared.install()
+            // 旧瀑布流基于 SwiftUI Layout，会为全部已加载卡片保留视图图；数据越翻页
+            // 越慢。统一迁移到 NSCollectionView recycling，十万条时内存仍只与可见 cell 成正比。
+            if layoutMode == .waterfall { layoutMode = .grid }
+        }
         .onDisappear { thumbnailPreheater.reset() }
         .background(widthReader)
         .dropDestination(for: URL.self) { urls, _ in
@@ -451,13 +459,7 @@ struct GalleryGrid: View {
     }
 
     private var grid: some View {
-        Group {
-            if layoutMode == .waterfall {
-                waterfallScrollView
-            } else {
-                recyclingGrid
-            }
-        }
+        recyclingGrid
     }
 
     /// Snagit-style regular grid: AppKit owns a small reusable pool of visible

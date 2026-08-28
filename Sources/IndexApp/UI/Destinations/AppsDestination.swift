@@ -4,10 +4,12 @@ import SwiftUI
 
 @MainActor
 final class AppsNavigationState: ObservableObject {
-    static let shared = AppsNavigationState()
     @Published var selectedAppID: String?
     var isDrilled: Bool { selectedAppID != nil }
-    private init() {}
+
+    init(selectedAppID: String? = nil) {
+        self.selectedAppID = selectedAppID
+    }
 }
 
 enum AppsOverviewSort: String, CaseIterable {
@@ -32,26 +34,44 @@ struct AppsDestination: GalleryDestination {
     let title = "应用"
     let symbol = "square.stack.3d.up"
     let order = 100
+    let defaultChrome = GalleryDestinationChrome.overview
+    private let navigation = AppsNavigationState()
 
-    func content() -> AnyView { AnyView(AppsContent()) }
-    func inspector() -> AnyView? { nil }
+    func content(context: GalleryDestinationContext) -> AnyView {
+        AnyView(AppsContent(
+            store: context.store,
+            viewModel: context.viewModel,
+            navigation: navigation,
+            destinationChrome: context.chrome
+        ))
+    }
 }
 
 private struct AppsContent: View {
     @ObservedObject private var store: ShotStore
     @ObservedObject private var viewModel: GalleryViewModel
 
-    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
+    init(
+        store: ShotStore = .shared,
+        viewModel: GalleryViewModel? = nil,
+        navigation: AppsNavigationState? = nil,
+        destinationChrome: GalleryDestinationChromeState
+    ) {
         _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
             ?? .resolve(for: store)
         _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        _navigation = ObservedObject(wrappedValue: navigation ?? AppsNavigationState())
+        _destinationChrome = ObservedObject(wrappedValue: destinationChrome)
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("galleryInspectorShown") private var showInspector = true
-    @AppStorage("appsOverviewSort") private var overviewSort = AppsOverviewSort.captureCount
-    @ObservedObject private var navigation = AppsNavigationState.shared
+    @AppStorage(PagePreferences.galleryInspectorShown.key)
+    private var showInspector = PagePreferences.galleryInspectorShown.defaultValue
+    @AppStorage(PagePreferences.appsOverviewSort.key)
+    private var overviewSort = PagePreferences.appsOverviewSort.enumDefault(as: AppsOverviewSort.self)
+    @ObservedObject private var navigation: AppsNavigationState
+    @ObservedObject private var destinationChrome: GalleryDestinationChromeState
     @State private var apps: [CapturedAppSummary] = []
 
     private let featuredColumns = [
@@ -69,11 +89,14 @@ private struct AppsContent: View {
                 overview
             }
         }
+        .onAppear { publishChrome() }
+        .onChange(of: navigation.selectedAppID) { _, _ in publishChrome() }
         .task { reload() }
         .onReceive(store.libraryDidChangePublisher) { reload() }
         .onDisappear {
             clearFilterIfDrilled()
             navigation.selectedAppID = nil
+            destinationChrome.clear(for: AppsDestination.destinationID)
         }
     }
 
@@ -95,7 +118,7 @@ private struct AppsContent: View {
         HStack(alignment: .top, spacing: DS.s4) {
             VStack(alignment: .leading, spacing: DS.s1) {
                 Text("应用")
-                    .font(.largeTitle.weight(.bold))
+                    .font(.title2.weight(.semibold))
                 Text("\(matchingApps.count) 个应用")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -300,6 +323,13 @@ private struct AppsContent: View {
             clearFilterIfDrilled()
             navigation.selectedAppID = nil
         }
+    }
+
+    private func publishChrome() {
+        destinationChrome.set(
+            navigation.isDrilled ? .drilledGrid : .overview,
+            for: AppsDestination.destinationID
+        )
     }
 
     private func reload() {

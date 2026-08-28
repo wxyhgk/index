@@ -25,6 +25,7 @@
 - **内容库**：截图、录屏、剪切板、AI 对话统一入口，子 tab 切换，支持 OCR、标签、收藏与搜索。
 - **AI Agent**：⌘⇧A 呼出，自然语言搜索截图、打开图片、管理插件、修改配置，对话历史持久化可回溯。
 - **结构化剪贴板**：复制颜色、URL、文本、图片，粘贴时自动识别类型。
+- **输入即检索插件（实验）**：默认兼容微信/苹果拼音，在已提交短语旁召回本地内容；自带 AOSP 拼音输入源降级为可选实验组件。
 - **非破坏性编辑**：原图不可变，标注保存为结构化图层和修订历史。
 - **快速输出**：钉图、复制、保存、上传和拖拽暂存走同一套动作。
 - **化学工作流**：`复制 XYZ → ⌃⌘M → 旋转 → 定格 → 标注 → 输出`。
@@ -54,19 +55,25 @@
 open build/Index.app
 ```
 
+主 App 的日常 Release 不再强制组装实验输入源；需要输入源产物时运行
+`INDEX_BUILD_INPUT_METHOD=1 ./build.sh release`。
+
 首次截图前，在"系统设置 → 隐私与安全性 → 屏幕录制"中允许 Index，然后重新打开 App。
 
 默认快捷键：截图 `⌃⌘A` · 滚动截图 `⌃⌘S` · 录屏 `⌃⌘R` · 图库 `⌃⌘G` · AI Agent `⌘⇧A` · 3D 分子 `⌃⌘M`。
 
 开发检查：`./scripts/check.sh`
 
-版本附件见 [GitHub Releases](https://github.com/wxyhgk/index/releases)；当前 CI 构建为未公证预览版。
+输入即检索插件、可选输入源的构建安装与当前限制见 [输入即检索](docs/input-method.md)。
+
+版本附件见 [GitHub Releases](https://github.com/wxyhgk/index/releases)；发布工作流要求 Developer ID
+证书与 Apple 公证凭据，上传前会完成 notarization、staple 和 Gatekeeper 校验。
 
 SwiftPM target、可执行文件、Bundle ID 和 `~/Library/Application Support/Index/` 仍保留内部名称，
 以兼容既有授权与数据；用户看到的 App bundle 与显示名称均为 Index。
 
 ## 文档与许可
 
-[架构](ARCHITECTURE.md) · [隐私](PRIVACY.md) · [安全](SECURITY.md) · [第三方声明](THIRD_PARTY_NOTICES.md) · [Mac App Store](docs/app-store.md) · [CI](docs/ci.md)
+[架构](ARCHITECTURE.md) · [隐私](PRIVACY.md) · [安全](SECURITY.md) · [第三方声明](THIRD_PARTY_NOTICES.md) · [输入即检索](docs/input-method.md) · [Mac App Store](docs/app-store.md) · [CI](docs/ci.md)
 
 [GNU General Public License v3.0 or later](LICENSE)（`GPL-3.0-or-later`）。

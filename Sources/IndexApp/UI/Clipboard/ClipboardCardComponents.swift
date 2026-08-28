@@ -11,6 +11,14 @@ import AppKit
 
 // MARK: 卡片内容
 
+/// 剪贴板卡片只有两种固定规格。尺寸集中在这里，主窗口和快捷弹窗
+/// 不再各自维护一份字面量，避免布局尺寸与 SwiftUI 内容帧悄悄漂移。
+enum ClipboardCardMetrics {
+    static let gridWidth: CGFloat = 180
+    static let gridHeight: CGFloat = 160
+    static let popupSide: CGFloat = 190
+}
+
 struct ClipboardCardBody: View, Equatable {
     let item: ClipboardHistoryItem
     var textLineLimit: Int = 6
@@ -39,11 +47,12 @@ struct ClipboardCardBody: View, Equatable {
             switch item.kind {
             case .text:
                 Text(item.text ?? item.summary ?? "")
-                    .font(.system(size: DS.font12))
+                    .font(.system(size: DS.font13))
+                    .lineSpacing(2)
                     .lineLimit(textLineLimit)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(DS.s2)
+                    .padding(DS.s3)
             case .image:
                 if let url = store.content(of: item).assetURL {
                     CachedImage(
@@ -125,6 +134,8 @@ struct ClipboardCardChrome: ViewModifier {
     var selectionOrdinal: Int? = nil
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
         content
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
@@ -132,6 +143,7 @@ struct ClipboardCardChrome: ViewModifier {
             .overlay { if showsSelection { selectionRing } }
             .overlay(alignment: .topTrailing) { if showsSelection { selectionBadge } }
             .contentShape(Rectangle())
+            .animation(DS.Motion.standard(reduced: reduceMotion), value: isSelected)
     }
 
     @ViewBuilder
@@ -146,6 +158,7 @@ struct ClipboardCardChrome: ViewModifier {
                 lineWidth: DS.Glow.ringWidth
             )
             .padding(-DS.Glow.ringOffset)
+            .transition(.opacity)
             .allowsHitTesting(false)
         }
     }
@@ -168,6 +181,7 @@ struct ClipboardCardChrome: ViewModifier {
                     Circle().strokeBorder(DS.badgeStroke, lineWidth: 1)
                 }
                 .padding(DS.s2)
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
                 .allowsHitTesting(false)
         }
     }

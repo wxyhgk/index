@@ -97,6 +97,9 @@ struct RecyclingCardCollectionView<
         ) {
             self.parent = parent
             let dataChanged = renderedSections != parent.sections
+            let appendDelta = dataChanged
+                ? pureAppendDelta(from: renderedSections, to: parent.sections)
+                : nil
             renderedSections = parent.sections
             host.layoutConfiguration = RecyclingCardLayoutConfiguration(
                 columnCount: parent.columnCount,
@@ -123,7 +126,21 @@ struct RecyclingCardCollectionView<
                 // being evaluated. Replacing nested NSHostingView roots in that
                 // same stack creates a parent <-> hosted-cell dependency cycle.
                 // Snagit-style cells update after the page commit, once per run loop.
-                scheduleRefresh(in: host.collectionView, reloadData: dataChanged)
+                if let appendDelta {
+                    // 游标分页只在尾部增加条目。保留现有 cell、滚动锚点和图片解码，
+                    // 只通知 NSCollectionView 新增的 index paths；避免每翻一页 reloadData。
+                    host.collectionView.performBatchUpdates {
+                        if !appendDelta.sections.isEmpty {
+                            host.collectionView.insertSections(appendDelta.sections)
+                        }
+                        if !appendDelta.items.isEmpty {
+                            host.collectionView.insertItems(at: Set(appendDelta.items))
+                        }
+                    }
+                    scheduleRefresh(in: host.collectionView, reloadData: false)
+                } else {
+                    scheduleRefresh(in: host.collectionView, reloadData: dataChanged)
+                }
                 host.needsLayout = true
             }
 
@@ -248,6 +265,39 @@ struct RecyclingCardCollectionView<
             }
         }
 
+        private struct AppendDelta {
+            let sections: IndexSet
+            let items: [IndexPath]
+        }
+
+        /// 返回 nil 表示排序/删除/分组发生变化，必须完整 reload；非 nil 表示所有旧 ID
+        /// 都是新快照的稳定前缀，可安全做增量插入。元素内容变化仍由 visible refresh 更新。
+        private func pureAppendDelta(
+            from old: [RecyclingCardSection<Item>],
+            to new: [RecyclingCardSection<Item>]
+        ) -> AppendDelta? {
+            guard new.count >= old.count else { return nil }
+            var insertedItems: [IndexPath] = []
+            for sectionIndex in old.indices {
+                let previous = old[sectionIndex]
+                let current = new[sectionIndex]
+                guard previous.id == current.id,
+                      current.items.count >= previous.items.count,
+                      Array(current.items.prefix(previous.items.count)).map(\.id)
+                        == previous.items.map(\.id)
+                else { return nil }
+                if current.items.count > previous.items.count {
+                    insertedItems.append(contentsOf: (previous.items.count..<current.items.count).map {
+                        IndexPath(item: $0, section: sectionIndex)
+                    })
+                }
+            }
+            let insertedSections = old.count < new.count
+                ? IndexSet(integersIn: old.count..<new.count)
+                : IndexSet()
+            return AppendDelta(sections: insertedSections, items: insertedItems)
+        }
+
         private func refreshVisibleItems(in collectionView: NSCollectionView) {
             for item in collectionView.visibleItems() {
                 guard let hosted = item as? RecyclingHostingCollectionViewItem,
@@ -357,6 +407,10 @@ final class RecyclingCardHostView: NSView {
 
     private func applyLayoutConfiguration() {
         guard let configuration = layoutConfiguration else { return }
+        // 实时拉伸期间只改变 viewport，不按每一个鼠标像素重算卡片和使整套
+        // collection layout 失效。窗口结束 live resize 后 AppKit 会再次 layout，
+        // 届时一次性应用最终列宽/边距。
+        guard window?.inLiveResize != true || appliedItemSize == .zero else { return }
         let isHorizontal = configuration.scrollAxis == .horizontal
         flowLayout.scrollDirection = isHorizontal ? .horizontal : .vertical
         scrollView.hasVerticalScroller = !isHorizontal

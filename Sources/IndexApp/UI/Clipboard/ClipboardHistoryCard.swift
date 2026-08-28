@@ -14,9 +14,8 @@ struct ClipboardHistoryCard: View, Equatable {
     let selectionOrdinal: Int?
     var store: ClipboardHistoryStore = .shared
 
-    private let cardSize: CGFloat = 190
-
     @State private var isHovering = false
+    @Environment(\.galleryIsScrolling) private var isScrolling
 
     static func == (lhs: ClipboardHistoryCard, rhs: ClipboardHistoryCard) -> Bool {
         lhs.item == rhs.item
@@ -32,12 +31,17 @@ struct ClipboardHistoryCard: View, Equatable {
             store: store
         )
         .equatable()
-        .frame(width: cardSize, height: cardSize)
+        .frame(width: ClipboardCardMetrics.popupSide, height: ClipboardCardMetrics.popupSide)
         .modifier(ClipboardCardChrome(
             isSelected: isSelected,
             isHovering: isHovering,
             selectionOrdinal: selectionOrdinal
         ))
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            isHovering = isScrolling ? false : hovering
+        }
+        .onChange(of: isScrolling) { _, scrolling in
+            if scrolling { isHovering = false }
+        }
     }
 }

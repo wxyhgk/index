@@ -76,7 +76,7 @@ private struct GalleryInteractionProbe: NSViewRepresentable {
                 attachWindowObservers()
             }
 
-            guard let candidate = findVerticalScrollView(from: view),
+            guard let candidate = findScrollView(from: view),
                   candidate !== scrollView
             else { return }
             detachScrollObservers()
@@ -156,30 +156,35 @@ private struct GalleryInteractionProbe: NSViewRepresentable {
 
         /// A SwiftUI background can be placed inside the document view or as a
         /// sibling of NSScrollView. Search the nearest ancestor subtree before
-        /// widening the search, and only accept vertically configured scrollers.
-        private func findVerticalScrollView(from view: NSView) -> NSScrollView? {
+        /// widening the search. 图库是纵向、剪贴板快捷面板是横向，两者都需要
+        /// 同一套粗粒度滚动阶段，且绝不把连续 offset 发布进 SwiftUI。
+        private func findScrollView(from view: NSView) -> NSScrollView? {
             if let enclosing = view.enclosingScrollView,
-               enclosing.hasVerticalScroller {
+               isScrollable(enclosing) {
                 return enclosing
             }
 
             var ancestor = view.superview
             while let candidate = ancestor {
-                if let found = firstVerticalScrollView(in: candidate) { return found }
+                if let found = firstScrollView(in: candidate) { return found }
                 ancestor = candidate.superview
             }
             return nil
         }
 
-        private func firstVerticalScrollView(in root: NSView) -> NSScrollView? {
+        private func firstScrollView(in root: NSView) -> NSScrollView? {
             for child in root.subviews {
                 if let scrollView = child as? NSScrollView,
-                   scrollView.hasVerticalScroller {
+                   isScrollable(scrollView) {
                     return scrollView
                 }
-                if let nested = firstVerticalScrollView(in: child) { return nested }
+                if let nested = firstScrollView(in: child) { return nested }
             }
             return nil
+        }
+
+        private func isScrollable(_ scrollView: NSScrollView) -> Bool {
+            scrollView.hasVerticalScroller || scrollView.hasHorizontalScroller
         }
 
         deinit {

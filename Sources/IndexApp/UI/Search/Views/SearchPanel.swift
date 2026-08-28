@@ -18,7 +18,7 @@ final class SearchPanel: NSPanel {
     init(viewModel: SearchPanelViewModel) {
         self.viewModel = viewModel
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 420),
+            contentRect: NSRect(origin: .zero, size: SearchPanelMetrics.panelSize),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -36,7 +36,7 @@ final class SearchPanel: NSPanel {
         let root = SearchPanelView(viewModel: viewModel)
         let hosting = NSHostingController(rootView: root)
         hosting.view.wantsLayer = true
-        hosting.view.layer?.cornerRadius = DS.radiusPanel
+        hosting.view.layer?.cornerRadius = DS.radiusLarge
         hosting.view.layer?.masksToBounds = true
         contentView = hosting.view
     }
@@ -132,6 +132,7 @@ final class SearchPanelCoordinator {
 
     private var panel: SearchPanel?
     private let viewModel = SearchPanelViewModel()
+    private var previousFrontmostApp: NSRunningApplication?
 
     func togglePanel() {
         if let panel, panel.isVisible {
@@ -142,6 +143,10 @@ final class SearchPanelCoordinator {
     }
 
     func showPanel() {
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousFrontmostApp = frontmost
+        }
         if panel == nil {
             panel = SearchPanel(viewModel: viewModel)
             panel?.onClose = { [weak self] in
@@ -153,5 +158,19 @@ final class SearchPanelCoordinator {
 
     func closePanel() {
         panel?.close()
+    }
+
+    /// 平台键盘注入统一走 ClipboardPasteDispatcher；商店版只恢复目标应用，
+    /// 内容已经复制好，由用户使用系统 Cmd+V。
+    func closeAndPasteIntoPreviousApp() {
+        let target = previousFrontmostApp
+        previousFrontmostApp = nil
+        panel?.close()
+        guard let target else { return }
+        if IndexDistribution.supportsGlobalAccessibilityFeatures {
+            ClipboardPasteDispatcher.paste(into: target)
+        } else {
+            target.activate(options: [])
+        }
     }
 }

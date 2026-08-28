@@ -235,9 +235,10 @@ final class ClipboardHistoryPanel: NSPanel {
 
     /// 上次保存的相对位置（0-1 比例），适配多显示器/分辨率变化。
     private var savedRelativePosition: CGPoint? {
-        guard UserDefaults.standard.bool(forKey: "clipboardPanelPositionSaved") else { return nil }
-        let x = UserDefaults.standard.double(forKey: "clipboardPanelRelX")
-        let y = UserDefaults.standard.double(forKey: "clipboardPanelRelY")
+        let defaults = UserDefaults.standard
+        guard defaults.bool(for: PagePreferences.clipboardPanelPositionSaved) else { return nil }
+        let x = defaults.double(for: PagePreferences.clipboardPanelRelativeX)
+        let y = defaults.double(for: PagePreferences.clipboardPanelRelativeY)
         return CGPoint(x: x, y: y)
     }
 
@@ -248,9 +249,10 @@ final class ClipboardHistoryPanel: NSPanel {
         if let screen = NSScreen.main {
             let relX = (frame.midX - screen.frame.minX) / screen.frame.width
             let relY = (frame.midY - screen.frame.minY) / screen.frame.height
-            UserDefaults.standard.set(relX, forKey: "clipboardPanelRelX")
-            UserDefaults.standard.set(relY, forKey: "clipboardPanelRelY")
-            UserDefaults.standard.set(true, forKey: "clipboardPanelPositionSaved")
+            let defaults = UserDefaults.standard
+            defaults.set(relX, for: PagePreferences.clipboardPanelRelativeX)
+            defaults.set(relY, for: PagePreferences.clipboardPanelRelativeY)
+            defaults.set(true, for: PagePreferences.clipboardPanelPositionSaved)
         }
         removeMonitors()
         super.close()

@@ -218,6 +218,8 @@ struct ClipboardHistoryView: View {
 
     @FocusState private var searchFocused: Bool
     @State private var isPinned = false
+    @State private var isScrolling = false
+    @State private var isLiveResizing = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -355,6 +357,7 @@ struct ClipboardHistoryView: View {
                 card: { item in popupCard(for: item) },
                 header: { _ in EmptyView() },
                 onDisplay: { item in
+                    viewModel.loadMoreIfNeeded(reaching: item)
                     guard item.kind == .image else { return }
                     thumbnailPreheater.mounted(item.viewportIdentity)
                 },
@@ -371,6 +374,12 @@ struct ClipboardHistoryView: View {
                 },
                 onDoubleClick: { item in viewModel.paste(item) }
             )
+            .modifier(GalleryInteractionTracker(
+                isScrolling: $isScrolling,
+                isLiveResizing: $isLiveResizing
+            ))
+            .environment(\.galleryIsScrolling, isScrolling)
+            .environment(\.galleryDefersThumbnailLoading, isLiveResizing)
             .background(ClipboardHistoryScrollBridge())
         }
     }
@@ -409,7 +418,7 @@ struct ClipboardHistoryView: View {
                 .controlSize(.small)
                 .disabled(viewModel.pasteQueueItems.isEmpty)
 
-                Button("粘贴") {
+                Button(ClipboardHistoryCoordinator.shared.supportsDirectPaste ? "粘贴" : "复制并返回") {
                     viewModel.pasteSelected()
                 }
                 .buttonStyle(.borderedProminent)

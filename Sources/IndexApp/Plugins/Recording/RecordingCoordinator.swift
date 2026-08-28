@@ -126,7 +126,9 @@ final class RecordingCoordinator {
         }
         guard case .idle = recorder.state, !overlay.isActive else { return }
         // 截图流程进行中不叠加录屏，反过来 CaptureCoordinator.begin 也会查我们。
-        guard !CaptureCoordinator.shared.isBusy else { return }
+        guard !CaptureCoordinator.shared.isBusy,
+              !ScrollCaptureController.shared.isActive
+        else { return }
         guard MacScreenCapturer.shared.isPermissionGranted else {
             _ = MacScreenCapturer.shared.requestPermission()
             presentInfo(

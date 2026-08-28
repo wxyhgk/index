@@ -22,21 +22,27 @@ struct SearchResultRow: View {
             timeLabel
         }
         .padding(.horizontal, DS.s3)
-        .frame(height: 52)
+        .frame(height: SearchPanelMetrics.resultRowHeight)
         .background {
             if isSelected {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.primary.opacity(0.08))
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .fill(SearchPanelMetrics.selectedRowFill)
             } else if isHovering {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.primary.opacity(0.04))
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .fill(SearchPanelMetrics.hoveredRowFill)
             }
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onHover { isHovering = $0 }
-        .animation(reduceMotion ? .none : .easeOut(duration: 0.1), value: isHovering)
-        .animation(reduceMotion ? .none : .easeOut(duration: 0.1), value: isSelected)
+        .animation(
+            reduceMotion ? .none : .easeOut(duration: SearchPanelMetrics.hoverDuration),
+            value: isHovering
+        )
+        .animation(
+            reduceMotion ? .none : .easeOut(duration: SearchPanelMetrics.hoverDuration),
+            value: isSelected
+        )
     }
 
     @ViewBuilder
@@ -45,33 +51,42 @@ struct SearchResultRow: View {
             Image(nsImage: thumbnail)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .frame(width: 36, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(
+                    width: SearchPanelMetrics.thumbnailSide,
+                    height: SearchPanelMetrics.thumbnailSide
+                )
+                .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
         } else {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(.primary.opacity(0.05))
-                .frame(width: 36, height: 36)
+            RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                .fill(SearchPanelMetrics.thumbnailPlaceholderFill)
+                .frame(
+                    width: SearchPanelMetrics.thumbnailSide,
+                    height: SearchPanelMetrics.thumbnailSide
+                )
                 .overlay {
                     Image(systemName: entry.kindIcon)
-                        .font(.system(size: 15, weight: .thin))
+                        .font(.system(size: DS.font15, weight: .thin))
                         .foregroundStyle(.secondary)
                 }
         }
     }
 
     private var textColumn: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: SearchPanelMetrics.textColumnSpacing) {
             Text(entry.title)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: DS.font13, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             if !entry.subtitle.isEmpty {
-                HStack(spacing: 3) {
+                HStack(spacing: SearchPanelMetrics.metadataSpacing) {
                     Circle()
                         .fill(.quaternary)
-                        .frame(width: 2.5, height: 2.5)
+                        .frame(
+                            width: SearchPanelMetrics.subtitleBulletSide,
+                            height: SearchPanelMetrics.subtitleBulletSide
+                        )
                     Text(entry.subtitle)
-                        .font(.system(size: 11, weight: .light))
+                        .font(.system(size: DS.font11, weight: .light))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -80,12 +95,12 @@ struct SearchResultRow: View {
     }
 
     private var timeLabel: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: SearchPanelMetrics.metadataSpacing) {
             Image(systemName: "clock")
-                .font(.system(size: 9, weight: .thin))
+                .font(.system(size: DS.font9, weight: .thin))
                 .foregroundStyle(.quaternary)
             Text(entry.timestamp, format: .relative(presentation: .named))
-                .font(.system(size: 10, weight: .light))
+                .font(.system(size: DS.font10, weight: .light))
                 .foregroundStyle(.quaternary)
                 .monospacedDigit()
         }

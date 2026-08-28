@@ -118,11 +118,16 @@ extension CaptureActionRegistry {
     /// 注入式：装配根（AppDelegate）传全量设置，预览/测试传 `FakeStyleStore`。
     static func registerBuiltins(
         into registry: CaptureActionRegistry,
-        styleStore: any StyleStore
+        styleStore: any StyleStore,
+        includePluginActions: Bool = true
     ) {
-        registry.register(PinAction(capture: styleStore, annotationStyle: styleStore))
-        registry.register(RecordAction())
-        registry.register(ScrollCaptureAction())
+        // App 启动时由插件分别登记；独立预览/单测没有 PluginHost，默认补齐动作，
+        // 保持这条装配 API 能构造一套完整工具条。
+        if includePluginActions {
+            registry.register(PinAction(capture: styleStore, annotationStyle: styleStore))
+            registry.register(RecordAction())
+            registry.register(ScrollCaptureAction())
+        }
         registry.register(CopyAction())
         registry.register(SaveAction())
         registry.register(CopyTextAction())

@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import MarkdownUI
 
 extension Notification.Name {
     static let agentPanelWillShow = Notification.Name("agentPanelWillShow")
@@ -48,7 +47,7 @@ final class AgentPanel: NSPanel {
 
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            contentRect: NSRect(origin: .zero, size: AgentUIMetrics.panelDefaultSize),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -60,7 +59,7 @@ final class AgentPanel: NSPanel {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = false
-        setContentSize(NSSize(width: 640, height: 480))
+        setContentSize(AgentUIMetrics.panelDefaultSize)
 
         let view = AgentChatView()
         let hosting = NSHostingController(rootView: view)
@@ -176,9 +175,9 @@ struct AgentChatView: View {
             // 消息列表
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 12) {
+                    LazyVStack(spacing: DS.s3) {
                         ForEach(viewModel.messages) { message in
-                            MessageBubble(message: message)
+                            AgentMessageBubble(presentation: AgentMessagePresentation(message: message))
                                 .id(message.id)
                         }
                         if viewModel.isThinking {
@@ -186,7 +185,7 @@ struct AgentChatView: View {
                                 .id("thinking")
                         }
                     }
-                    .padding(16)
+                    .padding(DS.s4)
                 }
                 .onChange(of: viewModel.messages.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.2)) {
@@ -202,7 +201,7 @@ struct AgentChatView: View {
             Divider()
 
             // 输入区
-            HStack(spacing: 8) {
+            HStack(spacing: DS.s2) {
                 TextField("输入问题…", text: $viewModel.input, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...4)
@@ -219,149 +218,13 @@ struct AgentChatView: View {
                 .buttonStyle(.plain)
                 .disabled(viewModel.input.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.isThinking)
             }
-            .padding(12)
+            .padding(DS.s3)
         }
-        .frame(minWidth: 400, minHeight: 300)
-        .background(Color(nsColor: .textBackgroundColor))
-    }
-}
-
-// MARK: - 消息气泡
-
-struct MessageBubble: View {
-    let message: AgentMessage
-
-    var body: some View {
-        switch message.role {
-        case .user:
-            HStack {
-                Spacer()
-                Text(message.text)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(DS.accent.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-
-        case .assistant:
-            VStack(alignment: .leading, spacing: 8) {
-                // 工具调用卡片
-                ForEach(message.toolCalls) { call in
-                    ToolCallCard(call: call)
-                }
-
-                // 回答（Markdown 渲染）
-                if !message.text.isEmpty {
-                    if message.toolCalls.isEmpty {
-                        // 无工具调用时保持气泡样式
-                        Markdown(message.text)
-                            .markdownTheme(.gitHub)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(nsColor: .controlBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    } else {
-                        // 有工具调用时回答直接展示（工具卡片已有独立背景）
-                        Markdown(message.text)
-                            .markdownTheme(.gitHub)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - 工具调用卡片
-
-struct ToolCallCard: View {
-    let call: AgentMessage.ToolCallInfo
-
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // 头部：状态图标 + 工具名 + 展开按钮
-            HStack(spacing: 6) {
-                statusIcon
-                Text(call.name)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .monospaced()
-                Spacer()
-                if call.status != .running {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard call.status != .running else { return }
-                withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
-            }
-
-            // 展开内容：参数 + 结果
-            if isExpanded && call.status != .running {
-                VStack(alignment: .leading, spacing: 6) {
-                    if !call.args.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("参数")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            Text(call.args)
-                                .font(.caption2)
-                                .monospaced()
-                                .foregroundStyle(.secondary)
-                                .lineLimit(3)
-                        }
-                    }
-                    if let result = call.result {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("结果")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            Text(result)
-                                .font(.caption2)
-                                .monospaced()
-                                .foregroundStyle(.secondary)
-                                .lineLimit(5)
-                        }
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
-            }
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
+        .frame(
+            minWidth: AgentUIMetrics.chatMinimumSize.width,
+            minHeight: AgentUIMetrics.chatMinimumSize.height
         )
-    }
-
-    @ViewBuilder
-    private var statusIcon: some View {
-        switch call.status {
-        case .running:
-            ProgressView()
-                .controlSize(.mini)
-        case .done:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.green)
-        case .error:
-            Image(systemName: "xmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.red)
-        }
+        .background(Color(nsColor: .textBackgroundColor))
     }
 }
 
@@ -489,7 +352,7 @@ final class AgentChatViewModel: ObservableObject {
 
     private func saveMessage(role: String, text: String, toolCalls: [AgentMessage.ToolCallInfo]?) {
         guard let conversationID else { return }
-        let json = toolCalls?.isEmpty == true ? nil : Self.toolCallsJSON(toolCalls ?? [])
+        let json = AgentToolCallCodec.encode(toolCalls ?? [])
         do {
             try AgentConversationStore.shared.appendMessage(
                 conversationID: conversationID,
@@ -502,20 +365,4 @@ final class AgentChatViewModel: ObservableObject {
         }
     }
 
-    private static func toolCallsJSON(_ calls: [AgentMessage.ToolCallInfo]) -> String? {
-        guard !calls.isEmpty else { return nil }
-        let items = calls.map { call -> [String: Any] in
-            var dict: [String: Any] = ["name": call.name, "args": call.args]
-            switch call.status {
-            case .running: dict["status"] = "running"
-            case .done: dict["status"] = "done"
-            case .error: dict["status"] = "error"
-            }
-            if let result = call.result { dict["result"] = result }
-            return dict
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: items),
-              let str = String(data: data, encoding: .utf8) else { return nil }
-        return str
-    }
 }

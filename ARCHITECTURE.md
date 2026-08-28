@@ -59,7 +59,7 @@
 
 ## 2. 扩展点契约
 
-系统现有**八个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
+系统现有**九个扩展点**。功能一律挂在其中之一上，不改中间的编排代码。
 
 ### 2.1 入口：`CaptureSource` —— 像素怎么进来
 
@@ -211,18 +211,33 @@ struct EffectDescriptor {
 ### 2.7 顶层导航：`GalleryDestination` —— 图库窗口的一个「选项」（2026-08 新增）
 
 ```swift
+struct GalleryDestinationContext {
+    let store: ShotStore
+    let viewModel: GalleryViewModel
+    let chrome: GalleryDestinationChromeState
+}
+
 protocol GalleryDestination {
     var id: String { get }          // 稳定标识；选中状态按它持久化，插新选项不会让位置漂移
     var title: String { get }
     var symbol: String { get }
     var order: Int { get }
-    func badge() -> Int?            // 可选计数
-    func content() -> AnyView       // 中间内容
-    func inspector() -> AnyView?    // 右侧面板；nil = 不要右侧栏，宽度让给中间
+    var defaultChrome: GalleryDestinationChrome { get }
+    func badge(context: GalleryDestinationContext) -> Int?
+    func content(context: GalleryDestinationContext) -> AnyView
+    func inspector(context: GalleryDestinationContext) -> AnyView?
 }
 ```
 
 **规范**：新增顶层功能（录屏、暂存、回收站…）= 一个实现 + 注册一行。容器、布局、选中态不动。
+页面必须从 `context` 获取图库 Store、查询会话与底栏能力通道；不得在 `content` / `inspector`
+里重新寻找 `ShotStore.shared`、`GalleryViewModel.shared`，也不得让底栏反向读取页面私有导航状态。
+中间内容与 Inspector 需要同步的选中/筛选状态，由 destination 持有一个页面 session 并显式传给两边。
+
+`GalleryDestinationChrome` 是页面能力快照，统一声明导入、Markdown、截图、搜索、布局、
+Inspector 与缩略图大小七类窗口控件。带子 Tab 或二级 route 的页面必须在状态变化时向
+`context.chrome` 发布新快照；窗口外壳只消费快照，不得再按 destination ID 或 route 类型
+写分支。`showsInspector == false` 时 Inspector 不进入视图树，也不保留空白占位。
 
 立这个扩展点的起因：侧边栏此前把四组筛选行硬编码在一个 500 行的视图里，加一组要改视图 + 加计数 + 加折叠状态 + 改布局，而且列表长度随库里的数据在 4 到 20 行之间浮动。**筛选行是数据的切片，选项是功能的入口**——把后者抽出来之后，导航的**呈现方式**（顶栏分段控件 / 左侧栏）成了容器的实现细节，换过一次只动了十几行，两个内建选项一个字没改。
 
@@ -277,6 +292,21 @@ Provider 的结构化结果先转换为 `SelectionAIResultDocument`，统一给�
 
 **规范**：接一种模型服务 = 新增一个 Provider 实现并在 App 装配；Tool Palette、结果
 浮层和存储只认识领域契约，不得直接 import 某家模型 SDK 或拼接供应商请求。
+
+### 2.9 功能包：`Plugin` —— 一组能力如何整体启停（2026-08 新增目录）
+
+`Plugin` 仍用 `activate/deactivate` 往各注册表贡献动作、处理器、快捷键与内容模式；内置插件的
+ID、名称、版本、图标、说明和构造器统一登记在 `BuiltinPluginCatalog`，启动装配与设置页不得再
+维护两份手写清单。`BuiltinPluginHost` 持有本次 App 生命周期的实例和上下文，并只对明确声明
+`supportsLiveToggle`、已经实现完整清理的插件执行当前进程即时启停。
+
+`InputSearchPlugin` 是第一个完整即时启停插件：它拥有兼容微信/苹果拼音的已提交文本观察器；
+停用插件必须立即停止辅助功能轮询、取消查询并关闭结果面板。实验性的 `IndexInputMethod` 是由
+macOS Text Services 启动的独立 InputMethodKit bundle，不得伪装成主 App 进程内对象；后续只能
+作为该插件管理的可选外部组件，通过 App Group/XPC 请求主 App 的检索服务。
+
+**规范**：新增内置插件 = 一个 `Plugin` 实现 + `BuiltinPluginCatalog` 注册一项。设置页与
+`AppDelegate` 不得直接构造具体插件；未实现对称 unregister 的插件不得声称支持即时停用。
 
 ---
 

@@ -22,6 +22,7 @@ final class EditorModel: ObservableObject {
 
     private let store: ShotStore
     private let styleStore: any AnnotationStylePreferences
+    private let pageCommands: GalleryPageCommands
 
     // MARK: 图像
 
@@ -59,10 +60,16 @@ final class EditorModel: ObservableObject {
     private var autoSaveTask: Task<Void, Never>?
     private var annotationSubscription: AnyCancellable?
 
-    init(shot: Shot, store: ShotStore = .shared, styleStore: any AnnotationStylePreferences) {
+    init(
+        shot: Shot,
+        store: ShotStore = .shared,
+        styleStore: any AnnotationStylePreferences,
+        pageCommands: GalleryPageCommands = .live
+    ) {
         self.shot = shot
         self.store = store
         self.styleStore = styleStore
+        self.pageCommands = pageCommands
         self.annotation = AnnotationState(styleStore: styleStore)
         annotationSubscription = annotation.objectWillChange.sink { [weak self] _ in
             // ⚠️ **必须转发**。视图观察的是 model，而 `annotation` 只是模型上的一个
@@ -220,6 +227,6 @@ final class EditorModel: ObservableObject {
 
     func requestReturnToGallery() {
         flushSave()
-        GalleryWindowController.shared.mode.returnToGallery()
+        pageCommands.returnToGallery()
     }
 }

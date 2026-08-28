@@ -16,6 +16,15 @@ APP_IDENTITY="${INDEX_APP_STORE_APP_IDENTITY:-}"
 INSTALLER_IDENTITY="${INDEX_APP_STORE_INSTALLER_IDENTITY:-}"
 BASE_ENTITLEMENTS="Resources/IndexAppStore.entitlements"
 
+# 商店包必须能回溯到明确源码状态。开发中确实需要验证未提交改动时可以显式
+# 覆盖，但正式上传不再悄悄把 dirty worktree 打进不可追踪的 pkg。
+if [[ "${INDEX_ALLOW_DIRTY_APP_STORE:-0}" != "1" ]] \
+    && [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+    echo "工作区存在未提交改动，拒绝制作正式商店包。" >&2
+    echo "仅本地验证可显式设置 INDEX_ALLOW_DIRTY_APP_STORE=1。" >&2
+    exit 1
+fi
+
 assert_no_quarantine() {
     local root="$1"
     local item
@@ -57,10 +66,19 @@ if [[ -z "$INSTALLER_IDENTITY" ]]; then
 fi
 
 echo "==> 使用仓库标准流程组装 Release App"
-./build.sh release
+INDEX_BUILD_INPUT_METHOD=0 ./build.sh release
 
 if [[ ! -d "$SOURCE_APP" ]]; then
     echo "Release App 不存在: $SOURCE_APP" >&2
+    exit 1
+fi
+
+SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+SOURCE_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Resources/Info.plist)"
+BUILT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SOURCE_APP/Contents/Info.plist")"
+BUILT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$SOURCE_APP/Contents/Info.plist")"
+if [[ "$BUILT_VERSION" != "$SOURCE_VERSION" || "$BUILT_BUILD" != "$SOURCE_BUILD" ]]; then
+    echo "Release App 版本与源码不一致: 源码 $SOURCE_VERSION($SOURCE_BUILD)，App $BUILT_VERSION($BUILT_BUILD)" >&2
     exit 1
 fi
 
@@ -154,5 +172,5 @@ else
 fi
 
 echo
-echo "完成: $OUTPUT_DIR/$PRODUCT_NAME.pkg"
+echo "完成: $OUTPUT_DIR/$PRODUCT_NAME.pkg  $SOURCE_VERSION($SOURCE_BUILD)"
 echo "下一步：用 Transporter 登录同一开发者账号，添加该 pkg 并交付。"

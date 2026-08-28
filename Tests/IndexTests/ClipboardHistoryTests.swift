@@ -66,6 +66,58 @@ final class ClipboardHistoryTests: XCTestCase {
         XCTAssertEqual(filtered.first?.text, "apple pie")
     }
 
+    func testClipboardFTSMigrationAndSearchStaySynchronized() throws {
+        let hasTable = try db.read { database in
+            try database.tableExists("clipboardHistoryFts")
+        }
+        XCTAssertTrue(hasTable)
+
+        try store.record(
+            kind: .text,
+            contentHash: "fts-sync",
+            text: "opencode installation guide",
+            assetPath: nil,
+            summary: "developer note",
+            sourceApp: nil
+        )
+        let inserted = try XCTUnwrap(store.recent(limit: 1).first)
+        XCTAssertEqual(try store.recent(limit: 10, query: "opencode").map(\.id), [inserted.id])
+
+        store.rename("renamed searchable card", for: inserted)
+        XCTAssertEqual(try store.recent(limit: 10, query: "searchable").map(\.id), [inserted.id])
+    }
+
+    func testStableCursorPaginationHasNoDuplicates() throws {
+        for index in 0..<205 {
+            try store.record(
+                kind: .text,
+                contentHash: "page-\(index)",
+                text: "item \(index)",
+                assetPath: nil,
+                summary: "item \(index)",
+                sourceApp: nil
+            )
+        }
+
+        let first = try store.page(limit: 100)
+        let firstTail = try XCTUnwrap(first.last)
+        let second = try store.page(
+            limit: 100,
+            before: .init(capturedAt: firstTail.capturedAt, id: try XCTUnwrap(firstTail.id))
+        )
+        let secondTail = try XCTUnwrap(second.last)
+        let third = try store.page(
+            limit: 100,
+            before: .init(capturedAt: secondTail.capturedAt, id: try XCTUnwrap(secondTail.id))
+        )
+
+        let ids = (first + second + third).compactMap(\.id)
+        XCTAssertEqual(first.count, 100)
+        XCTAssertEqual(second.count, 100)
+        XCTAssertEqual(third.count, 5)
+        XCTAssertEqual(Set(ids).count, 205)
+    }
+
     func testDeleteRemovesAsset() throws {
         let data = Data("fake-png-bytes".utf8)
         let assetPath = try store.writeImageAsset(data, sha: "imgsha1")

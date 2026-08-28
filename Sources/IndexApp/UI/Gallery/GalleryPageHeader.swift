@@ -18,16 +18,19 @@ enum GalleryPageHeaderStyle {
 
 struct GalleryPageHeader: View {
 
+    @ObservedObject private var store: ShotStore
     @ObservedObject private var viewModel: GalleryViewModel
     private let scope: GalleryContentScope
     private let style: GalleryPageHeaderStyle
 
+    @MainActor
     init(
         store: ShotStore = .shared,
         viewModel: GalleryViewModel? = nil,
         scope: GalleryContentScope = .library,
         style: GalleryPageHeaderStyle = .standard
     ) {
+        _store = ObservedObject(wrappedValue: store)
         let resolvedViewModel = viewModel
             ?? .resolve(for: store)
         _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
@@ -51,12 +54,12 @@ struct GalleryPageHeader: View {
     private var standardHeader: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.s3) {
             Text(title)
-                .font(.largeTitle.weight(.bold))
+                .font(.title2.weight(.semibold))
                 .lineLimit(1)
             clearFilterButton
             Spacer(minLength: DS.s2)
             // displayShots 是内存里的数组，count 是 O(1)，可以留在 body 里。
-            Text("\(visibleShots.count) 个项目")
+            Text("\(visibleCount) 个项目")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -71,12 +74,12 @@ struct GalleryPageHeader: View {
             VStack(alignment: .leading, spacing: DS.s1) {
                 HStack(alignment: .firstTextBaseline, spacing: DS.s2) {
                     Text(title)
-                        .font(.largeTitle.weight(.bold))
+                        .font(.title2.weight(.semibold))
                         .lineLimit(1)
                     clearFilterButton
                 }
 
-                Text("\(visibleShots.count) 个项目")
+                Text("\(visibleCount) 个项目")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -155,6 +158,17 @@ struct GalleryPageHeader: View {
 
     private var visibleShots: [Shot] {
         viewModel.displayShots
+    }
+
+    /// 固定录屏入口在异步换页完成前也能直接读取准确总数，避免页头先显示
+    /// 全图库数量、下一帧再跳成录屏数量。搜索/语义结果仍使用当前内存列表。
+    private var visibleCount: Int {
+        if scope == .recordings,
+           viewModel.searchText.isEmpty,
+           !viewModel.semanticMode {
+            return store.recordingCount()
+        }
+        return visibleShots.count
     }
 
 }

@@ -97,12 +97,12 @@ extension GalleryGrid {
                 // 双击动作由 ContentMode 描述（= Emacs major mode），从 PluginRegistry 取。
                 let mode = PluginRegistry.shared.mode(for: ContentKind(rawValue: shot.contentKind) ?? .image)
                 if mode.doubleClick == .openMarkdownEditor {
-                    GalleryWindowController.shared.mode.openMarkdownEditor(shotID: shot.id)
+                    pageCommands.openMarkdownEditor(shotID: shot.id)
                     return
                 }
-                RecordingAssetActions.performPrimary(
-                    recordingAsset(for: shot), shotID: shot.id,
-                    presenter: GalleryWindowController.shared
+                pageCommands.performPrimaryRecordingAction(
+                    recordingAsset(for: shot),
+                    shotID: shot.id
                 )
             }
         )
@@ -153,9 +153,7 @@ extension GalleryGrid {
         }
         // SwiftUI TapGesture 不会自动移走 field editor 的 firstResponder，
         // 若搜索框仍是 firstResponder，后续 ⌘C 会被本应让位的文本路径误判。
-        if GalleryWindowController.shared.window?.firstResponder is NSTextView {
-            GalleryWindowController.shared.window?.makeFirstResponder(nil)
-        }
+        pageCommands.clearTextFocus()
     }
 
     /// 从 mouseDown 时刻的缓存取修饰键（MouseModifierCache），
@@ -211,8 +209,10 @@ extension GalleryGrid {
         if let id = shot.id {
             collectionMenu(for: [id])
         }
-        Button("编辑标注") { GalleryWindowController.shared.mode.openEditor(shotID: shot.id) }
-        Button("钉在桌面") { pin(shot) }
+        Button("编辑标注") { pageCommands.openEditor(shotID: shot.id) }
+        if BuiltinPluginHost.shared.isActive("pin") {
+            Button("钉在桌面") { pin(shot) }
+        }
         Button("复制图片") { copy(shot) }
             .disabled(batchActivity.isBusy)
         Divider()

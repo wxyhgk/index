@@ -47,7 +47,7 @@ struct PluginSettingsView: View {
                 .font(.title3.weight(.semibold))
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: DS.s3)], spacing: DS.s3) {
-                ForEach(knownPlugins, id: \.id) { plugin in
+                ForEach(BuiltinPluginCatalog.descriptors) { plugin in
                     PluginCard(
                         plugin: plugin,
                         isEnabled: isPluginEnabled(plugin.id),
@@ -63,8 +63,12 @@ struct PluginSettingsView: View {
     private var agentSection: some View {
         VStack(alignment: .leading, spacing: DS.s3) {
             agentHeader
-            if settings.plugin.agentEnabled {
+            if isPluginEnabled("agent") {
                 agentConfigPanel
+            } else {
+                Text("在上方启用 Agent 插件后可配置模型。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -73,14 +77,10 @@ struct PluginSettingsView: View {
         HStack(spacing: DS.s2) {
             Image(systemName: "sparkles")
                 .font(.title3)
-                .foregroundStyle(settings.plugin.agentEnabled ? DS.accent : .secondary)
+                .foregroundStyle(isPluginEnabled("agent") ? DS.accent : .secondary)
             Text("Agent")
                 .font(.title3.weight(.semibold))
             Spacer()
-            Toggle("", isOn: $settings.plugin.agentEnabled)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
         }
     }
 
@@ -120,7 +120,7 @@ struct PluginSettingsView: View {
     }
 
     private var footerText: some View {
-        Text("插件是 Index 的功能模块。关闭的插件不会在启动时激活，已激活的插件提供的快捷键、工具和内容类型将不可用。Agent 是特殊插件 —— 它能调用其他插件的能力，通过 LLM 对话帮你操作软件。")
+        Text("插件是 Index 的功能模块。输入即检索支持当前进程即时启停；其他插件关闭后不会在下次启动时激活。Agent 能调用其他插件的能力，通过 LLM 对话帮你操作软件。")
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -128,45 +128,25 @@ struct PluginSettingsView: View {
 
     // MARK: - 插件数据
 
-    fileprivate struct PluginInfo {
-        let id: String
-        let displayName: String
-        let version: String
-        let icon: String
-        let description: String
-    }
-
-    private var knownPlugins: [PluginInfo] {
-        [
-            PluginInfo(id: "capture", displayName: "截图", version: "1.0", icon: "camera", description: "区域截图、滚动截图、延时截图"),
-            PluginInfo(id: "recording", displayName: "录屏", version: "1.0", icon: "video", description: "屏幕录制、GIF 导出、步骤指南"),
-            PluginInfo(id: "pin", displayName: "钉图", version: "1.0", icon: "pin", description: "截图钉在桌面上，支持穿透和缩放"),
-            PluginInfo(id: "shelf", displayName: "暂存架", version: "1.0", icon: "tray", description: "截图后浮出小卡片，拖出即 PNG"),
-            PluginInfo(id: "agent", displayName: "Agent", version: "1.0", icon: "sparkles", description: "AI 对话，自动调用工具查询截图和管理配置"),
-        ]
-    }
-
     private var agentPlugin: AgentPlugin { AgentPlugin.shared }
 
     // MARK: - 启停逻辑
 
     private func isPluginEnabled(_ id: String) -> Bool {
-        let enabled = settings.enabledPluginIDs
-        if enabled.isEmpty { return true }
-        return enabled.contains(id)
+        settings.enabledPluginIDs.contains(id)
     }
 
     private func setPluginEnabled(_ id: String, _ isOn: Bool) {
-        var enabled = settings.enabledPluginIDs
-        if enabled.isEmpty {
-            enabled = knownPlugins.map(\.id)
-        }
+        var prefs = settings.plugin
+        var enabled = prefs.enabledPluginIDs
         if isOn {
             if !enabled.contains(id) { enabled.append(id) }
         } else {
             enabled.removeAll { $0 == id }
         }
-        settings.plugin.enabledPluginIDs = enabled
+        prefs.enabledPluginIDs = enabled
+        if id == "agent" { prefs.agentEnabled = isOn }
+        settings.plugin = prefs
     }
 
     // MARK: - 防抖落盘
@@ -188,7 +168,7 @@ struct PluginSettingsView: View {
 // MARK: - 插件卡片
 
 private struct PluginCard: View {
-    let plugin: PluginSettingsView.PluginInfo
+    let plugin: BuiltinPluginDescriptor
     let isEnabled: Bool
     let onToggle: (Bool) -> Void
 
@@ -197,7 +177,7 @@ private struct PluginCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.s2) {
             HStack(spacing: DS.s2) {
-                Image(systemName: plugin.icon)
+                Image(systemName: plugin.symbolName)
                     .font(.title3)
                     .foregroundStyle(isEnabled ? DS.accent : .secondary)
                     .frame(width: 28, height: 28)
@@ -227,7 +207,7 @@ private struct PluginCard: View {
                 .controlSize(.small)
             }
 
-            Text(plugin.description)
+            Text(plugin.summary)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)

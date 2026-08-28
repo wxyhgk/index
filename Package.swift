@@ -5,7 +5,9 @@ let package = Package(
     name: "Index",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "IndexApp", targets: ["IndexApp"])
+        .executable(name: "IndexApp", targets: ["IndexApp"]),
+        .executable(name: "IndexInputMethod", targets: ["IndexInputMethod"]),
+        .library(name: "IndexSearchCore", targets: ["IndexSearchCore"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
@@ -14,9 +16,36 @@ let package = Package(
         .package(url: "https://github.com/MacPaw/OpenAI.git", from: "0.5.1")
     ],
     targets: [
+        .target(
+            name: "AOSPPinyinIME",
+            path: "Vendor/AOSPPinyinIME",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("include")
+            ]
+        ),
+        .target(
+            name: "IndexSearchCore",
+            dependencies: [
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Sources/IndexSearchCore",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
+        .executableTarget(
+            name: "IndexInputMethod",
+            dependencies: ["IndexSearchCore", "AOSPPinyinIME"],
+            path: "Sources/IndexInputMethod",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
         .executableTarget(
             name: "IndexApp",
             dependencies: [
+                "IndexSearchCore",
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "MarkdownEngine", package: "swift-markdown-engine"),
                 .product(name: "MarkdownEngineLatex", package: "swift-markdown-engine"),
@@ -47,6 +76,8 @@ let package = Package(
             name: "IndexTests",
             dependencies: [
                 "IndexApp",
+                "IndexSearchCore",
+                "AOSPPinyinIME",
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Tests/IndexTests",

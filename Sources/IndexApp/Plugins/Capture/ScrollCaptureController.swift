@@ -20,6 +20,11 @@ final class ScrollCaptureController {
     private let pipeline: CapturePipeline
     private let galleryPresenter: any GalleryPresenting
     private var session: ScrollCaptureSession?
+    private var preparationTask: Task<Void, Never>?
+
+    var isActive: Bool {
+        session != nil || preparationTask != nil || overlay.isActive
+    }
 
     /// 采集期间临时监听 ⎋ 用的绑定名（参考延时截图的 bindTransient 用法）。
     private static let cancelHotKeyName = "cancel-scroll-capture"
@@ -51,7 +56,12 @@ final class ScrollCaptureController {
 
     /// 供截图工具条复用已选区域：直接以该区域启动滚动采集
     func begin(with region: CGRect, display: DisplayInfo) {
-        guard session == nil, !overlay.isActive else { return }
+        guard session == nil,
+              preparationTask == nil,
+              !overlay.isActive,
+              !ScreenRecorder.shared.isRecording,
+              !RecordingCoordinator.shared.isSelecting
+        else { return }
         let previousApp = SystemNavigator.frontmostApplication
         let ctx = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         guard let dummy = ctx.makeImage() else { return }
@@ -73,7 +83,12 @@ final class ScrollCaptureController {
             session.finish()
             return
         }
-        guard !overlay.isActive else { return }
+        guard preparationTask == nil,
+              !overlay.isActive,
+              !CaptureCoordinator.shared.isBusy,
+              !ScreenRecorder.shared.isRecording,
+              !RecordingCoordinator.shared.isSelecting
+        else { return }
 
         guard MacScreenCapturer.shared.isPermissionGranted else {
             CaptureCoordinator.shared.requestPermissionThenPrompt()
@@ -83,7 +98,9 @@ final class ScrollCaptureController {
             return
         }
 
-        Task {
+        preparationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.preparationTask = nil }
             do {
                 // 复用现有冻结选区：先定格全部屏幕，再让用户框选滚动区域。
                 let snapshots = try await source.makeSnapshots()
@@ -105,6 +122,7 @@ final class ScrollCaptureController {
                 }
                 guard didBegin else { throw CaptureError.displayTopologyChanged }
             } catch {
+                guard !Task.isCancelled else { return }
                 NSLog("[Index] 滚动截图准备失败: \(error)")
             }
         }

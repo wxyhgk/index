@@ -43,14 +43,14 @@ struct SearchPreviewPanel: View {
                 }
                 .overlay(alignment: .bottomTrailing) {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 10, weight: .thin))
+                        .font(.system(size: DS.font10, weight: .thin))
                         .foregroundStyle(.tertiary)
                         .padding(DS.s2)
                 }
         } else if let text = viewModel.previewText {
             ScrollView {
                 Text(text)
-                    .font(.system(size: 12, weight: .light, design: .monospaced))
+                    .font(.system(size: DS.font12, weight: .light, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(DS.s3)
@@ -59,10 +59,13 @@ struct SearchPreviewPanel: View {
         } else {
             VStack(spacing: DS.s2) {
                 Image(systemName: "photo.on.rectangle.angled")
-                    .font(.system(size: 22, weight: .ultraLight))
+                    .font(.system(
+                        size: SearchPanelMetrics.previewPlaceholderIconSize,
+                        weight: .ultraLight
+                    ))
                     .foregroundStyle(.quaternary)
                 Text("预览")
-                    .font(.system(size: 11, weight: .light))
+                    .font(.system(size: DS.font11, weight: .light))
                     .foregroundStyle(.tertiary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,11 +83,11 @@ struct SearchPreviewPanel: View {
                 metaChip(for: entry)
                 Spacer()
                 if let app = sourceApp(for: entry) {
-                    HStack(spacing: 3) {
+                    HStack(spacing: SearchPanelMetrics.metadataSpacing) {
                         Image(systemName: "app.dashed")
-                            .font(.system(size: 9, weight: .thin))
+                            .font(.system(size: DS.font9, weight: .thin))
                         Text(app)
-                            .font(.system(size: 10, weight: .light))
+                            .font(.system(size: DS.font10, weight: .light))
                     }
                     .foregroundStyle(.quaternary)
                     .lineLimit(1)
@@ -99,11 +102,11 @@ struct SearchPreviewPanel: View {
     private func metaChip(for entry: SearchEntry) -> some View {
         let meta = viewModel.metaLine(for: entry)
         if !meta.isEmpty {
-            HStack(spacing: 3) {
+            HStack(spacing: SearchPanelMetrics.metadataSpacing) {
                 Image(systemName: metaIcon(for: entry))
-                    .font(.system(size: 9, weight: .thin))
+                    .font(.system(size: DS.font9, weight: .thin))
                 Text(meta)
-                    .font(.system(size: 10, weight: .light))
+                    .font(.system(size: DS.font10, weight: .light))
             }
             .foregroundStyle(.quaternary)
             .lineLimit(1)
@@ -136,7 +139,7 @@ struct SearchPreviewPanel: View {
                 viewModel.copySelected()
                 justCopied = true
                 Task {
-                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    try? await Task.sleep(for: SearchPanelMetrics.copyFeedbackDelay)
                     justCopied = false
                 }
             }
@@ -150,7 +153,7 @@ struct SearchPreviewPanel: View {
                     viewModel.saveSelectedToLibrary()
                 }
 
-                actionButton(icon: "trash", help: "删除", tint: .red.opacity(0.6)) {
+                actionButton(icon: "trash", help: "删除", tint: SearchPanelMetrics.destructiveTint) {
                     viewModel.deleteSelected()
                 }
             }
@@ -158,11 +161,11 @@ struct SearchPreviewPanel: View {
             Spacer()
 
             if let entry = viewModel.selectedEntry {
-                HStack(spacing: 3) {
+                HStack(spacing: SearchPanelMetrics.metadataSpacing) {
                     Image(systemName: "clock")
-                        .font(.system(size: 9, weight: .thin))
+                        .font(.system(size: DS.font9, weight: .thin))
                     Text(entry.timestamp, format: .dateTime.hour().minute())
-                        .font(.system(size: 10, weight: .light))
+                        .font(.system(size: DS.font10, weight: .light))
                         .monospacedDigit()
                 }
                 .foregroundStyle(.quaternary)
@@ -174,7 +177,7 @@ struct SearchPreviewPanel: View {
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(.separator)
-                .frame(height: 0.5)
+                .frame(height: SearchPanelMetrics.hairlineWidth)
         }
     }
 
@@ -201,13 +204,16 @@ private struct ActionButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .thin))
+                .font(.system(size: DS.font13, weight: .thin))
                 .foregroundStyle(tint ?? .secondary)
-                .frame(width: 24, height: 24)
+                .frame(
+                    width: SearchPanelMetrics.actionButtonSide,
+                    height: SearchPanelMetrics.actionButtonSide
+                )
                 .background {
                     if hovering {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(.primary.opacity(0.06))
+                        RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                            .fill(SearchPanelMetrics.controlHoverFill)
                     }
                 }
         }

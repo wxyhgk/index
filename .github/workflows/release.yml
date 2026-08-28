@@ -61,23 +61,56 @@ jobs:
       - name: Run project checks
         run: ./scripts/check.sh
 
-      - name: Build preview app
+      - name: Import Developer ID certificate
         env:
-          INDEX_ALLOW_ADHOC: "1"
+          CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
-          ./build.sh release
+          if [[ -z "$CERTIFICATE_P12_BASE64" || -z "$CERTIFICATE_PASSWORD" ]]; then
+            echo "Missing Developer ID certificate secrets" >&2
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/index-signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          certificate="$RUNNER_TEMP/index-developer-id.p12"
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 -D > "$certificate"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          rm -f "$certificate"
+          echo "INDEX_RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
-          if [[ -d build/Index.app ]]; then
-            built_app="build/Index.app"
-          elif [[ -d build/Index.app ]]; then
-            # 允许手动重打 0.1.9 及更早的既有标签；旧源码的 build.sh
-            # 仍输出 Index.app，但公开附件必须统一展示为 Index.app。
-            built_app="build/Index.app"
-          else
+      - name: Build, notarize, and staple app
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_APP_SPECIFIC_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          if [[ -z "$NOTARY_APPLE_ID" || -z "$NOTARY_PASSWORD" || -z "$NOTARY_TEAM_ID" ]]; then
+            echo "Missing Apple notarization secrets" >&2
+            exit 1
+          fi
+          ./build.sh release
+          built_app="build/Index.app"
+          if [[ ! -d "$built_app" ]]; then
             echo "Release App was not produced" >&2
             exit 1
           fi
           codesign --verify --deep --strict "$built_app"
+
+          notary_archive="$RUNNER_TEMP/Index-notary.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$built_app" "$notary_archive"
+          xcrun notarytool submit "$notary_archive" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$built_app"
+          xcrun stapler validate "$built_app"
+          spctl --assess --type execute --verbose=2 "$built_app"
 
           archive="${{ steps.metadata.outputs.archive }}"
           package_root="$(mktemp -d)"
@@ -85,6 +118,13 @@ jobs:
           codesign --verify --deep --strict "$package_root/Index.app"
           ditto -c -k --sequesterRsrc --keepParent "$package_root/Index.app" "$archive"
           shasum -a 256 "$archive" > "$archive.sha256"
+
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          if [[ -n "${INDEX_RELEASE_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$INDEX_RELEASE_KEYCHAIN" || true
+          fi
 
       - name: Publish GitHub Release
         env:
@@ -97,7 +137,7 @@ jobs:
 
           此附件由 GitHub Actions 从版本标签自动构建。
 
-          > 当前为未公证预览版。首次运行如被 macOS 拦截，请在 Finder 中右键 App 并选择“打开”。
+          此附件已使用 Developer ID 签名、公证并 stapled，可直接移动到“应用程序”运行。
 
           下载 $ARCHIVE，解压后运行其中的 Index.app。
           EOF

@@ -388,6 +388,18 @@ enum AppDatabase {
             }
         }
 
+        // 剪贴板大库搜索：卡片层已经使用 NSCollectionView recycling，数据层也必须
+        // 避免 `%query%` 对十万行做全表扫描。短于 3 字符的查询仍由仓库回退 LIKE。
+        migrator.registerMigration("v15_clipboard_fts") { db in
+            try db.create(virtualTable: "clipboardHistoryFts", using: FTS5()) { t in
+                t.tokenizer = FTS5TokenizerDescriptor(components: ["trigram"])
+                t.synchronize(withTable: "clipboardHistory")
+                t.column("title")
+                t.column("summary")
+                t.column("text")
+            }
+        }
+
         return migrator
     }
 }

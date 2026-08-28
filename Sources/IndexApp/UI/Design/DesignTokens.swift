@@ -602,18 +602,18 @@ extension DS {
 
     enum Shell {
         /// 自绘顶栏高度。红绿灯（中心约 y=20）落在它上半部，logo 与搜索框垂直居中。
-        static let topBarHeight: CGFloat = 72
+        static let topBarHeight: CGFloat = 58
         /// 顶栏左侧安全区：红绿灯是系统画的，位置留系统默认，自绘内容从这里才开始。
         /// 三颗按钮右沿约 x=72，留 80 是给「窗口变大时按钮不动」的余量。
         static let trafficLightInset: CGFloat = 80
         /// 面板与窗口边缘的距离。
-        static let windowMargin: CGFloat = DS.s3
+        static let windowMargin: CGFloat = DS.s2
         /// 面板之间的缝。缝就是深度线索本身 —— 不要为了「多点内容」把它压到 8 以下。
-        static let panelGap: CGFloat = DS.s3
+        static let panelGap: CGFloat = DS.s2
         // 曾经还有一个 `sidebarWidth`(232)。顶层选项从左侧栏搬到顶栏的分段控件之后，
         // 左边整栏消失，这个 token 随之没有了使用者。
-        /// 右侧详情面板宽度（设计稿 370）。
-        static let inspectorWidth: CGFloat = 370
+        /// 右侧详情面板保持紧凑，给内容网格多留一列空间。
+        static let inspectorWidth: CGFloat = 320
         /// 搜索胶囊的最大宽度（设计稿 460）。窗口窄时它先让位。
         static let searchWidth: CGFloat = 460
         static let searchHeight: CGFloat = 34
@@ -621,8 +621,10 @@ extension DS {
         static let controlSide: CGFloat = 36
         /// 筛选胶囊行的高度（设计稿 34）。
         static let chipHeight: CGFloat = 34
-        /// 底部 bar 高度（搜索框 38 + 上下各 3pt）。
-        static let bottomBarHeight: CGFloat = 44
+        /// 底部工具栏总高度：搜索框上下各保留一个窗口边距。
+        /// 留白必须算进工具栏自身，不能只在外层补 bottom padding，
+        /// 否则控件只会在去掉底部留白前的局部区域里居中。
+        static let bottomBarHeight: CGFloat = searchHeight + (windowMargin * 2)
     }
 
     // MARK: - 悬停 / 容器填充（深浅两值，视图不再现写 white/black opacity）
@@ -640,6 +642,15 @@ extension DS {
     /// 搜索胶囊描边。
     static func capsuleStroke(_ scheme: ColorScheme) -> Color {
         scheme == .dark ? .white.opacity(0.10) : .black.opacity(0.10)
+    }
+
+    /// 大页面与 Inspector 的安静边界。卡片仍使用 `rim` 表达交互层级，
+    /// 页面容器只需要从窗口底色中轻轻分离出来。
+    static func panelStroke(_ scheme: ColorScheme, level: PanelLevel) -> Color {
+        if scheme == .dark {
+            return .white.opacity(level == .overlay ? 0.12 : 0.065)
+        }
+        return .black.opacity(level == .overlay ? 0.10 : 0.07)
     }
 
     /// 顶栏选中胶囊填充（深色半透亮，浅色实白）。

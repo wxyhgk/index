@@ -241,7 +241,15 @@ final class AppSettings: ObservableObject {
             defaults.set(plugin.agentEnabled, forKey: Keys.agentEnabled)
             defaults.set(plugin.agentBaseURL, forKey: Keys.agentBaseURL)
             defaults.set(plugin.agentModel, forKey: Keys.agentModel)
-            defaults.set(plugin.agentAPIKey, forKey: Keys.agentAPIKey)
+            if plugin.agentAPIKey != oldValue.agentAPIKey {
+                do {
+                    try MacAgentKeychain.shared.saveAPIKey(plugin.agentAPIKey)
+                    defaults.removeObject(forKey: Keys.agentAPIKey)
+                } catch {
+                    NSLog("[Index] Agent API Key 保存失败: \(error.localizedDescription)")
+                }
+            }
+            onPluginsChanged?()
         }
     }
 
@@ -250,6 +258,9 @@ final class AppSettings: ObservableObject {
 
     /// 由 AppDelegate 装上：快捷键一改就重新注册。
     var onShortcutsChanged: (() -> Void)?
+
+    /// 由 AppDelegate 装上：支持安全即时停用的插件随设置同步当前进程。
+    var onPluginsChanged: (() -> Void)?
 
     // MARK: - 装配
 
@@ -303,11 +314,12 @@ final class AppSettings: ObservableObject {
             Keys.clipboardHistoryEnabled: ClipboardHistoryPrefs.defaults.enabled,
             Keys.clipboardHistoryRetentionDays: ClipboardHistoryPrefs.defaults.retentionDays,
 
-            Keys.enabledPluginIDs: PluginPrefs.defaults.enabledPluginIDs,
+            // 未写过该偏好的旧用户默认启用全部内置插件。持久化空数组从现在起
+            // 具有明确语义：用户关闭了全部插件，不能再被解释成“全开”。
+            Keys.enabledPluginIDs: BuiltinPluginCatalog.descriptors.map(\.id),
             Keys.agentEnabled: PluginPrefs.defaults.agentEnabled,
             Keys.agentBaseURL: PluginPrefs.defaults.agentBaseURL,
-            Keys.agentModel: PluginPrefs.defaults.agentModel,
-            Keys.agentAPIKey: PluginPrefs.defaults.agentAPIKey
+            Keys.agentModel: PluginPrefs.defaults.agentModel
         ])
 
         capture = CapturePrefs(
@@ -382,11 +394,14 @@ final class AppSettings: ObservableObject {
             retentionDays: defaults.integer(forKey: Keys.clipboardHistoryRetentionDays)
         )
         plugin = PluginPrefs(
-            enabledPluginIDs: defaults.stringArray(forKey: Keys.enabledPluginIDs) ?? PluginPrefs.defaults.enabledPluginIDs,
+            enabledPluginIDs: PluginPreferenceMigration.resolveEnabledPluginIDs(
+                in: defaults,
+                availablePluginIDs: BuiltinPluginCatalog.descriptors.map(\.id)
+            ),
             agentEnabled: defaults.bool(forKey: Keys.agentEnabled),
             agentBaseURL: defaults.string(forKey: Keys.agentBaseURL) ?? PluginPrefs.defaults.agentBaseURL,
             agentModel: defaults.string(forKey: Keys.agentModel) ?? PluginPrefs.defaults.agentModel,
-            agentAPIKey: defaults.string(forKey: Keys.agentAPIKey) ?? ""
+            agentAPIKey: (try? MacAgentKeychain.shared.loadAPIKey()) ?? ""
         )
     }
 

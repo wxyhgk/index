@@ -16,6 +16,7 @@ final class CapturePlugin: Plugin {
     let version = "1.0"
 
     func activate(_ ctx: PluginContext) {
+        ctx.actionRegistry.register(ScrollCaptureAction())
         // 截图后处理器
         CapturePipeline.registerBuiltins(into: ctx.pipeline, styleStore: ctx.settings)
     }

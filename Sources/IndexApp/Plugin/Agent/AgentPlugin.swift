@@ -40,14 +40,16 @@ final class AgentPlugin: Plugin {
 
     func deactivate(_ ctx: PluginContext) {
         HookRegistry.shared.clear(.afterCapture)
+        tools = []
+        settings = nil
     }
 
     /// agent 的工具表（= LLM function calling 的 tools）。
     var availableTools: [AgentTool] { tools }
 
-    /// 是否已配置（有 API key 且启用）。
+    /// 是否已配置（启停由 BuiltinPluginHost 统一管理，这里不保留第二个开关）。
     var isConfigured: Bool {
-        guard let settings, settings.agentEnabled else { return false }
+        guard let settings else { return false }
         return AgentLLMClient(
             baseURL: settings.agentBaseURL,
             model: settings.agentModel,
@@ -62,7 +64,7 @@ final class AgentPlugin: Plugin {
         history: [[String: Any]] = [],
         onEvent: (@Sendable (AgentEvent) -> Void)? = nil
     ) async -> String {
-        guard let settings, settings.agentEnabled else {
+        guard let settings else {
             return "Agent 未启用（设置 → 插件 → Agent）"
         }
         let client = AgentLLMClient(

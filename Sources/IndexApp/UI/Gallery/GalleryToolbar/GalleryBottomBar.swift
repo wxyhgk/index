@@ -2,10 +2,10 @@ import SwiftUI
 import AppKit
 
 // ============================================================
-// MARK: - 底部 bar
+// MARK: - 底部工具栏
 //
-// 左侧：操作按钮组（导入/截图/布局/详情栏/更多）
-// 居中：搜索框（ZStack 绝对居中，不受左侧按钮宽度影响）
+// 搜索是内容浏览的高频入口，固定在底栏视觉中心；主要动作和辅助动作
+// 分列两侧，切换页面时搜索不会挤压顶层导航。
 // ============================================================
 
 struct GalleryBottomBar: View {
@@ -15,31 +15,38 @@ struct GalleryBottomBar: View {
 
     @ObservedObject private var viewModel: GalleryViewModel
     @ObservedObject private var imageImporter = ImageImportCoordinator.shared
-    @ObservedObject private var appsNavigation = AppsNavigationState.shared
-    @ObservedObject private var collectionsNavigation = CollectionsNavigationState.shared
+    @ObservedObject private var destinationChrome: GalleryDestinationChromeState
+    private let destinationRegistry: GalleryDestinationRegistry
     @State private var isImportingLibrary = false
 
-    @AppStorage("galleryLayout") private var layout = GalleryLayoutKind.grid
-    @AppStorage("galleryZoom") private var zoom = 200.0
+    @AppStorage(PagePreferences.galleryLayout.key)
+    private var layout = PagePreferences.galleryLayout.enumDefault(as: GalleryLayoutKind.self)
+    @AppStorage(PagePreferences.galleryZoom.key)
+    private var zoom = PagePreferences.galleryZoom.defaultValue
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.galleryPageCommands) private var pageCommands
 
     init(
         showInspector: Binding<Bool>,
         destinationID: Binding<String>,
-        viewModel: GalleryViewModel = .shared
+        viewModel: GalleryViewModel = .shared,
+        destinationRegistry: GalleryDestinationRegistry,
+        destinationChrome: GalleryDestinationChromeState
     ) {
         self._showInspector = showInspector
         self._destinationID = destinationID
         _viewModel = ObservedObject(wrappedValue: viewModel)
+        self.destinationRegistry = destinationRegistry
+        _destinationChrome = ObservedObject(wrappedValue: destinationChrome)
     }
 
     var body: some View {
         ZStack {
-            // 搜索框绝对居中
-            GallerySearchField(viewModel: viewModel)
+            if currentChrome.showsSearch {
+                GallerySearchField(viewModel: viewModel)
+            }
 
-            // 按钮分布到两边：左侧主要操作，右侧辅助操作
             HStack(spacing: DS.s2) {
                 leftControls
                 Spacer()
@@ -56,11 +63,13 @@ struct GalleryBottomBar: View {
 
     private var leftControls: some View {
         Group {
-            if destinationID == LibraryDestination.destinationID {
+            if currentChrome.showsImportControl {
                 importButton
+            }
+            if currentChrome.showsMarkdownControl {
                 newMarkdownButton
             }
-            if showsPrimaryCaptureButton {
+            if currentChrome.showsCaptureControl {
                 captureButton
             }
         }
@@ -83,32 +92,19 @@ struct GalleryBottomBar: View {
 
     private var rightControls: some View {
         Group {
-            if showsGridControls {
+            if currentChrome.showsLayoutControls {
                 layoutPicker
             }
-            if showsInspectorToggle {
+            if currentChrome.showsInspector {
                 inspectorToggle
             }
             moreMenu
         }
     }
 
-    private var showsPrimaryCaptureButton: Bool {
-        destinationID == LibraryDestination.destinationID
-            || destinationID == AppsDestination.destinationID
-            || destinationID == CollectionsDestination.destinationID
-    }
-
-    private var showsGridControls: Bool {
-        if destinationID == AppsDestination.destinationID { return appsNavigation.isDrilled }
-        if destinationID == CollectionsDestination.destinationID { return collectionsNavigation.isDrilled }
-        return true
-    }
-
-    private var showsInspectorToggle: Bool {
-        if destinationID == AppsDestination.destinationID { return appsNavigation.isDrilled }
-        if destinationID == CollectionsDestination.destinationID { return collectionsNavigation.isDrilled }
-        return true
+    private var currentChrome: GalleryDestinationChrome {
+        let fallback = destinationRegistry.resolve(id: destinationID)?.defaultChrome ?? .standard
+        return destinationChrome.resolve(for: destinationID, fallback: fallback)
     }
 
     private var captureButton: some View {
@@ -197,20 +193,15 @@ struct GalleryBottomBar: View {
 
     private var moreMenu: some View {
         Menu {
-            if destinationID == LibraryDestination.destinationID
-                || (destinationID == AppsDestination.destinationID && appsNavigation.isDrilled)
-                || (destinationID == CollectionsDestination.destinationID
-                    && collectionsNavigation.isDrilled) {
+            if currentChrome.showsThumbnailSizePicker {
                 Picker("缩略图大小", selection: $zoom) {
                     Text("小").tag(160.0)
                     Text("中").tag(220.0)
                     Text("大").tag(300.0)
                 }
                 .pickerStyle(.inline)
-            } else if !showsPrimaryCaptureButton {
-                Button("开始截图") { CaptureCoordinator.shared.begin() }
+                Divider()
             }
-            Divider()
             Button("设置…") { openSettings() }
         } label: {
             Image(systemName: "ellipsis")
@@ -223,6 +214,6 @@ struct GalleryBottomBar: View {
     }
 
     private func openSettings() {
-        GalleryWindowController.shared.mode.openSettings()
+        pageCommands.openSettings()
     }
 }

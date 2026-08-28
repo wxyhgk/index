@@ -19,11 +19,14 @@ Platform/ Intelligence/ Recording/            侧挂，被各层调用
 
 | 路径 | 说明 |
 |---|---|
-| `Package.swift` | 单 target + GRDB 依赖 + 测试 target，`swiftLanguageMode(.v5)` |
-| `build.sh` | 在旁路目录组装并固定身份签名，退出旧 Index/Index 后原子替换 `Index.app`，按原运行状态自动重启；签名优先级 Developer ID → 自签名 "Index Dev"，ad-hoc 只可显式启用 |
-| `Sources/Index/` | 应用源码，按依赖边界分模块 |
+| `Package.swift` | `IndexApp`、`IndexSearchCore`、`IndexInputMethod`、`AOSPPinyinIME` 四个 target + 测试 target；Swift target 统一 `swiftLanguageMode(.v5)` |
+| `build.sh` | 在旁路目录组装并固定身份签名，安全替换 `Index.app`，同时生成不自动安装的 `IndexSearchInputMethod.app`；签名优先级 Developer ID → 自签名 "Index Dev"，ad-hoc 只可显式启用 |
+| `Sources/IndexApp/` | 主应用源码，按依赖边界分模块 |
+| `Sources/IndexSearchCore/` | 输入即检索的纯查询核心：短上下文缓冲、只读 SQLite 查询、结果排序 |
+| `Sources/IndexInputMethod/` | 原生 InputMethodKit 拼音组字、固定复用候选面板与本地检索；不持有主 App 状态、不执行数据库迁移 |
+| `Vendor/AOSPPinyinIME/` | Apache-2.0 的 AOSP PinyinIME C++ 解码核心与 Index C bridge；上游源码保留版权头 |
 | `Tests/IndexTests/` | 单元、回归、架构和生命周期测试 |
-| `Resources/` | `Info.plist`、Release 应用图标与商店专用 entitlements；运行时品牌 SVG 在 `Sources/IndexApp/Resources/` |
+| `Resources/` | 主 App / 输入法 Info.plist、Release 图标与商店专用 entitlements；运行时品牌 SVG 在 `Sources/IndexApp/Resources/` |
 | `BrowserExtensions/Edge/` | Edge 图片导入扩展、Native Messaging host 与独立说明 |
 | `Contracts/` | 面向未来 Windows 客户端的便携图库和标注 JSON Schema |
 | `docs/` | 产品设计、开发记录、故障记录、CI 说明与 README 截图 |
@@ -48,6 +51,7 @@ docs/
 ├── errors/           可复盘的捕获、签名与系统服务事故
 ├── images/           README 和发布页实际使用的产品截图
 ├── app-store.md      Mac App Store 账号、签名、打包与上传流程
+├── input-method.md   “输入即检索”输入法原型的边界、构建与启用步骤
 ├── ci.md             CI 与 Release 说明
 ├── gallery-chrome-spec.md
 └── spatial-ui-spec.md

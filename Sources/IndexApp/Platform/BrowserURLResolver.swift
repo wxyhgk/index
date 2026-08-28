@@ -29,8 +29,7 @@ enum BrowserURLResolver {
         // Mac App Store 首版不申请临时 Apple Events 沙盒例外，也不允许沙盒进程
         // 启动 /usr/bin/osascript。直装版保持现有来源 URL 回填能力；商店版明确
         // 降级为空来源，截图主路径完全不受影响。
-        guard Bundle.main.object(forInfoDictionaryKey: "IndexDistributionChannel") as? String
-                != "app-store" else {
+        guard !IndexDistribution.isAppStore else {
             return false
         }
         return chromium.contains(bundleID) || safari.contains(bundleID)

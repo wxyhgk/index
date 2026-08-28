@@ -46,6 +46,7 @@ struct ShotDetailPane: View {
     /// 阴影要按外观分流：深色下 L1 的阴影是 `.none`（黑底上的黑阴影只是糊一层脏）。
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.galleryPageCommands) private var pageCommands
 
     /// 目标是否已有特征指纹。没有就先禁用「相似」——刚截的图可能还在后台分析。
     @State private var hasFeaturePrint = false
@@ -221,7 +222,7 @@ struct ShotDetailPane: View {
             .clipShape(shape)
             .shadow(color: sh.color, radius: sh.radius, y: sh.y)
             .contentShape(Rectangle())
-            .onTapGesture { GalleryWindowController.shared.quickLook.present() }
+            .onTapGesture { pageCommands.presentQuickLook() }
             .help("点击（或按空格）用 Quick Look 预览原图")
             .accessibilityLabel("预览：\(shot.primaryDisplayName)")
     }
@@ -234,7 +235,7 @@ struct ShotDetailPane: View {
     private var actionRow: some View {
         HStack(spacing: DS.s2) {
             Button {
-                GalleryWindowController.shared.mode.openEditor(shotID: shot.id)
+                pageCommands.openEditor(shotID: shot.id)
             } label: {
                 Label("编辑", systemImage: "pencil")
             }
@@ -245,14 +246,16 @@ struct ShotDetailPane: View {
 
             favoriteButton
 
-            Button {
-                pin()
-            } label: {
-                Image(systemName: "pin")
+            if BuiltinPluginHost.shared.isActive("pin") {
+                Button {
+                    pin()
+                } label: {
+                    Image(systemName: "pin")
+                }
+                .buttonStyle(.inspectorCircle)
+                .help("钉在桌面")
+                .accessibilityLabel("钉在桌面")
             }
-            .buttonStyle(.inspectorCircle)
-            .help("钉在桌面")
-            .accessibilityLabel("钉在桌面")
 
             shareMenu
             moreMenu
@@ -622,7 +625,7 @@ struct ShotDetailPane: View {
                 AppAlert.error(
                     "上传失败",
                     error: error,
-                    host: GalleryWindowController.shared.window
+                    host: pageCommands.hostWindow
                 )
             }
         }

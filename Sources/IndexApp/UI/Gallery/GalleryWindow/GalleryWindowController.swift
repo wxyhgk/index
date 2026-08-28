@@ -35,6 +35,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
                 .environmentObject(selection)
                 .environmentObject(batchActivity)
                 .environment(\.galleryKeyboard, keyboard)
+                .environment(\.galleryPageCommands, .live)
         )
 
         let window = NSWindow(contentViewController: hosting)

@@ -43,10 +43,16 @@ struct EditorModeView: View {
     let shot: Shot
     let styleStore: any AnnotationStylePreferences
     @StateObject private var sessionRelay = EditorSessionRelay()
+    @Environment(\.galleryPageCommands) private var pageCommands
 
     var body: some View {
         VStack(spacing: 0) {
-            EditorView(shot: shot, sessionRelay: sessionRelay, styleStore: styleStore)
+            EditorView(
+                shot: shot,
+                sessionRelay: sessionRelay,
+                styleStore: styleStore,
+                pageCommands: pageCommands
+            )
                 .id(shot.id)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -62,7 +68,7 @@ struct EditorModeView: View {
     private func switchEditor(to target: Shot) {
         guard target.id != shot.id else { return }
         sessionRelay.flush(shotID: shot.id)
-        GalleryWindowController.shared.mode.openEditor(shotID: target.id)
+        pageCommands.openEditor(shotID: target.id)
     }
 }
 
@@ -93,10 +99,19 @@ struct EditorView: View {
     /// 标注状态机。真正的持有者是 model，这里只是个转发，省得满篇 `model.annotation`。
     private var annotation: AnnotationState { model.annotation }
 
-    init(shot: Shot, sessionRelay: EditorSessionRelay? = nil, styleStore: any AnnotationStylePreferences) {
+    init(
+        shot: Shot,
+        sessionRelay: EditorSessionRelay? = nil,
+        styleStore: any AnnotationStylePreferences,
+        pageCommands: GalleryPageCommands = .live
+    ) {
         self.shot = shot
         self.sessionRelay = sessionRelay
-        _model = StateObject(wrappedValue: EditorModel(shot: shot, styleStore: styleStore))
+        _model = StateObject(wrappedValue: EditorModel(
+            shot: shot,
+            styleStore: styleStore,
+            pageCommands: pageCommands
+        ))
     }
 
     /// 一次画布拖拽在做什么。`idle` 表示这次按下不产生后续（点空处取消选中等）。

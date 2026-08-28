@@ -1,29 +1,44 @@
 import SwiftUI
-import MarkdownUI
 
 // MARK: - Markdown 内容渲染器（卡片缩略图）
 //
-// 用 MarkdownUI 渲染完整 GFM（标题/列表/表格/代码块/链接/图片/引用）。
-// 输入是 shot + store，输出 AnyView（协议要求）。
+// 网格卡片不是文档阅读器。完整 MarkdownUI AST、主题和图片布局放在单窗口编辑器；
+// 虚拟化网格只画缓存后的纯文本预览，快速滚动时不重复查三张表和解析整篇 GFM。
+
+@MainActor
+final class MarkdownPreviewCache {
+    static let shared = MarkdownPreviewCache()
+    private var sources: [Int64: String] = [:]
+
+    func source(for shot: Shot, store: ShotStore) -> String {
+        guard let id = shot.id else { return MarkdownGenerator.generate(for: shot) }
+        if let cached = sources[id] { return cached }
+        let source = store.markdownSource(for: shot) ?? MarkdownGenerator.generate(for: shot)
+        sources[id] = source
+        return source
+    }
+
+    func update(_ source: String, shotID: Int64?) {
+        guard let shotID else { return }
+        sources[shotID] = source
+    }
+}
 
 struct MarkdownContentRenderer: ContentRenderer {
     let kind: ContentKind = .markdown
 
     @MainActor
     func render(shot: Shot, height: CGFloat, store: ShotStore, isHovering: Bool) -> AnyView {
-        // 收口读取：三步查询由 store 内部完成，没有存储的 Markdown 就现场生成。
-        let source = store.markdownSource(for: shot) ?? MarkdownGenerator.generate(for: shot)
+        let source = MarkdownPreviewCache.shared.source(for: shot, store: store)
 
         return AnyView(
-            Markdown(source)
-                .markdownTheme(.gitHub)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(10)
-                // A card preview is a viewport, not another scroll container.
-                // The outer card clips overflowing document content, so wheel
-                // events always continue to drive the virtualized gallery.
+            Text(source)
+                .font(.system(size: 12, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineLimit(max(4, Int(height / 18)))
+                .truncationMode(.tail)
                 .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
+                .padding(10)
                 .clipped()
         )
     }

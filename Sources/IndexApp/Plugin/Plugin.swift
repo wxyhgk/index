@@ -58,6 +58,10 @@ final class PluginManager {
 
     var activePlugins: [any Plugin] { plugins }
 
+    func isActive(_ pluginID: String) -> Bool {
+        plugins.contains { $0.id == pluginID }
+    }
+
     func activate(_ plugin: any Plugin, ctx: PluginContext) {
         guard !plugins.contains(where: { $0.id == plugin.id }) else { return }
         plugin.activate(ctx)
