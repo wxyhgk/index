@@ -12,8 +12,24 @@ struct AgentTool: Sendable {
     let description: String
     /// 参数 schema（简化版：参数名 → 说明，后续接 JSON Schema）。
     let parameters: [String: String]
+    /// 必填参数。未显式提供时保持旧行为：所有声明的参数均必填。
+    let requiredParameters: Set<String>
     /// 执行闭包。input 是参数键值对，返回结果文本（回给 LLM 或规则引擎）。
     let execute: @Sendable ([String: String]) async -> String
+
+    init(
+        name: String,
+        description: String,
+        parameters: [String: String],
+        requiredParameters: Set<String>? = nil,
+        execute: @escaping @Sendable ([String: String]) async -> String
+    ) {
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self.requiredParameters = requiredParameters ?? Set(parameters.keys)
+        self.execute = execute
+    }
 }
 
 // MARK: - Agent 事件（工具调用过程回调，驱动前端实时展示）

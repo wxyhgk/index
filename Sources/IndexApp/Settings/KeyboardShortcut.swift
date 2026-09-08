@@ -45,6 +45,10 @@ struct KeyboardShortcut: Codable, Equatable {
         keyCode: 45,                                   // N
         modifiers: UInt32(controlKey) | UInt32(cmdKey)
     )
+    static let quickNoteResumeDefault = KeyboardShortcut(
+        keyCode: 45,                                   // N
+        modifiers: UInt32(controlKey) | UInt32(shiftKey) | UInt32(cmdKey)
+    )
     static let agentDefault = KeyboardShortcut(
         keyCode: 0,                                    // A
         modifiers: UInt32(shiftKey) | UInt32(cmdKey)

@@ -72,6 +72,16 @@ final class GalleryViewModel: ObservableObject {
         }
     }
 
+    /// 新建一个代码片段卡片。
+    func createCodeCard() {
+        do {
+            _ = try store.createCodeShot(title: "新建代码", text: "", language: nil)
+            store.reload(query: searchText, filter: filter)
+        } catch {
+            NSLog("[Index] 新建代码卡片失败: \(error)")
+        }
+    }
+
     func reloadInBackground() async {
         await store.reloadInBackground(query: searchText, filter: filter)
     }

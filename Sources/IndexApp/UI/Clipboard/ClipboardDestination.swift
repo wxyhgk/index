@@ -19,7 +19,7 @@ struct ClipboardContent: View {
     private let store: ClipboardHistoryStore
 
     @State private var renameItem: ClipboardHistoryItem?
-    @State private var renameText = ""
+    @State private var renameDraft = ClipboardCardRenameDraft()
     @State private var collectionItem: ClipboardHistoryItem?
     @State private var columnCount = 4
     @State private var isScrolling = false
@@ -83,21 +83,6 @@ struct ClipboardContent: View {
         }
         .onChange(of: isLiveResizing, initial: true) { _, resizing in
             thumbnailPreheater.setSuspended(resizing)
-        }
-        .alert("重命名", isPresented: Binding(
-            get: { renameItem != nil },
-            set: { if !$0 { renameItem = nil } }
-        )) {
-            TextField("名称", text: $renameText)
-            Button("保存") {
-                if let item = renameItem {
-                    viewModel.rename(renameText, for: item)
-                }
-                renameItem = nil
-            }
-            Button("取消", role: .cancel) { renameItem = nil }
-        } message: {
-            Text("给这条剪贴板记录起个名字，方便以后查找")
         }
         .sheet(item: $collectionItem) { item in
             CollectionPickerSheet(
@@ -186,6 +171,10 @@ struct ClipboardContent: View {
                 ),
                 headerHeight: 0,
                 pinsHeaders: false,
+                handlesSelection: true,
+                selectionHitTest: { _, point, size in
+                    ClipboardCardInteractionZones.selectsCard(at: point, in: size)
+                },
                 scrollTarget: selection.selectedID,
                 card: { item in clipboardCard(for: item) },
                 header: { _ in EmptyView() },
@@ -197,6 +186,9 @@ struct ClipboardContent: View {
                 onEndDisplay: { item in
                     guard item.kind == .image else { return }
                     thumbnailPreheater.unmounted(item.viewportIdentity)
+                },
+                onSelect: { item, _ in
+                    selection.select(item.id)
                 }
             )
             .modifier(GalleryInteractionTracker(
@@ -209,18 +201,24 @@ struct ClipboardContent: View {
     }
 
     private func clipboardCard(for item: ClipboardHistoryItem) -> some View {
-        ClipboardGridCard(
-            item: item,
-            isSelected: selection.selectedID == item.id,
-            onToggleFavorite: { viewModel.toggleFavorite(item) },
-            store: store
-        )
-        .equatable()
+        RecyclingCardHoverReader { nativeHover in
+            ClipboardGridCard(
+                item: item,
+                isSelected: selection.selectedID == item.id,
+                isHovering: nativeHover && !isScrolling,
+                onToggleFavorite: { viewModel.toggleFavorite(item) },
+                isRenaming: renameItem?.viewportIdentity == item.viewportIdentity,
+                renameText: renameDraft.text,
+                onRenameTextChange: { renameDraft.text = $0 },
+                onBeginRename: { beginRenaming(item) },
+                onCommitRename: { commitRenaming(item, title: $0) },
+                onCancelRename: { cancelRenaming(item) },
+                store: store
+            )
+            .equatable()
+        }
         .environment(\.galleryIsScrolling, isScrolling)
         .environment(\.galleryDefersThumbnailLoading, isLiveResizing)
-        .onTapGesture {
-            selection.select(item.id)
-        }
         .contextMenu {
             // NSCollectionView 会复用已经滚出/滚入的卡片。不能在滚动时返回空菜单，
             // 否则被复用的 hosting view 可能一直保留空 contextMenu。
@@ -228,11 +226,7 @@ struct ClipboardContent: View {
                 selection.selectedID = item.id
                 viewModel.copyBack(item)
             }
-            Button("重命名…") {
-                selection.selectedID = item.id
-                renameText = item.title ?? ""
-                renameItem = item
-            }
+            Button("修改名称") { beginRenaming(item) }
             Button(item.isFavorite ? "取消收藏" : "收藏") {
                 selection.selectedID = item.id
                 viewModel.toggleFavorite(item)
@@ -248,6 +242,30 @@ struct ClipboardContent: View {
                 selection.clearIf(item.id)
             }
         }
+    }
+
+    private func beginRenaming(_ item: ClipboardHistoryItem) {
+        if let activeItem = renameItem,
+           activeItem.viewportIdentity != item.viewportIdentity {
+            commitRenaming(activeItem)
+        }
+        renameDraft.text = item.title ?? ""
+        renameItem = item
+    }
+
+    private func commitRenaming(_ item: ClipboardHistoryItem, title: String? = nil) {
+        guard renameItem?.viewportIdentity == item.viewportIdentity else { return }
+        if let title { renameDraft.text = title }
+        let committedTitle = renameDraft.text
+        renameItem = nil
+        renameDraft.text = ""
+        viewModel.rename(committedTitle, for: item)
+    }
+
+    private func cancelRenaming(_ item: ClipboardHistoryItem) {
+        guard renameItem?.viewportIdentity == item.viewportIdentity else { return }
+        renameItem = nil
+        renameDraft.text = ""
     }
 
     @ViewBuilder
@@ -291,15 +309,22 @@ struct ClipboardGridCard: View, Equatable {
 
     let item: ClipboardHistoryItem
     var isSelected: Bool = false
+    var isHovering = false
     var onToggleFavorite: (() -> Void)? = nil
+    var isRenaming = false
+    var renameText = ""
+    var onRenameTextChange: ((String) -> Void)? = nil
+    var onBeginRename: (() -> Void)? = nil
+    var onCommitRename: ((String) -> Void)? = nil
+    var onCancelRename: (() -> Void)? = nil
     var store: ClipboardHistoryStore = .shared
-
-    @State private var isHovering = false
-    @Environment(\.galleryIsScrolling) private var isScrolling
 
     static func == (lhs: ClipboardGridCard, rhs: ClipboardGridCard) -> Bool {
         lhs.item == rhs.item
             && lhs.isSelected == rhs.isSelected
+            && lhs.isHovering == rhs.isHovering
+            && lhs.isRenaming == rhs.isRenaming
+            && lhs.renameText == rhs.renameText
             && lhs.store === rhs.store
     }
 
@@ -307,21 +332,22 @@ struct ClipboardGridCard: View, Equatable {
         ClipboardCardBody(
             item: item,
             textLineLimit: 4,
-            store: store
+            store: store,
+            showsRenameAction: isHovering,
+            isRenaming: isRenaming,
+            renameText: renameText,
+            onRenameTextChange: onRenameTextChange,
+            onBeginRename: onBeginRename,
+            onCommitRename: onCommitRename,
+            onCancelRename: onCancelRename
         )
         .equatable()
-        .overlay(alignment: .topLeading) { favoriteButton }
+        .overlay(alignment: .bottomTrailing) { favoriteButton }
         .frame(
             width: ClipboardCardMetrics.gridWidth,
             height: ClipboardCardMetrics.gridHeight
         )
         .modifier(ClipboardCardChrome(isSelected: isSelected, isHovering: isHovering))
-        .onHover { hovering in
-            isHovering = isScrolling ? false : hovering
-        }
-        .onChange(of: isScrolling) { _, scrolling in
-            if scrolling { isHovering = false }
-        }
     }
 
     /// 收藏星：悬停浮出，已收藏常显实心黄星。

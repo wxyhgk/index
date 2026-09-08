@@ -171,7 +171,7 @@ section "纪律八：ScreenCaptureKit 初始化只走统一事务门"
 sck_entry_hits=$(grep -rn \
     "SCShareableContent\.getExcludingDesktopWindows\|SCShareableContent\.excludingDesktopWindows\|SCScreenshotManager\.captureImage\|stream\.startCapture(" \
     --include="*.swift" Sources/IndexApp 2>/dev/null \
-    | grep -v "Platform/macOS/MacScreenCaptureBroker\.swift" \
+    | grep -v "Platform/macOS/Capture/MacScreenCaptureBroker\.swift" \
     | code_only || true)
 if [ -z "$sck_entry_hits" ]; then
     ok "截图、录屏和长截图的 SCK 初始化都经过 MacScreenCaptureBroker"

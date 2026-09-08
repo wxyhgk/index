@@ -139,6 +139,16 @@ extension ShotStore {
         }
     }
 
+    func setTag(shotIDs: [Int64], name rawName: String, isPresent: Bool) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !shotIDs.isEmpty else { return }
+        do {
+            try attributeRepository.setTag(shotIDs: shotIDs, name: name, isPresent: isPresent)
+        } catch {
+            NSLog("[Index] 批量修改标签 \(name) 失败: \(error.localizedDescription)")
+        }
+    }
+
     /// 一张截图的全部标签，按添加顺序。
     func tags(shotID: Int64) -> [String] {
         (try? attributeRepository.tags(shotID: shotID)) ?? []

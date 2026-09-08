@@ -4,16 +4,41 @@ struct ShortcutSettings: View {
     @ObservedObject var settings: AppSettings
     private let recorderSize = CGSize(width: 110, height: 22)
 
+    private struct ShortcutRow: Identifiable {
+        let id: String
+        let label: String
+        let keyPath: WritableKeyPath<ShortcutPrefs, KeyboardShortcut>
+    }
+
+    private static let captureShortcuts = [
+        ShortcutRow(id: "capture", label: "截图", keyPath: \.captureShortcut),
+        ShortcutRow(id: "delayed-capture", label: "延时截图", keyPath: \.delayedCaptureShortcut),
+        ShortcutRow(id: "recording", label: "录屏", keyPath: \.recordingShortcut),
+        ShortcutRow(id: "scroll-capture", label: "滚动截图", keyPath: \.scrollCaptureShortcut),
+    ]
+
+    private static let workspaceShortcuts = [
+        ShortcutRow(id: "gallery", label: "打开图库", keyPath: \.galleryShortcut),
+        ShortcutRow(id: "clipboard", label: "剪切板历史", keyPath: \.clipboardHistoryShortcut),
+        ShortcutRow(id: "search", label: "输入即检索", keyPath: \.searchPanelShortcut),
+        ShortcutRow(id: "quick-note", label: "新建便签", keyPath: \.quickNoteShortcut),
+        ShortcutRow(id: "quick-note-resume", label: "继续上次便签", keyPath: \.quickNoteResumeShortcut),
+        ShortcutRow(id: "agent", label: "AI Agent", keyPath: \.agentShortcut),
+        ShortcutRow(id: "molecule-pin", label: "3D 分子钉图", keyPath: \.moleculePinShortcut),
+    ]
+
     var body: some View {
         SettingsPage {
-            // 全局快捷键：大卡片（6 行 recorder）
-            SettingsCard("全局快捷键", icon: "command") {
-                shortcutRow("截图", $settings.shortcuts.captureShortcut)
-                shortcutRow("延时截图", $settings.shortcuts.delayedCaptureShortcut)
-                shortcutRow("录屏", $settings.shortcuts.recordingShortcut)
-                shortcutRow("滚动截图", $settings.shortcuts.scrollCaptureShortcut)
-                shortcutRow("打开图库", $settings.shortcuts.galleryShortcut)
-                shortcutRow("3D 分子钉图", $settings.shortcuts.moleculePinShortcut)
+            SettingsCard("捕获快捷键", icon: "camera") {
+                ForEach(Self.captureShortcuts) { row in
+                    shortcutRow(row.label, binding(for: row.keyPath))
+                }
+            }
+
+            SettingsCard("工作区快捷键", icon: "command") {
+                ForEach(Self.workspaceShortcuts) { row in
+                    shortcutRow(row.label, binding(for: row.keyPath))
+                }
                 HStack {
                     Spacer()
                     Button("恢复默认") { settings.resetShortcuts() }
@@ -55,6 +80,15 @@ struct ShortcutSettings: View {
             ShortcutRecorder(shortcut: shortcut)
                 .frame(width: recorderSize.width, height: recorderSize.height)
         }
+    }
+
+    private func binding(
+        for keyPath: WritableKeyPath<ShortcutPrefs, KeyboardShortcut>
+    ) -> Binding<KeyboardShortcut> {
+        Binding(
+            get: { settings.shortcuts[keyPath: keyPath] },
+            set: { settings.shortcuts[keyPath: keyPath] = $0 }
+        )
     }
 
     private func keyRow(_ key: String, _ desc: String) -> some View {

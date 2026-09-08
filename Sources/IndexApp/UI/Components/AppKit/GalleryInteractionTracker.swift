@@ -60,6 +60,7 @@ private struct GalleryInteractionProbe: NSViewRepresentable {
         private weak var window: NSWindow?
         private var scrollObservers: [NSObjectProtocol] = []
         private var windowObservers: [NSObjectProtocol] = []
+        private var scrollEndFallback: DispatchWorkItem?
 
         func updateBindings(
             isScrolling: Binding<Bool>,
@@ -99,23 +100,43 @@ private struct GalleryInteractionProbe: NSViewRepresentable {
                     object: scrollView,
                     queue: .main
                 ) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.scrollingBinding?.wrappedValue = true }
+                    MainActor.assumeIsolated { self?.markScrolling() }
                 },
                 center.addObserver(
                     forName: NSScrollView.didLiveScrollNotification,
                     object: scrollView,
                     queue: .main
                 ) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.scrollingBinding?.wrappedValue = true }
+                    MainActor.assumeIsolated { self?.markScrolling() }
                 },
                 center.addObserver(
                     forName: NSScrollView.didEndLiveScrollNotification,
                     object: scrollView,
                     queue: .main
                 ) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.scrollingBinding?.wrappedValue = false }
+                    MainActor.assumeIsolated { self?.finishScrolling() }
                 },
             ]
+        }
+
+        /// `didEndLiveScroll` is not guaranteed for every interruption (view
+        /// replacement, gesture cancellation, or a scroll view disappearing mid-
+        /// momentum). Keep the coarse performance flag self-healing instead of
+        /// allowing one missing notification to disable hover effects forever.
+        private func markScrolling() {
+            scrollingBinding?.wrappedValue = true
+            scrollEndFallback?.cancel()
+            let fallback = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.finishScrolling() }
+            }
+            scrollEndFallback = fallback
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: fallback)
+        }
+
+        private func finishScrolling() {
+            scrollEndFallback?.cancel()
+            scrollEndFallback = nil
+            scrollingBinding?.wrappedValue = false
         }
 
         private func attachWindowObservers() {
@@ -144,7 +165,7 @@ private struct GalleryInteractionProbe: NSViewRepresentable {
             let center = NotificationCenter.default
             scrollObservers.forEach(center.removeObserver)
             scrollObservers.removeAll(keepingCapacity: true)
-            scrollingBinding?.wrappedValue = false
+            finishScrolling()
         }
 
         private func detachWindowObservers() {

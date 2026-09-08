@@ -31,6 +31,8 @@ struct MultiSelectionPane: View {
 
     /// 最近一次批量导出的结果提示，几秒后自动消失。
     @State private var exportSummary: String?
+    @State private var tagInput = ""
+    @State private var allTagNames: [String] = []
     @State private var collectionSummaries: [ShotCollectionSummary] = []
     @State private var collectionMembershipCounts: [Int64: Int] = [:]
     @State private var collectionSnapshotGeneration = -1
@@ -50,6 +52,7 @@ struct MultiSelectionPane: View {
                 Text("批量动作作用于全部选中项。按 Esc 回到单选。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                batchTags
                 actions
                 if let state = batchActivity.state {
                     batchProgress(state)
@@ -154,15 +157,25 @@ struct MultiSelectionPane: View {
             .buttonStyle(.inspectorSoft)
             .disabled(collectionSummaries.isEmpty || batchActivity.isBusy)
 
-            Button {
-                runExport()
+            Menu {
+                Button {
+                    runZIPExport()
+                } label: {
+                    Label("导出为 ZIP", systemImage: "doc.zipper")
+                }
+                Button {
+                    runDirectoryExport()
+                } label: {
+                    Label("逐张导出到文件夹", systemImage: "folder")
+                }
             } label: {
                 Label("导出 \(selectedCount) 张…", systemImage: "square.and.arrow.up")
                     .frame(maxWidth: .infinity)
             }
+            .menuStyle(.button)
             .buttonStyle(.inspectorSoft)
             .disabled(batchActivity.isBusy)
-            .help("选一个目录，逐张按文件名模板导出成品（含标注），重名自动加序号")
+            .help("打包成一个 ZIP，或逐张导出到文件夹；均包含最新标注")
 
             Button(role: .destructive) {
                 selection.pendingDeleteIDs = ids
@@ -175,6 +188,53 @@ struct MultiSelectionPane: View {
             .buttonStyle(.inspectorSoft(tint: .red))
             .disabled(batchActivity.isBusy)
         }
+    }
+
+    /// 自定义名字可直接回车添加；已有标签放进增/删菜单，避免在窄 inspector
+    /// 里铺两排几乎相同的胶囊。批量移除是幂等的：不含该标签的截图保持不变。
+    private var batchTags: some View {
+        VStack(alignment: .leading, spacing: DS.s2) {
+            Text("批量标签")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            HStack(spacing: DS.s2) {
+                TextField("输入标签名", text: $tagInput)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { addTypedTag() }
+                Button {
+                    addTypedTag()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.inspectorSoft)
+                .disabled(tagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Menu {
+                    if allTagNames.isEmpty {
+                        Text("暂无已有标签")
+                    } else {
+                        Menu("添加到全部") {
+                            ForEach(allTagNames, id: \.self) { name in
+                                Button(name) { setTag(name, isPresent: true) }
+                            }
+                        }
+                        Menu("从全部移除") {
+                            ForEach(allTagNames, id: \.self) { name in
+                                Button(name, role: .destructive) {
+                                    setTag(name, isPresent: false)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "tag")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.inspectorSoft)
+                .help("添加或移除已有标签")
+            }
+        }
+        .disabled(batchActivity.isBusy)
     }
 
     private func batchProgress(_ state: GalleryBatchActivity.State) -> some View {
@@ -194,30 +254,55 @@ struct MultiSelectionPane: View {
         }
     }
 
-    private func runExport() {
+    private func runDirectoryExport() {
         let ids = selectedIDs
         Task {
             let exported = await GalleryBatch.exportAll(ids: ids)
-            guard exported > 0 else { return }
-            // 结果提示是一个小件的出没，走 micro（§6）：出得快才像「刚刚完成」。
-            withAnimation(DS.Motion.micro(reduced: reduceMotion)) {
-                exportSummary = exported < ids.count
-                    ? "已导出 \(exported)/\(ids.count) 张"
-                    : "已导出 \(exported) 张"
-            }
-            try? await Task.sleep(for: exportSummaryDelay)
-            withAnimation(DS.Motion.micro(reduced: reduceMotion)) { exportSummary = nil }
+            await showExportSummary(exported: exported, total: ids.count, suffix: "张")
         }
+    }
+
+    private func runZIPExport() {
+        let ids = selectedIDs
+        Task {
+            let exported = await GalleryBatch.exportZIP(ids: ids)
+            await showExportSummary(exported: exported, total: ids.count, suffix: "项到 ZIP")
+        }
+    }
+
+    private func showExportSummary(exported: Int, total: Int, suffix: String) async {
+        guard exported > 0 else { return }
+        // 结果提示是一个小件的出没，走 micro（§6）：出得快才像「刚刚完成」。
+        withAnimation(DS.Motion.micro(reduced: reduceMotion)) {
+            exportSummary = exported < total
+                ? "已导出 \(exported)/\(total) \(suffix)"
+                : "已导出 \(exported) \(suffix)"
+        }
+        try? await Task.sleep(for: exportSummaryDelay)
+        withAnimation(DS.Motion.micro(reduced: reduceMotion)) { exportSummary = nil }
     }
 
     private func refreshCollections() async {
         let generation = selection.generation
         let ids = selectedIDs
         collectionSummaries = store.collectionSummaries()
+        allTagNames = store.allTags().map(\.name)
         let counts = await store.collectionMembershipCountsInBackground(shotIDs: ids)
         guard generation == selection.generation else { return }
         collectionMembershipCounts = counts
         collectionSnapshotGeneration = generation
+    }
+
+    private func addTypedTag() {
+        let name = tagInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        setTag(name, isPresent: true)
+        tagInput = ""
+    }
+
+    private func setTag(_ name: String, isPresent: Bool) {
+        GalleryBatch.setTag(ids: selectedIDs, name: name, isPresent: isPresent)
+        allTagNames = store.allTags().map(\.name)
     }
 
     private func setMembership(_ ids: [Int64], collectionID: Int64, remove: Bool) {

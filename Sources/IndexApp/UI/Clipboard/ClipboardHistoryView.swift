@@ -207,12 +207,13 @@ private struct ClipboardHistoryScrollBridge: NSViewRepresentable {
 // ============================================================
 // MARK: - 剪贴板历史 SwiftUI 视图
 //
-// 顶部栏（类型过滤 + 搜索 + 计数）+ 横向卡片流。
+// 顶部模式栏 + 中间内容区 + 底部搜索/动作栏。
 // ============================================================
 
 struct ClipboardHistoryView: View {
 
     @ObservedObject var viewModel: ClipboardHistoryViewModel
+    @ObservedObject var commands: ClipboardHistoryPanelCommands
     let store: ClipboardHistoryStore
     @StateObject private var thumbnailPreheater = ViewportThumbnailPreheater()
 
@@ -220,11 +221,19 @@ struct ClipboardHistoryView: View {
     @State private var isPinned = false
     @State private var isScrolling = false
     @State private var isLiveResizing = false
+    @State private var renameItem: ClipboardHistoryItem?
+    @State private var renameDraft = ClipboardCardRenameDraft()
+    @State private var capsuleRenameID: Int64?
+    @State private var capsuleRenameText = ""
 
     var body: some View {
         VStack(spacing: 0) {
             topBar
+            Divider()
             cardFlow
+                .frame(maxHeight: .infinity)
+            Divider()
+            bottomBar
         }
         .frame(width: 1100, height: 320)
         .background(.regularMaterial)
@@ -246,72 +255,121 @@ struct ClipboardHistoryView: View {
                 columnCount: 1
             )
         }
-        .onDisappear { thumbnailPreheater.reset() }
+        .onDisappear {
+            thumbnailPreheater.reset()
+            commands.setRenaming(false)
+        }
+        .onChange(of: commands.renameGeneration) { _, _ in
+            beginRenamingSelectedItem()
+        }
     }
 
     // MARK: 顶部栏
 
     private var topBar: some View {
-        HStack(spacing: DS.s3) {
-            ClipboardFilterBar(viewModel: viewModel, searchWidth: 160)
+        ZStack {
+            HStack(spacing: DS.s3) {
+                workspaceModePicker
 
-            Button {
-                viewModel.setContinuousSelectionEnabled(!viewModel.isContinuousSelectionEnabled)
-            } label: {
-                Label(
-                    "连续选择",
-                    systemImage: viewModel.isContinuousSelectionEnabled
-                        ? "rectangle.stack.fill"
-                        : "rectangle.stack.badge.plus"
-                )
-                .font(.system(size: DS.font11, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .tint(viewModel.isContinuousSelectionEnabled ? DS.accent : nil)
-            .help(viewModel.isContinuousSelectionEnabled
-                ? "已开启：点击搜索结果会加入左侧固定队列"
-                : "开启后可跨搜索连续选择")
+                Spacer()
 
-            Spacer()
+                if viewModel.workspaceMode == .history {
+                    Button {
+                        viewModel.setContinuousSelectionEnabled(!viewModel.isContinuousSelectionEnabled)
+                    } label: {
+                        Image(systemName: viewModel.isContinuousSelectionEnabled
+                            ? "rectangle.stack.fill"
+                            : "rectangle.stack.badge.plus")
+                            .font(.system(size: DS.font12, weight: .medium))
+                            .foregroundStyle(viewModel.isContinuousSelectionEnabled ? DS.accent : .secondary)
+                            .frame(width: 26, height: 24)
+                            .background(
+                                viewModel.isContinuousSelectionEnabled
+                                    ? DS.accent.opacity(0.13)
+                                    : Color.clear,
+                                in: RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.editingCapsuleID != nil)
+                    .help(viewModel.editingCapsuleID == nil
+                        ? "连续选择：跨搜索建立粘贴队列"
+                        : "完成或取消胶囊顺序编辑后可切换模式")
+                    .accessibilityLabel("连续选择")
+                }
 
-            if let feedback = viewModel.pasteFeedback {
-                Text(feedback)
-                    .font(.system(size: DS.font11))
-                    .foregroundStyle(.red)
-                    .lineLimit(1)
-            } else if viewModel.isContinuousSelectionEnabled {
-                Text("左侧队列固定，右侧可继续搜索")
+                Button {
+                    isPinned.toggle()
+                    ClipboardHistoryCoordinator.shared.isPinned = isPinned
+                } label: {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: DS.font13))
+                        .foregroundStyle(isPinned ? AnyShapeStyle(DS.accent) : AnyShapeStyle(.tertiary))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "取消钉住" : "钉住面板")
+
+                Text(currentCountLabel)
                     .font(.system(size: DS.font11))
                     .foregroundStyle(.tertiary)
             }
 
-            // 钉住按钮
-            Button {
-                isPinned.toggle()
-                ClipboardHistoryCoordinator.shared.isPinned = isPinned
-            } label: {
-                Image(systemName: isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: DS.font13))
-                    .foregroundStyle(isPinned ? AnyShapeStyle(DS.accent) : AnyShapeStyle(.tertiary))
+            if let feedback = viewModel.pasteFeedback {
+                Text(feedback)
+                    .font(.system(size: DS.font11))
+                    .foregroundStyle(feedback.contains("无法") ? .red : .secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: 360)
+                    .allowsHitTesting(false)
             }
-            .buttonStyle(.plain)
-            .help(isPinned ? "取消钉住" : "钉住面板")
-
-            // 计数
-            Text("\(viewModel.filteredItems.count) 项")
-                .font(.system(size: DS.font11))
-                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, DS.s4)
-        .padding(.vertical, DS.s3)
+        .padding(.vertical, DS.s2)
         .background(WindowDragArea())
+    }
+
+    private var workspaceModePicker: some View {
+        HStack(spacing: 0) {
+            ForEach(ClipboardWorkspaceMode.allCases) { mode in
+                Button {
+                    viewModel.workspaceMode = mode
+                } label: {
+                    Image(systemName: mode.systemImage)
+                        .font(.system(size: DS.font12, weight: .medium))
+                        .frame(width: 28, height: 22)
+                        .foregroundStyle(viewModel.workspaceMode == mode ? DS.accent : .secondary)
+                        .background(
+                            viewModel.workspaceMode == mode ? DS.accent.opacity(0.14) : .clear,
+                            in: RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.editingCapsuleID != nil && mode != .history)
+                .help(mode.title)
+                .accessibilityLabel(mode.title)
+            }
+        }
+        .padding(2)
+        .background(DS.iconPlaceholderFill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
     }
 
     // MARK: 横向卡片流
 
     @ViewBuilder
     private var cardFlow: some View {
+        switch viewModel.workspaceMode {
+        case .history:
+            historyCardFlow
+        case .threads:
+            threadFlow
+        case .capsules:
+            capsuleFlow
+        }
+    }
+
+    @ViewBuilder
+    private var historyCardFlow: some View {
         let visible = viewModel.filteredItems
         if viewModel.isContinuousSelectionEnabled {
             HStack(spacing: 0) {
@@ -327,6 +385,420 @@ struct ClipboardHistoryView: View {
         }
     }
 
+    private var threadFlow: some View {
+        Group {
+            if viewModel.threads.isEmpty {
+                workspaceEmptyState(
+                    icon: "point.3.connected.trianglepath.dotted",
+                    title: "还没有可识别的线程",
+                    detail: "短时间内复制的相关内容会自动聚合在这里"
+                )
+            } else {
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: DS.s3) {
+                        ForEach(viewModel.threads) { thread in
+                            threadCard(thread)
+                        }
+                    }
+                    .padding(.horizontal, DS.s4)
+                    .padding(.vertical, DS.s3)
+                }
+                .scrollIndicators(.hidden)
+                .background(ClipboardHistoryScrollBridge())
+            }
+        }
+    }
+
+    private var capsuleFlow: some View {
+        Group {
+            if viewModel.filteredCapsules.isEmpty {
+                workspaceEmptyState(
+                    icon: viewModel.capsuleQuery.isEmpty ? "shippingbox" : "magnifyingglass",
+                    title: viewModel.capsuleQuery.isEmpty ? "还没有上下文胶囊" : "没有匹配的胶囊",
+                    detail: viewModel.capsuleQuery.isEmpty
+                        ? "连续选择几张卡片，然后从底部保存为胶囊"
+                        : "换一个胶囊名称、内容或来源关键词试试"
+                )
+            } else {
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: DS.s3) {
+                        ForEach(viewModel.filteredCapsules) { snapshot in
+                            capsuleCard(snapshot)
+                        }
+                    }
+                    .padding(.horizontal, DS.s4)
+                    .padding(.vertical, DS.s3)
+                }
+                .scrollIndicators(.hidden)
+                .background(ClipboardHistoryScrollBridge())
+            }
+        }
+    }
+
+    private var bottomBar: some View {
+        ZStack {
+            bottomCenteredSearch
+
+            HStack(spacing: DS.s3) {
+                if viewModel.workspaceMode == .history {
+                    ClipboardFilterBar(
+                        viewModel: viewModel,
+                        showsFilters: true,
+                        showsSearch: false,
+                        usesIconFilters: true
+                    )
+                }
+
+                Spacer()
+
+                bottomTrailingActions
+            }
+        }
+        .padding(.horizontal, DS.s4)
+        .padding(.vertical, DS.s2)
+        .background(.bar)
+    }
+
+    @ViewBuilder
+    private var bottomCenteredSearch: some View {
+        if viewModel.workspaceMode != .capsules {
+            ClipboardFilterBar(
+                viewModel: viewModel,
+                searchWidth: 280,
+                showsFilters: false,
+                showsSearch: true
+            )
+        } else {
+            HStack(spacing: DS.s1) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: DS.font12))
+                    .foregroundStyle(.tertiary)
+                TextField("搜索胶囊、内容或来源", text: $viewModel.capsuleQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: DS.font13))
+                    .frame(width: 280)
+            }
+            .padding(.horizontal, DS.s2)
+            .padding(.vertical, DS.s1)
+            .background(DS.iconPlaceholderFill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        }
+    }
+
+    @ViewBuilder
+    private var bottomTrailingActions: some View {
+        if let progress = viewModel.activeCapsulePaste {
+            Button {
+                viewModel.continueCapsulePaste()
+            } label: {
+                HStack(spacing: DS.s1) {
+                    Image(systemName: "arrow.turn.down.left")
+                    Text("\(progress.nextIndex + 1)/\(progress.items.count)")
+                        .font(.system(size: DS.font10, weight: .semibold))
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .help(progress.progressLabel)
+            .accessibilityLabel(progress.progressLabel)
+
+            Button {
+                viewModel.cancelCapsulePaste()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .help("结束逐项粘贴")
+            .accessibilityLabel("结束逐项粘贴")
+        } else if let editingName = viewModel.editingCapsuleName {
+            Label(editingName, systemImage: "arrow.up.arrow.down")
+                .font(.system(size: DS.font11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: 140)
+
+            Button {
+                viewModel.cancelCapsuleEditing()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("取消编辑顺序")
+            .accessibilityLabel("取消编辑顺序")
+
+            Button {
+                viewModel.saveCapsuleEditing()
+            } label: {
+                Image(systemName: "checkmark")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(viewModel.selectedCount == 0)
+            .help("保存顺序")
+            .accessibilityLabel("保存顺序")
+        } else if viewModel.selectedCount > 0 {
+            Label("\(viewModel.selectedCount)", systemImage: "checkmark.circle.fill")
+                .font(.system(size: DS.font11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .help("已选 \(viewModel.selectedCount) 项")
+
+            Button {
+                viewModel.createCapsuleFromQueue()
+            } label: {
+                Image(systemName: "shippingbox.and.arrow.backward")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("存为胶囊")
+            .accessibilityLabel("存为胶囊")
+
+            Button {
+                viewModel.pasteSelected()
+            } label: {
+                Image(systemName: ClipboardHistoryCoordinator.shared.supportsDirectPaste
+                    ? "arrow.turn.down.left"
+                    : "doc.on.doc")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .help(ClipboardHistoryCoordinator.shared.supportsDirectPaste ? "粘贴" : "复制并返回")
+            .accessibilityLabel(ClipboardHistoryCoordinator.shared.supportsDirectPaste ? "粘贴" : "复制并返回")
+        }
+    }
+
+    private var currentCountLabel: String {
+        switch viewModel.workspaceMode {
+        case .history: return "\(viewModel.filteredItems.count) 项"
+        case .threads: return "\(viewModel.threads.count) 条线程"
+        case .capsules: return "\(viewModel.filteredCapsules.count) 个胶囊"
+        }
+    }
+
+    private func threadContextLabel(_ thread: ClipboardThread) -> String {
+        let source = thread.sourceApps.prefix(2).joined(separator: " · ")
+        let duration = max(0, Int(thread.endedAt.timeIntervalSince(thread.startedAt)))
+        let durationText: String
+        if duration < 60 {
+            durationText = "\(duration) 秒"
+        } else {
+            durationText = "\(max(1, duration / 60)) 分钟"
+        }
+        return source.isEmpty ? "跨度 \(durationText)" : "\(source) · \(durationText)"
+    }
+
+    private func workspaceEmptyState(icon: String, title: String, detail: String) -> some View {
+        VStack(spacing: DS.s2) {
+            Image(systemName: icon)
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text(title)
+                .font(.system(size: DS.font13, weight: .semibold))
+            Text(detail)
+                .font(.system(size: DS.font11))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func threadCard(_ thread: ClipboardThread) -> some View {
+        VStack(alignment: .leading, spacing: DS.s2) {
+            HStack(spacing: DS.s2) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .foregroundStyle(DS.accent)
+                Text(thread.title)
+                    .font(.system(size: DS.font13, weight: .semibold))
+                    .lineLimit(1)
+                Spacer()
+                Text("\(thread.items.count) 项")
+                    .font(.system(size: DS.font11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: DS.s1) {
+                ForEach(Array(thread.items.prefix(3).enumerated()), id: \.offset) { index, item in
+                    HStack(spacing: DS.s2) {
+                        Text("\(index + 1)")
+                            .font(.system(size: DS.font10, weight: .semibold))
+                            .foregroundStyle(DS.accent)
+                            .frame(width: 14)
+                        Text(item.displayName)
+                            .font(.system(size: DS.font11))
+                            .lineLimit(1)
+                    }
+                }
+                if thread.items.count > 3 {
+                    Text("还有 \(thread.items.count - 3) 项")
+                        .font(.system(size: DS.font11))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            HStack(spacing: DS.s2) {
+                Text(threadContextLabel(thread))
+                    .font(.system(size: DS.font10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                Spacer()
+                Text(ClipboardCardPresentation.relativeTime(for: thread.endedAt))
+                    .font(.system(size: DS.font10))
+                    .foregroundStyle(.tertiary)
+            }
+
+            HStack(spacing: DS.s2) {
+                Button {
+                    viewModel.loadPasteQueue(Array(thread.items.reversed()))
+                } label: {
+                    Image(systemName: "list.number")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("检查粘贴顺序")
+                .accessibilityLabel("检查粘贴顺序")
+
+                Button {
+                    viewModel.createCapsule(from: thread)
+                } label: {
+                    Image(systemName: "shippingbox.and.arrow.backward")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("存为胶囊")
+                .accessibilityLabel("存为胶囊")
+            }
+        }
+        .padding(DS.s3)
+        .frame(width: 270, height: ClipboardCardMetrics.popupHeight, alignment: .topLeading)
+        .background(DS.panelFill(.resting), in: RoundedRectangle(
+            cornerRadius: DS.radiusCard,
+            style: .continuous
+        ))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
+        }
+    }
+
+    private func capsuleCard(_ snapshot: ClipboardCapsuleSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: DS.s2) {
+            HStack(spacing: DS.s2) {
+                Image(systemName: snapshot.capsule.isPinned ? "shippingbox.fill" : "shippingbox")
+                    .foregroundStyle(snapshot.capsule.isPinned ? DS.accent : .secondary)
+
+                if capsuleRenameID == snapshot.id {
+                    TextField("胶囊名称", text: $capsuleRenameText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: DS.font13, weight: .semibold))
+                        .onSubmit { commitCapsuleRename(snapshot) }
+                } else {
+                    Text(snapshot.capsule.name)
+                        .font(.system(size: DS.font13, weight: .semibold))
+                        .lineLimit(1)
+                        .onTapGesture(count: 2) { beginCapsuleRename(snapshot) }
+                }
+
+                Spacer()
+
+                Button {
+                    beginCapsuleRename(snapshot)
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: DS.font11))
+                }
+                .buttonStyle(.plain)
+                .help("修改胶囊名称")
+            }
+
+            VStack(alignment: .leading, spacing: DS.s1) {
+                ForEach(Array(snapshot.items.prefix(3).enumerated()), id: \.offset) { index, item in
+                    HStack(spacing: DS.s2) {
+                        Text("\(index + 1)")
+                            .font(.system(size: DS.font10, weight: .semibold))
+                            .foregroundStyle(DS.accent)
+                            .frame(width: 14)
+                        Text(item.displayName)
+                            .font(.system(size: DS.font11))
+                            .lineLimit(1)
+                    }
+                }
+                if snapshot.items.count > 3 {
+                    Text("还有 \(snapshot.items.count - 3) 项")
+                        .font(.system(size: DS.font11))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            HStack {
+                Text("\(snapshot.items.count) 项 · 保留选择顺序")
+                    .font(.system(size: DS.font10))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+
+            HStack(spacing: DS.s2) {
+                let pasteLabel = Set(snapshot.items.map(\.kind)).count > 1 ? "逐项粘贴" : "粘贴全部"
+                Button {
+                    viewModel.pasteCapsule(snapshot)
+                } label: {
+                    Image(systemName: "arrow.turn.down.left")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help(pasteLabel)
+                .accessibilityLabel(pasteLabel)
+
+                Button {
+                    viewModel.beginEditingCapsule(snapshot)
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("编辑顺序")
+                .accessibilityLabel("编辑顺序")
+            }
+        }
+        .padding(DS.s3)
+        .frame(width: 270, height: ClipboardCardMetrics.popupHeight, alignment: .topLeading)
+        .background(DS.panelFill(.resting), in: RoundedRectangle(
+            cornerRadius: DS.radiusCard,
+            style: .continuous
+        ))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
+                .strokeBorder(
+                    snapshot.capsule.isPinned
+                        ? DS.accent.opacity(0.7)
+                        : Color(nsColor: .separatorColor).opacity(0.5),
+                    lineWidth: 1
+                )
+        }
+        .contextMenu {
+            Button("粘贴") { viewModel.pasteCapsule(snapshot) }
+            Button("修改名称") { beginCapsuleRename(snapshot) }
+            Button("编辑顺序") { viewModel.beginEditingCapsule(snapshot) }
+            Button(snapshot.capsule.isPinned ? "取消固定" : "固定") {
+                viewModel.toggleCapsulePin(snapshot)
+            }
+            Divider()
+            Button("删除胶囊", role: .destructive) { viewModel.deleteCapsule(snapshot) }
+        }
+    }
+
+    private func beginCapsuleRename(_ snapshot: ClipboardCapsuleSnapshot) {
+        capsuleRenameText = snapshot.capsule.name
+        capsuleRenameID = snapshot.id
+    }
+
+    private func commitCapsuleRename(_ snapshot: ClipboardCapsuleSnapshot) {
+        guard capsuleRenameID == snapshot.id else { return }
+        let name = capsuleRenameText
+        capsuleRenameID = nil
+        capsuleRenameText = ""
+        viewModel.renameCapsule(name, snapshot: snapshot)
+    }
+
     @ViewBuilder
     private func candidateArea(_ visible: [ClipboardHistoryItem]) -> some View {
         if visible.isEmpty {
@@ -339,8 +811,8 @@ struct ClipboardHistoryView: View {
                     items: visible
                 )],
                 columnCount: 1,
-                fixedItemWidth: 190,
-                itemHeight: 190,
+                fixedItemWidth: ClipboardCardMetrics.popupWidth,
+                itemHeight: ClipboardCardMetrics.popupHeight,
                 interitemSpacing: DS.s3,
                 lineSpacing: DS.s3,
                 contentInsets: NSEdgeInsets(
@@ -353,6 +825,9 @@ struct ClipboardHistoryView: View {
                 pinsHeaders: false,
                 scrollAxis: .horizontal,
                 handlesSelection: true,
+                selectionHitTest: { _, point, size in
+                    ClipboardCardInteractionZones.selectsCard(at: point, in: size)
+                },
                 scrollTarget: viewModel.selectedItemID,
                 card: { item in popupCard(for: item) },
                 header: { _ in EmptyView() },
@@ -366,6 +841,7 @@ struct ClipboardHistoryView: View {
                     thumbnailPreheater.unmounted(item.viewportIdentity)
                 },
                 onSelect: { item, modifiers in
+                    commands.prepareForCardInteraction()
                     viewModel.select(
                         item,
                         extending: modifiers.contains(.command),
@@ -387,8 +863,10 @@ struct ClipboardHistoryView: View {
     private var pasteQueueRail: some View {
         VStack(spacing: DS.s2) {
             HStack {
-                Label("粘贴队列", systemImage: "list.number")
+                Image(systemName: "list.number")
                     .font(.system(size: DS.font12, weight: .semibold))
+                    .help("粘贴队列")
+                    .accessibilityLabel("粘贴队列")
                 Spacer()
                 Text("\(viewModel.selectedCount)")
                     .font(.system(size: DS.font11, weight: .medium))
@@ -411,19 +889,29 @@ struct ClipboardHistoryView: View {
             }
 
             HStack(spacing: DS.s2) {
-                Button("清空") {
+                Button {
                     viewModel.clearPasteQueue()
+                } label: {
+                    Image(systemName: "trash")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(viewModel.pasteQueueItems.isEmpty)
+                .help("清空粘贴队列")
+                .accessibilityLabel("清空粘贴队列")
 
-                Button(ClipboardHistoryCoordinator.shared.supportsDirectPaste ? "粘贴" : "复制并返回") {
+                Button {
                     viewModel.pasteSelected()
+                } label: {
+                    Image(systemName: ClipboardHistoryCoordinator.shared.supportsDirectPaste
+                        ? "arrow.turn.down.left"
+                        : "doc.on.doc")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(viewModel.pasteQueueItems.isEmpty)
+                .help(ClipboardHistoryCoordinator.shared.supportsDirectPaste ? "粘贴" : "复制并返回")
+                .accessibilityLabel(ClipboardHistoryCoordinator.shared.supportsDirectPaste ? "粘贴" : "复制并返回")
             }
         }
         .padding(DS.s3)
@@ -447,6 +935,28 @@ struct ClipboardHistoryView: View {
                 .font(.system(size: DS.font11))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: 0) {
+                Button {
+                    viewModel.movePasteQueueItem(item, by: -1)
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .disabled(ordinal == 1)
+                .help("向前移动")
+
+                Button {
+                    viewModel.movePasteQueueItem(item, by: 1)
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .disabled(ordinal == viewModel.selectedCount)
+                .help("向后移动")
+            }
 
             Button {
                 viewModel.removeFromPasteQueue(item)
@@ -476,22 +986,74 @@ struct ClipboardHistoryView: View {
 
     private func popupCard(for item: ClipboardHistoryItem) -> some View {
         let ordinal = viewModel.selectionOrdinal(for: item)
-        return ClipboardHistoryCard(
-            item: item,
-            isSelected: ordinal != nil,
-            selectionOrdinal: viewModel.isContinuousSelectionEnabled ? ordinal : nil,
-            store: store
-        )
-        .equatable()
+        return RecyclingCardHoverReader { nativeHover in
+            ClipboardHistoryCard(
+                item: item,
+                isSelected: ordinal != nil,
+                selectionOrdinal: viewModel.isContinuousSelectionEnabled ? ordinal : nil,
+                isHovering: nativeHover && !isScrolling,
+                store: store,
+                isRenaming: renameItem?.viewportIdentity == item.viewportIdentity,
+                renameText: renameDraft.text,
+                onRenameTextChange: { renameDraft.text = $0 },
+                onBeginRename: { beginRenaming(item) },
+                onCommitRename: { commitRenaming(item, title: $0) },
+                onCancelRename: { cancelRenaming(item) }
+            )
+            .equatable()
+        }
         .onDrag {
             viewModel.dragProvider(for: item)
         }
         .contextMenu {
+            Button("粘贴") { viewModel.paste(item) }
+                .keyboardShortcut(.return, modifiers: [])
+            if item.kind == .text {
+                Button("以纯文本粘贴") { viewModel.pasteAsPlainText(item) }
+                    .keyboardShortcut(.return, modifiers: [.shift])
+            }
             Button("复制") { viewModel.copyBack(item) }
+                .keyboardShortcut("c", modifiers: [.command])
+            Button("修改名称") { beginRenaming(item) }
+                .keyboardShortcut("r", modifiers: [.command])
             Button(item.pinned ? "取消固定" : "固定") { viewModel.togglePin(item) }
             Divider()
             Button("删除", role: .destructive) { viewModel.delete(item) }
+                .keyboardShortcut(.delete, modifiers: [])
         }
+    }
+
+    private func beginRenamingSelectedItem() {
+        let visible = viewModel.filteredItems
+        guard visible.indices.contains(viewModel.selectedIndex) else { return }
+        beginRenaming(visible[viewModel.selectedIndex])
+    }
+
+    private func beginRenaming(_ item: ClipboardHistoryItem) {
+        if let activeItem = renameItem,
+           activeItem.viewportIdentity != item.viewportIdentity {
+            commitRenaming(activeItem)
+        }
+        renameDraft.text = item.title ?? ""
+        renameItem = item
+        commands.setRenaming(true)
+    }
+
+    private func commitRenaming(_ item: ClipboardHistoryItem, title: String? = nil) {
+        guard renameItem?.viewportIdentity == item.viewportIdentity else { return }
+        if let title { renameDraft.text = title }
+        let committedTitle = renameDraft.text
+        renameItem = nil
+        renameDraft.text = ""
+        commands.setRenaming(false)
+        viewModel.rename(committedTitle, for: item)
+    }
+
+    private func cancelRenaming(_ item: ClipboardHistoryItem) {
+        guard renameItem?.viewportIdentity == item.viewportIdentity else { return }
+        renameItem = nil
+        renameDraft.text = ""
+        commands.setRenaming(false)
     }
 
     private var emptyState: some View {

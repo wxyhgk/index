@@ -1,5 +1,6 @@
 import XCTest
 @testable import IndexApp
+import AppKit
 import GRDB
 
 final class ClipboardHistoryTests: XCTestCase {
@@ -45,6 +46,126 @@ final class ClipboardHistoryTests: XCTestCase {
         let items = try store.recent(limit: 10)
         XCTAssertEqual(items.count, 1, "去重后只有一条")
         XCTAssertEqual(items.first?.text, "hello world")
+    }
+
+    func testClipboardPanelPasteStyleShortcuts() {
+        func command(
+            _ keyCode: UInt16,
+            modifiers: NSEvent.ModifierFlags = [],
+            type: NSEvent.EventType = .keyDown,
+            isRepeat: Bool = false
+        ) -> ClipboardPanelShortcutCommand? {
+            ClipboardPanelShortcutResolver.command(
+                keyCode: keyCode,
+                eventType: type,
+                modifiers: modifiers,
+                isRepeat: isRepeat
+            )
+        }
+
+        XCTAssertEqual(command(KeyCode.returnKey), .paste)
+        XCTAssertEqual(command(KeyCode.keypadEnter), .paste)
+        XCTAssertEqual(command(KeyCode.returnKey, modifiers: [.shift]), .pasteAsPlainText)
+        XCTAssertEqual(command(KeyCode.c, modifiers: [.command]), .copy)
+        XCTAssertEqual(command(KeyCode.r, modifiers: [.command]), .rename)
+        XCTAssertEqual(command(KeyCode.left), .movePrevious)
+        XCTAssertEqual(command(KeyCode.right), .moveNext)
+        XCTAssertEqual(command(KeyCode.delete), .delete)
+        XCTAssertEqual(command(KeyCode.forwardDelete), .delete)
+        XCTAssertEqual(command(KeyCode.escape), .close)
+        XCTAssertEqual(command(KeyCode.space), .previewStart)
+        XCTAssertEqual(command(KeyCode.space, type: .keyUp), .previewEnd)
+        XCTAssertEqual(command(KeyCode.space, isRepeat: true), .consume)
+        XCTAssertNil(command(KeyCode.returnKey, modifiers: [.command]))
+        XCTAssertNil(command(KeyCode.c))
+    }
+
+    func testClipboardPanelShortcutsRemainAvailableWhileSearchFieldOwnsFocus() {
+        for command in [
+            ClipboardPanelShortcutCommand.paste,
+            .pasteAsPlainText,
+            .copy,
+            .rename,
+            .close,
+        ] {
+            XCTAssertFalse(ClipboardPanelTextInputShortcutPolicy.defersToTextInput(
+                command,
+                isRenaming: false
+            ))
+            XCTAssertTrue(ClipboardPanelTextInputShortcutPolicy.defersToTextInput(
+                command,
+                isRenaming: true
+            ))
+        }
+
+        for command in [
+            ClipboardPanelShortcutCommand.movePrevious,
+            .moveNext,
+            .delete,
+            .previewStart,
+            .previewEnd,
+            .consume,
+        ] {
+            XCTAssertTrue(ClipboardPanelTextInputShortcutPolicy.defersToTextInput(
+                command,
+                isRenaming: false
+            ))
+        }
+    }
+
+    func testClipboardPasteWaitsForCapturedFocusButAlwaysHasBoundedFallback() {
+        XCTAssertTrue(ClipboardPasteFocusRestorationPolicy.shouldPostCommandV(
+            hasFocusSnapshot: false,
+            isFocusRestored: false,
+            attempt: 0
+        ))
+        XCTAssertTrue(ClipboardPasteFocusRestorationPolicy.shouldPostCommandV(
+            hasFocusSnapshot: true,
+            isFocusRestored: true,
+            attempt: 0
+        ))
+        XCTAssertFalse(ClipboardPasteFocusRestorationPolicy.shouldPostCommandV(
+            hasFocusSnapshot: true,
+            isFocusRestored: false,
+            attempt: 0
+        ))
+        XCTAssertTrue(ClipboardPasteFocusRestorationPolicy.shouldPostCommandV(
+            hasFocusSnapshot: true,
+            isFocusRestored: false,
+            attempt: ClipboardPasteFocusRestorationPolicy.maximumAttemptCount - 1
+        ))
+    }
+
+    @MainActor
+    func testClipboardPanelEnterCrossesRealTextFirstResponderGate() throws {
+        let viewModel = ClipboardHistoryViewModel(store: store)
+        let panel = ClipboardHistoryPanel(store: store, viewModel: viewModel)
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 100))
+        let searchField = NSTextField(frame: NSRect(x: 10, y: 30, width: 200, height: 24))
+        content.addSubview(searchField)
+        panel.contentView = content
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        XCTAssertTrue(panel.makeFirstResponder(searchField))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+        defer { panel.orderOut(nil) }
+
+        XCTAssertTrue(panel.firstResponder is NSText)
+        let enter = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: panel.windowNumber,
+            context: nil,
+            characters: "\r",
+            charactersIgnoringModifiers: "\r",
+            isARepeat: false,
+            keyCode: KeyCode.returnKey
+        ))
+
+        XCTAssertNil(panel.handleShortcutEvent(enter))
+        XCTAssertEqual(viewModel.pasteFeedback, "请先选择要粘贴的卡片")
     }
 
     func testRecentOrdering() throws {
@@ -118,6 +239,147 @@ final class ClipboardHistoryTests: XCTestCase {
         XCTAssertEqual(Set(ids).count, 205)
     }
 
+    func testCapsulePersistsSelectionOrderAndProtectsMembersFromPrune() throws {
+        try store.record(
+            kind: .text,
+            contentHash: "capsule-first",
+            text: "first",
+            assetPath: nil,
+            summary: "first",
+            sourceApp: "Notes"
+        )
+        try store.record(
+            kind: .text,
+            contentHash: "capsule-second",
+            text: "second",
+            assetPath: nil,
+            summary: "second",
+            sourceApp: "Notes"
+        )
+        let recent = try store.recent(limit: 10)
+        let first = try XCTUnwrap(recent.first { $0.contentHash == "capsule-first" })
+        let second = try XCTUnwrap(recent.first { $0.contentHash == "capsule-second" })
+
+        let capsule = try store.createCapsule(name: "安装步骤", items: [first, second])
+        let snapshot = try XCTUnwrap(store.capsuleSnapshots().first)
+
+        XCTAssertEqual(snapshot.capsule.id, capsule.id)
+        XCTAssertEqual(snapshot.capsule.name, "安装步骤")
+        XCTAssertEqual(snapshot.items.map(\.contentHash), ["capsule-first", "capsule-second"])
+
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE clipboardHistory SET capturedAt = ?",
+                arguments: [Date(timeIntervalSince1970: 0)]
+            )
+        }
+        store.prune(olderThanDays: 1)
+        XCTAssertEqual(try store.recent(limit: 10).count, 2)
+    }
+
+    func testCapsuleRenamePinAndDeleteAreIndependentFromHistory() throws {
+        try store.record(
+            kind: .text,
+            contentHash: "capsule-lifecycle",
+            text: "payload",
+            assetPath: nil,
+            summary: "payload",
+            sourceApp: nil
+        )
+        let item = try XCTUnwrap(store.recent(limit: 1).first)
+        let capsule = try store.createCapsule(name: "旧名称", items: [item])
+        let capsuleID = try XCTUnwrap(capsule.id)
+
+        store.renameCapsule("新名称", capsuleID: capsuleID)
+        store.setCapsulePinned(true, capsuleID: capsuleID)
+        let updated = try XCTUnwrap(store.capsuleSnapshots().first)
+        XCTAssertEqual(updated.capsule.name, "新名称")
+        XCTAssertTrue(updated.capsule.isPinned)
+
+        try store.record(
+            kind: .text,
+            contentHash: "capsule-replacement",
+            text: "replacement",
+            assetPath: nil,
+            summary: "replacement",
+            sourceApp: nil
+        )
+        let replacement = try XCTUnwrap(
+            store.recent(limit: 10).first { $0.contentHash == "capsule-replacement" }
+        )
+        try store.replaceCapsuleItems(capsuleID: capsuleID, items: [replacement, item])
+        XCTAssertEqual(
+            try store.capsuleSnapshots().first?.items.map(\.contentHash),
+            ["capsule-replacement", "capsule-lifecycle"]
+        )
+
+        store.deleteCapsule(capsuleID)
+        XCTAssertTrue(try store.capsuleSnapshots().isEmpty)
+        XCTAssertEqual(
+            Set(try store.recent(limit: 10).map(\.contentHash)),
+            Set(["capsule-lifecycle", "capsule-replacement"])
+        )
+    }
+
+    func testThreadBuilderGroupsNearbyRelatedCopiesAndLeavesSinglesOut() {
+        let base = Date(timeIntervalSince1970: 10_000)
+        let items = [
+            makeThreadItem(id: 1, text: "opencode 安装", source: "Safari", date: base),
+            makeThreadItem(id: 2, text: "opencode npm command", source: "Terminal", date: base.addingTimeInterval(90)),
+            makeThreadItem(id: 3, text: "unrelated", source: "Notes", date: base.addingTimeInterval(2_000)),
+        ]
+
+        let threads = ClipboardThreadBuilder.build(from: items)
+
+        XCTAssertEqual(threads.count, 1)
+        XCTAssertEqual(threads[0].items.map(\.id), [2, 1])
+        XCTAssertEqual(threads[0].title, "opencode")
+    }
+
+    func testThreadBuilderDoesNotMergeUnrelatedRapidCopiesByTimeAlone() {
+        let base = Date(timeIntervalSince1970: 20_000)
+        let items = [
+            makeThreadItem(id: 1, text: "quarterly budget", source: "Numbers", date: base),
+            makeThreadItem(id: 2, text: "holiday photo", source: "Photos", date: base.addingTimeInterval(20)),
+        ]
+
+        XCTAssertTrue(ClipboardThreadBuilder.build(from: items).isEmpty)
+    }
+
+    func testThreadBuilderKeepsSameSourceCopySequenceTogether() {
+        let base = Date(timeIntervalSince1970: 30_000)
+        let items = [
+            makeThreadItem(id: 1, text: "first command", source: "Terminal", date: base),
+            makeThreadItem(id: 2, text: "second result", source: "Terminal", date: base.addingTimeInterval(80)),
+        ]
+
+        let threads = ClipboardThreadBuilder.build(from: items)
+        XCTAssertEqual(threads.count, 1)
+        XCTAssertEqual(threads[0].title, "Terminal")
+    }
+
+    private func makeThreadItem(
+        id: Int64,
+        text: String,
+        source: String?,
+        date: Date
+    ) -> ClipboardHistoryItem {
+        ClipboardHistoryItem(
+            id: id,
+            kind: .text,
+            contentHash: "thread-\(id)",
+            text: text,
+            assetPath: nil,
+            summary: text,
+            sourceApp: source,
+            pinned: false,
+            capturedAt: date,
+            lastUsedAt: nil,
+            title: nil,
+            isFavorite: false
+        )
+    }
+
     func testDeleteRemovesAsset() throws {
         let data = Data("fake-png-bytes".utf8)
         let assetPath = try store.writeImageAsset(data, sha: "imgsha1")
@@ -155,6 +417,134 @@ final class ClipboardHistoryTests: XCTestCase {
         let longSummary = ClipboardHistoryCoordinator.summary(for: long)
         XCTAssertEqual(longSummary.count, 121, "120 字符 + 省略号")
         XCTAssertTrue(longSummary.hasSuffix("…"))
+    }
+
+    func testClipboardCardPresentationUsesUsefulFooterMetadata() {
+        let text = ClipboardHistoryItem(
+            id: 1,
+            kind: .text,
+            contentHash: "text",
+            text: "hello world",
+            assetPath: nil,
+            summary: "hello world",
+            sourceApp: "Safari",
+            pinned: false,
+            capturedAt: Date(),
+            lastUsedAt: nil,
+            title: nil,
+            isFavorite: false
+        )
+        var image = text
+        image.kind = .image
+        image.summary = "图片 2050×1445"
+
+        XCTAssertEqual(ClipboardCardPresentation.typeLabel(for: text.kind), "文本")
+        XCTAssertEqual(ClipboardCardPresentation.metadata(for: text), "11 个字符")
+        XCTAssertEqual(ClipboardCardPresentation.metadata(for: image), "2050×1445")
+    }
+
+    @MainActor
+    func testAppIconAccentExtractorKeepsBrandHueAndDarkensForWhiteText() throws {
+        let image = NSImage(size: NSSize(width: 32, height: 32))
+        image.lockFocus()
+        NSColor(calibratedRed: 0.92, green: 0.08, blue: 0.12, alpha: 1).setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 32, height: 32)).fill()
+        image.unlockFocus()
+
+        let color = try XCTUnwrap(
+            AppIconAccentExtractor.color(from: image)?.usingColorSpace(.sRGB)
+        )
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        color.getHue(
+            &hue,
+            saturation: &saturation,
+            brightness: &brightness,
+            alpha: nil
+        )
+        XCTAssertTrue(hue < 0.05 || hue > 0.95)
+        XCTAssertGreaterThan(saturation, 0.4)
+        func linear(_ component: CGFloat) -> Double {
+            let value = Double(component)
+            return value <= 0.04045
+                ? value / 12.92
+                : pow((value + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear(color.redComponent)
+            + 0.7152 * linear(color.greenComponent)
+            + 0.0722 * linear(color.blueComponent)
+        XCTAssertLessThanOrEqual(luminance, 0.17)
+    }
+
+    func testClipboardCardPresentationUsesCustomTitleWithoutReplacingMetadata() {
+        let item = ClipboardHistoryItem(
+            id: 1,
+            kind: .file,
+            contentHash: "file",
+            text: nil,
+            assetPath: "file.json",
+            summary: "report.pdf",
+            sourceApp: "Finder",
+            pinned: false,
+            capturedAt: Date(),
+            lastUsedAt: nil,
+            title: "季度报告",
+            isFavorite: false
+        )
+
+        XCTAssertEqual(ClipboardCardPresentation.displayTitle(for: item), "季度报告")
+        XCTAssertEqual(ClipboardCardPresentation.metadata(for: item), "report.pdf")
+        var untitled = item
+        untitled.title = nil
+        XCTAssertEqual(ClipboardCardPresentation.displayTitle(for: untitled), "文件")
+    }
+
+    func testRenameChangesTitleWithoutChangingClipboardKind() throws {
+        try store.record(
+            kind: .image,
+            contentHash: "rename-image",
+            text: nil,
+            assetPath: "rename-image.png",
+            summary: "图片 800×600",
+            sourceApp: "Preview"
+        )
+        let original = try XCTUnwrap(store.recent(limit: 1).first)
+
+        store.rename("设计参考", for: original)
+
+        let renamed = try XCTUnwrap(store.recent(limit: 1).first)
+        XCTAssertEqual(renamed.title, "设计参考")
+        XCTAssertEqual(renamed.kind, .image)
+
+        store.rename("  ", for: renamed)
+        let restored = try XCTUnwrap(store.recent(limit: 1).first)
+        XCTAssertNil(restored.title)
+        XCTAssertEqual(ClipboardCardPresentation.displayTitle(for: restored), "图片")
+    }
+
+    func testRenameFromStaleCardSnapshotPreservesNewerFlags() throws {
+        try store.record(
+            kind: .text,
+            contentHash: "rename-stale-snapshot",
+            text: "需要改名的内容",
+            assetPath: nil,
+            summary: "需要改名的内容",
+            sourceApp: "Notes"
+        )
+        let staleCard = try XCTUnwrap(store.recent(limit: 1).first)
+
+        store.setPinned(true, for: staleCard)
+        let pinned = try XCTUnwrap(store.recent(limit: 1).first)
+        store.setFavorite(true, for: pinned)
+
+        // 虚拟卡片仍可能持有改名前的旧快照；改名不得把较新的状态整行覆盖。
+        store.rename("新的名称", for: staleCard)
+
+        let renamed = try XCTUnwrap(store.recent(limit: 1).first)
+        XCTAssertEqual(renamed.title, "新的名称")
+        XCTAssertTrue(renamed.pinned)
+        XCTAssertTrue(renamed.isFavorite)
     }
 
     func testClipboardChangeGateSuppressesHistoryWriteBackOnlyOnce() {
@@ -229,6 +619,33 @@ final class ClipboardHistoryTests: XCTestCase {
         XCTAssertEqual(
             ClipboardHistoryViewModel.joinedTexts(["first", "second", "third"]),
             "first\nsecond\nthird"
+        )
+    }
+
+    @MainActor
+    func testLoadingAndReorderingQueueMakesTheOrderVisible() throws {
+        for index in 1...3 {
+            try store.record(
+                kind: .text,
+                contentHash: "reorder-\(index)",
+                text: "reorder-\(index)",
+                assetPath: nil,
+                summary: "reorder-\(index)",
+                sourceApp: nil
+            )
+        }
+        let items = try store.recent(limit: 10)
+        let viewModel = ClipboardHistoryViewModel(store: store)
+        viewModel.workspaceMode = .capsules
+
+        viewModel.loadPasteQueue(items)
+        XCTAssertEqual(viewModel.workspaceMode, .history)
+        XCTAssertTrue(viewModel.isContinuousSelectionEnabled)
+
+        viewModel.movePasteQueueItem(items[2], by: -1)
+        XCTAssertEqual(
+            viewModel.pasteQueueItems.map(\.id),
+            [items[0].id, items[2].id, items[1].id]
         )
     }
 

@@ -168,4 +168,27 @@ final class ShotAttributeRepositoryTests: XCTestCase {
         try repository.setFavorite(shotIDs: removed, isFavorite: false)
         XCTAssertEqual(try repository.favoriteIDs(), Set(shotIDs.dropFirst(removed.count)))
     }
+
+    func testLargeTagMutationUsesOneChunkSafeTransaction() throws {
+        let database = try makeDatabase()
+        let shotIDs = try insertShots(count: 1_205, into: database)
+        let repository = ShotAttributeRepository(database: database)
+
+        try repository.setTag(
+            shotIDs: shotIDs + [shotIDs[0], 9_999_999],
+            name: "批量",
+            isPresent: true
+        )
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: try repository.textCounts(key: AttributeKey.tag)),
+            ["批量": shotIDs.count]
+        )
+
+        let removed = Array(shotIDs.prefix(705))
+        try repository.setTag(shotIDs: removed, name: "批量", isPresent: false)
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: try repository.textCounts(key: AttributeKey.tag)),
+            ["批量": shotIDs.count - removed.count]
+        )
+    }
 }

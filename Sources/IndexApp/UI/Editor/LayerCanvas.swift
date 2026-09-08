@@ -2,6 +2,82 @@ import SwiftUI
 import AppKit
 import VisionKit
 
+/// AppKit 画布真正参与绘制的输入快照。CGImage 不可变，所以引用身份足以判断
+/// 底图/马赛克贴片是否换代；Layers 自身是 Equatable，可精确覆盖几何与样式变化。
+struct LayerCanvasVisualSnapshot: Equatable {
+    let imageIdentity: ObjectIdentifier
+    let layers: Layers<ImageSpace>
+    let previewIdentities: [UUID: ObjectIdentifier]
+    let selectedLayerID: UUID?
+    // 快照保留对应不可变图像，避免图像释放后 allocator 复用地址导致
+    // ObjectIdentifier 在两个逻辑代次之间偶然相同。
+    private let retainedImage: CGImage
+    private let retainedPreviews: [UUID: CGImage]
+
+    init(
+        image: CGImage,
+        layers: Layers<ImageSpace>,
+        pixelatePreviews: [UUID: CGImage],
+        selectedLayerID: UUID?
+    ) {
+        imageIdentity = ObjectIdentifier(image)
+        self.layers = layers
+        previewIdentities = pixelatePreviews.mapValues(ObjectIdentifier.init)
+        self.selectedLayerID = selectedLayerID
+        retainedImage = image
+        retainedPreviews = pixelatePreviews
+    }
+
+    static func == (lhs: LayerCanvasVisualSnapshot, rhs: LayerCanvasVisualSnapshot) -> Bool {
+        lhs.imageIdentity == rhs.imageIdentity
+            && lhs.layers == rhs.layers
+            && lhs.previewIdentities == rhs.previewIdentities
+            && lhs.selectedLayerID == rhs.selectedLayerID
+    }
+}
+
+struct LayerCanvasUpdateDecision: Equatable {
+    let imageChanged: Bool
+    let layersChanged: Bool
+    let previewsChanged: Bool
+    let selectionChanged: Bool
+
+    var needsDisplay: Bool {
+        imageChanged || layersChanged || previewsChanged || selectionChanged
+    }
+
+    /// Live Text 的分析输入是底图；纯选中态或矢量层变化不应重走同步路径。
+    var needsLiveTextSync: Bool { imageChanged }
+
+    static func compare(
+        previous: LayerCanvasVisualSnapshot?,
+        current: LayerCanvasVisualSnapshot
+    ) -> LayerCanvasUpdateDecision {
+        LayerCanvasUpdateDecision(
+            imageChanged: previous?.imageIdentity != current.imageIdentity,
+            layersChanged: previous?.layers != current.layers,
+            previewsChanged: previous?.previewIdentities != current.previewIdentities,
+            selectionChanged: previous?.selectedLayerID != current.selectedLayerID
+        )
+    }
+}
+
+enum CanvasInterpolationPolicy {
+    static func quality(isLiveResizing: Bool) -> CGInterpolationQuality {
+        isLiveResizing ? .low : .high
+    }
+}
+
+/// 画布上的主动操作必须优先于底图的 Live Text。
+///
+/// 放大并不会改变这个规则；只是放大后可见区域更容易被 OCR 文字框铺满，
+/// 旧逻辑会让系统选字层抢走大部分 mouseDown，看起来像标注工具整体失效。
+enum LayerCanvasInteractionPolicy {
+    static func allowsLiveText(annotationToolActive: Bool, handModeActive: Bool) -> Bool {
+        !annotationToolActive && !handModeActive
+    }
+}
+
 /// 图库窗口的 contentView 包装层。override `hitTest` 把「选字」鼠标事件
 /// 路由给系统 Live Text 层。
 ///
@@ -59,6 +135,15 @@ struct LayerCanvas: NSViewRepresentable {
     /// 正在拖的马赛克没有预算好的贴片，渲染器会画灰块占位。
     let pixelatePreviews: [UUID: CGImage]
     let selectedLayerID: UUID?
+    /// false 时标注或抓手接管鼠标，Live Text 不参与 hitTest。
+    let allowsLiveTextInteraction: Bool
+    /// 标注工具启用时由 AppKit 画布直接接管完整鼠标序列。
+    /// 不能继续依赖外层 NSHostingView 的 SwiftUI DragGesture：画布一旦大于
+    /// 视口进入滚动态，空命中的事件可能直接落给 NSScrollView。
+    let capturesAnnotationPointerEvents: Bool
+    var onAnnotationPointerBegan: ((CGPoint) -> Void)?
+    var onAnnotationPointerChanged: ((CGPoint) -> Void)?
+    var onAnnotationPointerEnded: (() -> Void)?
     /// 画布实例创建后回传引用，供外部调 `copyLiveTextSelection()` 等。
     var onCreated: ((CanvasView) -> Void)?
     /// 点是否落在某个标注图层上（图像像素坐标，左上原点）。
@@ -73,15 +158,32 @@ struct LayerCanvas: NSViewRepresentable {
     }
 
     func updateNSView(_ view: CanvasView, context: Context) {
+        let snapshot = LayerCanvasVisualSnapshot(
+            image: image,
+            layers: layers,
+            pixelatePreviews: pixelatePreviews,
+            selectedLayerID: selectedLayerID
+        )
+        let decision = LayerCanvasUpdateDecision.compare(
+            previous: view.visualSnapshot,
+            current: snapshot
+        )
+
         view.shotID = shotID
-        view.image = image
-        view.layers = layers
-        view.pixelatePreviews = pixelatePreviews
-        view.selectedLayerID = selectedLayerID
+        if decision.imageChanged { view.image = image }
+        if decision.layersChanged { view.layers = layers }
+        if decision.previewsChanged { view.pixelatePreviews = pixelatePreviews }
+        if decision.selectionChanged { view.selectedLayerID = selectedLayerID }
+        view.allowsLiveTextInteraction = allowsLiveTextInteraction
+        view.capturesAnnotationPointerEvents = capturesAnnotationPointerEvents
+        view.onAnnotationPointerBegan = onAnnotationPointerBegan
+        view.onAnnotationPointerChanged = onAnnotationPointerChanged
+        view.onAnnotationPointerEnded = onAnnotationPointerEnded
         view.layerHitTest = layerHitTest
-        view.needsDisplay = true
+        view.visualSnapshot = snapshot
+        if decision.needsDisplay { view.needsDisplay = true }
         // 底图换了要重跑分析（占位图 → 真图解码完成、马赛克重烤都会换引用）。
-        view.syncLiveTextAnalysisIfNeeded()
+        if decision.needsLiveTextSync { view.syncLiveTextAnalysisIfNeeded() }
     }
 }
 
@@ -109,8 +211,18 @@ final class CanvasView: NSView {
     var layers = Layers<ImageSpace>()
     var pixelatePreviews: [UUID: CGImage] = [:]
     var selectedLayerID: UUID?
+    /// 上一次已应用到 AppKit 属性的绘制输入；由 LayerCanvas.updateNSView 比较。
+    fileprivate var visualSnapshot: LayerCanvasVisualSnapshot?
     /// 点是否落在某个标注图层上（图像像素坐标，左上原点）。见 LayerCanvas.layerHitTest。
     var layerHitTest: ((CGPoint) -> Bool)?
+    /// 标注工具和抓手启用时由宿主关闭，避免系统选字层抢走拖拽序列。
+    var allowsLiveTextInteraction = true
+    /// true 时本视图必须成为 mouseDown 的命中对象，滚动容器不得截走事件。
+    var capturesAnnotationPointerEvents = false
+    var onAnnotationPointerBegan: ((CGPoint) -> Void)?
+    var onAnnotationPointerChanged: ((CGPoint) -> Void)?
+    var onAnnotationPointerEnded: (() -> Void)?
+    private var annotationPointerSequenceActive = false
 
     // MARK: - Live Text（与钉图同一模式：归一化坐标、hitTest 分流）
 
@@ -183,14 +295,16 @@ final class CanvasView: NSView {
     /// 十余秒才建好词级空间索引，期间恒为 false，是「时灵时不灵」的根源。
     /// OCR 框落地即可用、确定，外扩 2 像素让点字更容易命中（OCR 框偏紧）。
     func hasLiveTextInteractiveItem(atViewLocal local: CGPoint) -> Bool {
-        guard isLiveTextActive, liveTextOverlay != nil else { return false }
+        guard allowsLiveTextInteraction, isLiveTextActive, liveTextOverlay != nil else {
+            return false
+        }
         if layerHitTest?(imagePixelPoint(fromViewLocal: local)) == true { return false }
         let pixel = imagePixelPoint(fromViewLocal: local)
         return ocrRects.contains { $0.insetBy(dx: -2, dy: -2).contains(pixel) }
     }
 
     /// 视图本地坐标 → 图像像素坐标（左上原点），与 draw / SwiftUI 手势同一换算。
-    private func imagePixelPoint(fromViewLocal local: CGPoint) -> CGPoint {
+    func imagePixelPoint(fromViewLocal local: CGPoint) -> CGPoint {
         guard let image, bounds.width > 0 else { return .zero }
         let scale = bounds.width / CGFloat(image.width)
         return CGPoint(x: local.x / scale, y: (bounds.height - local.y) / scale)
@@ -307,12 +421,42 @@ final class CanvasView: NSView {
     // forwardMethod 无限递归（511 帧崩溃，死在 TextRecognition 野指针）。
 
     override func hitTest(_ point: NSPoint) -> NSView? {
+        // 标注工具是显式主动操作：让真正的画布成为事件目标，并在本地坐标里
+        // 处理完整序列。point 按 NSView.hitTest 契约已经是本视图坐标。
+        if capturesAnnotationPointerEvents, bounds.contains(point) { return self }
         guard isLiveTextActive, let overlay = liveTextOverlay else { return nil }
-        let local = convert(point, from: superview)
-        guard bounds.contains(local),
-              overlay.bounds.contains(overlay.convert(local, from: self)),
-              hasLiveTextInteractiveItem(atViewLocal: local) else { return nil }
-        return overlay.hitTest(overlay.convert(local, from: self)) ?? overlay
+        guard bounds.contains(point),
+              overlay.bounds.contains(overlay.convert(point, from: self)),
+              hasLiveTextInteractiveItem(atViewLocal: point) else { return nil }
+        return overlay.hitTest(overlay.convert(point, from: self)) ?? overlay
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard capturesAnnotationPointerEvents else {
+            super.mouseDown(with: event)
+            return
+        }
+        annotationPointerSequenceActive = true
+        let local = convert(event.locationInWindow, from: nil)
+        onAnnotationPointerBegan?(imagePixelPoint(fromViewLocal: local))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard annotationPointerSequenceActive else {
+            super.mouseDragged(with: event)
+            return
+        }
+        let local = convert(event.locationInWindow, from: nil)
+        onAnnotationPointerChanged?(imagePixelPoint(fromViewLocal: local))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard annotationPointerSequenceActive else {
+            super.mouseUp(with: event)
+            return
+        }
+        annotationPointerSequenceActive = false
+        onAnnotationPointerEnded?()
     }
 
     /// 窗口级路由入口（`LiveTextRoutingWindow.hitTest` 调用）：
@@ -337,13 +481,33 @@ final class CanvasView: NSView {
         if isLiveTextActive { applyLiveTextAnalysis() }
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        let sizeChanged = frame.size != newSize
+        super.setFrameSize(newSize)
+        // 尺寸变化是真正的视觉输入变化：live resize 每帧按新 bounds 重画；
+        // 普通 SwiftUI update 是否重画仍由 visualSnapshot 精确控制。
+        if sizeChanged { needsDisplay = true }
+    }
+
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        // 下一帧立刻切到低插值，避免沿用 live resize 前的高质量缓存。
+        needsDisplay = true
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        // live resize 期间最后一帧是低插值；结束后补一次高质量成图。
+        needsDisplay = true
+    }
+
     // MARK: - 绘制
 
     override func draw(_ dirtyRect: NSRect) {
         guard let image, let ctx = NSGraphicsContext.current?.cgContext else { return }
         guard bounds.width > 0, image.width > 0 else { return }
 
-        ctx.interpolationQuality = .high
+        ctx.interpolationQuality = CanvasInterpolationPolicy.quality(isLiveResizing: inLiveResize)
         ctx.draw(image, in: bounds)
 
         let scale = bounds.width / CGFloat(image.width)

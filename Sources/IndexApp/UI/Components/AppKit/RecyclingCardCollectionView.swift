@@ -1,6 +1,35 @@
 import AppKit
 import SwiftUI
 
+private struct RecyclingCardIsHoveredKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// 由 NSCollectionView 复用单元格提供的原生悬停状态。
+    /// 不依赖宿主 SwiftUI 根视图的 `.onHover`，因此根视图替换、
+    /// cell 复用和悬停按钮出现都不会改变命中区域。
+    var recyclingCardIsHovered: Bool {
+        get { self[RecyclingCardIsHoveredKey.self] }
+        set { self[RecyclingCardIsHoveredKey.self] = newValue }
+    }
+}
+
+/// 把复用 cell 的原生 hover 变成宿主卡片的显式输入。
+/// 不让 `EquatableView` 只因卡片模型没变就跳过环境变化。
+struct RecyclingCardHoverReader<Content: View>: View {
+    @Environment(\.recyclingCardIsHovered) private var isHovered
+    let content: (Bool) -> Content
+
+    init(@ViewBuilder content: @escaping (Bool) -> Content) {
+        self.content = content
+    }
+
+    var body: some View {
+        content(isHovered)
+    }
+}
+
 /// One lightweight section for AppKit's recycling card grid. The section owns
 /// model values only; actual card views are created on demand by NSCollectionView.
 struct RecyclingCardSection<Item: Identifiable & Equatable>: Identifiable, Equatable
@@ -34,6 +63,7 @@ struct RecyclingCardCollectionView<
     let pinsHeaders: Bool
     var scrollAxis: RecyclingCardScrollAxis = .vertical
     var handlesSelection = false
+    var selectionHitTest: (Item, NSPoint, NSSize) -> Bool = { _, _, _ in true }
     let scrollTarget: Item.ID?
     let card: (Item) -> Card
     let header: (RecyclingCardSection<Item>) -> Header
@@ -241,6 +271,9 @@ struct RecyclingCardCollectionView<
                 } : nil,
                 onDoubleClick: parent.handlesSelection ? { [weak self] in
                     self?.parent.onDoubleClick(model)
+                } : nil,
+                selectionHitTest: parent.handlesSelection ? { [weak self] point, size in
+                    self?.parent.selectionHitTest(model, point, size) ?? true
                 } : nil
             )
         }
@@ -369,6 +402,8 @@ final class RecyclingCardHostView: NSView {
     let scrollView = NSScrollView()
     let collectionView = NSCollectionView()
     private let flowLayout = NSCollectionViewFlowLayout()
+    private var viewportObserver: NSObjectProtocol?
+    private var hoverResyncWorkItem: DispatchWorkItem?
     fileprivate var layoutConfiguration: RecyclingCardLayoutConfiguration?
     fileprivate var resolvedSectionInsets: NSEdgeInsets?
     private var appliedItemSize = NSSize.zero
@@ -393,11 +428,50 @@ final class RecyclingCardHostView: NSView {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.contentView.drawsBackground = false
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        viewportObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.viewportDidMove() }
+        }
         addSubview(scrollView)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        hoverResyncWorkItem?.cancel()
+        if let viewportObserver {
+            NotificationCenter.default.removeObserver(viewportObserver)
+        }
+    }
+
+    /// Scrolling moves cells underneath a stationary pointer. AppKit may suppress
+    /// tracking-area enter/exit events during momentum, so clear any stale hover
+    /// immediately and perform one coordinate-based hit test after the viewport
+    /// settles. Bounds notifications also cover scrollbar and programmatic scrolls.
+    private func viewportDidMove() {
+        hoverResyncWorkItem?.cancel()
+        for item in collectionView.visibleItems() {
+            (item as? RecyclingHostingCollectionViewItem)?.suspendHoverForViewportMovement()
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                for item in self.collectionView.visibleItems() {
+                    (item as? RecyclingHostingCollectionViewItem)?
+                        .resumeHoverAfterViewportMovement()
+                }
+                self.hoverResyncWorkItem = nil
+            }
+        }
+        hoverResyncWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: workItem)
+    }
 
     override func layout() {
         super.layout()
@@ -484,21 +558,34 @@ private final class RecyclingHostingCollectionViewItem: NSCollectionViewItem,
     private var onEndDisplay: (() -> Void)?
     private var onSelect: ((NSEvent.ModifierFlags) -> Void)?
     private var onDoubleClick: (() -> Void)?
+    private var selectionHitTest: ((NSPoint, NSSize) -> Bool)?
     private var isDisplaying = false
     private var singleClick: NSClickGestureRecognizer!
     private var doubleClick: NSClickGestureRecognizer!
+    private let hoverState = RecyclingCardHoverState()
 
     override func loadView() {
         view = NSView(frame: .zero)
         singleClick = NSClickGestureRecognizer(target: self, action: #selector(handleSingleClick))
         singleClick.numberOfClicksRequired = 1
+        singleClick.delaysPrimaryMouseButtonEvents = false
         singleClick.delegate = self
         view.addGestureRecognizer(singleClick)
 
         doubleClick = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClick))
         doubleClick.numberOfClicksRequired = 2
+        doubleClick.delaysPrimaryMouseButtonEvents = false
         doubleClick.delegate = self
         view.addGestureRecognizer(doubleClick)
+
+        // 跟踪区属于稳定的 AppKit cell，而不是会反复替换 rootView 的
+        // NSHostingView。`.inVisibleRect` 会在复用和尺寸变化时自动跟随可见区域。
+        view.addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
     }
 
     func configure(
@@ -506,23 +593,38 @@ private final class RecyclingHostingCollectionViewItem: NSCollectionViewItem,
         onDisplay: @escaping () -> Void,
         onEndDisplay: @escaping () -> Void,
         onSelect: ((NSEvent.ModifierFlags) -> Void)?,
-        onDoubleClick: (() -> Void)?
+        onDoubleClick: (() -> Void)?,
+        selectionHitTest: ((NSPoint, NSSize) -> Bool)?
     ) {
         self.onDisplay = onDisplay
         self.onEndDisplay = onEndDisplay
         self.onSelect = onSelect
         self.onDoubleClick = onDoubleClick
+        self.selectionHitTest = selectionHitTest
         singleClick.isEnabled = onSelect != nil
         doubleClick.isEnabled = onDoubleClick != nil
+        let hostedRoot = AnyView(RecyclingCardHoverHost(
+            state: hoverState,
+            content: rootView
+        ))
         if let hostingView {
-            hostingView.rootView = rootView
+            hostingView.rootView = hostedRoot
         } else {
-            let hostingView = NSHostingView(rootView: rootView)
+            let hostingView = NSHostingView(rootView: hostedRoot)
             hostingView.frame = view.bounds
             hostingView.autoresizingMask = [.width, .height]
             view.addSubview(hostingView)
             self.hostingView = hostingView
         }
+        if isDisplaying { synchronizeHoverWithPointer() }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hoverState.setHovered(isDisplaying)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoverState.setHovered(false)
     }
 
     @objc private func handleSingleClick() {
@@ -533,6 +635,19 @@ private final class RecyclingHostingCollectionViewItem: NSCollectionViewItem,
 
     @objc private func handleDoubleClick() {
         onDoubleClick?()
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: NSGestureRecognizer) -> Bool {
+        guard gestureRecognizer === singleClick || gestureRecognizer === doubleClick,
+              let event = NSApp.currentEvent
+        else { return true }
+
+        let point = view.convert(event.locationInWindow, from: nil)
+        guard RecyclingCardClickRouting.shouldHandleCardClick(
+            hitView: view.hitTest(point),
+            cellView: view
+        ) else { return false }
+        return selectionHitTest?(point, view.bounds.size) ?? true
     }
 
     func gestureRecognizer(
@@ -547,23 +662,80 @@ private final class RecyclingHostingCollectionViewItem: NSCollectionViewItem,
     func beginDisplaying() {
         guard !isDisplaying else { return }
         isDisplaying = true
+        synchronizeHoverWithPointer()
         onDisplay?()
     }
 
     func endDisplaying() {
         guard isDisplaying else { return }
         isDisplaying = false
+        hoverState.setHovered(false)
         onEndDisplay?()
+    }
+
+    /// 新 cell 可能刚好在静止指针下出现（翻页、复用、窗口缩放），
+    /// 此时系统不一定再发 mouseEntered。用窗口当前鼠标位置对齐一次。
+    private func synchronizeHoverWithPointer() {
+        guard isDisplaying, let window = view.window else {
+            hoverState.setHovered(false)
+            return
+        }
+        let localPoint = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        hoverState.setHovered(view.bounds.contains(localPoint))
+    }
+
+    func suspendHoverForViewportMovement() {
+        hoverState.setHovered(false)
+    }
+
+    func resumeHoverAfterViewportMovement() {
+        synchronizeHoverWithPointer()
     }
 
     override func prepareForReuse() {
         endDisplaying()
+        hoverState.setHovered(false)
         hostingView?.rootView = AnyView(EmptyView())
         onDisplay = nil
         onEndDisplay = nil
         onSelect = nil
         onDoubleClick = nil
+        selectionHitTest = nil
         super.prepareForReuse()
+    }
+}
+
+/// 卡片级手势只处理内容表面；按钮、输入框和文本编辑器保留自己的事件。
+/// 独立成纯视图树判断，便于覆盖复用 cell 的事件路由契约。
+enum RecyclingCardClickRouting {
+    static func shouldHandleCardClick(hitView: NSView?, cellView: NSView) -> Bool {
+        var candidate = hitView
+        while let view = candidate, view !== cellView {
+            if view is NSControl || view is NSTextView {
+                return false
+            }
+            candidate = view.superview
+        }
+        return true
+    }
+}
+
+@MainActor
+private final class RecyclingCardHoverState: ObservableObject {
+    @Published private(set) var isHovered = false
+
+    func setHovered(_ hovered: Bool) {
+        guard hovered != isHovered else { return }
+        isHovered = hovered
+    }
+}
+
+private struct RecyclingCardHoverHost: View {
+    @ObservedObject var state: RecyclingCardHoverState
+    let content: AnyView
+
+    var body: some View {
+        content.environment(\.recyclingCardIsHovered, state.isHovered)
     }
 }
 

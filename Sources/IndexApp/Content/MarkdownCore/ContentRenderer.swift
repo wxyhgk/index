@@ -44,6 +44,7 @@ final class ContentRendererRegistry: Sendable {
         // 默认：图片渲染器（兜底）
         register(ImageContentRenderer())
         register(MarkdownContentRenderer())
+        register(CodeContentRenderer())
     }
 
     func register(_ renderer: any ContentRenderer) {

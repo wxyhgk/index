@@ -28,10 +28,10 @@ Services/Platform + Intelligence + Recording 侧挂
 
 | 层 | 文件 | 职责 |
 |---|---|---|
-| PAL 协议 | `Platform/Platform.swift` | 定义 `ClipboardWriting` / `ScreenshotCapturing` / `WindowPinning` 等协议，`App` 注入具体实现。未来 Windows 另实现 `WinClipboard` 等，上层不改。 |
-| macOS 实现 | `Platform/Clipboard.swift` `ImageExporter.swift` `SystemNavigator.swift` `AppAlert.swift` `WindowRegistry.swift` 等 | 真正调 `AppKit` / `NSPasteboard` / `NSAlert` / `NSOpenPanel` 的地方。`check.sh` 纪律一保证 `NSAlert`/`NSOpenPanel`/`runModal` 只在此目录。 |
+| PAL 协议 | `Platform/Platform.swift` | 定义 `ClipboardWriting` / `ScreenCapturing` / `WindowListing` / `MoleculePinning` 等已有生产实现和消费者的协议，由 `App` 注入具体实现。 |
+| macOS 实现 | `Platform/macOS/Clipboard/` `Platform/macOS/Windowing/` `Platform/macOS/Capture/` 等 | 真正调 `AppKit` / `NSPasteboard` / `NSAlert` / `NSOpenPanel` 的地方。`check.sh` 纪律一保证 `NSAlert`/`NSOpenPanel`/`runModal` 只在此目录。 |
 
-预留 PAL 映射（已在 `Platform/Platform.swift` 顶部注释成表）：`AppAlert→AlertPresenting`、`ImageExporter→FileExporting`、`SystemNavigator→SystemNavigating`、`WindowRegistry→WindowRegistryManaging` 等，按需逐个抽协议，保持 `@MainActor` 小接口。
+PAL 只保留已有生产实现和真实消费者的窄协议；出现可替换实现或测试隔离需求时再抽象，不提前建立占位协议。
 
 ## 目录
 
@@ -45,8 +45,8 @@ Services/Platform + Intelligence + Recording 侧挂
 | `Toolbar/` | 工具条注册：`ToolbarControl/Registry/Layout`，尺寸不依赖画布 | `ToolbarLayout` |
 | `Render/` | 唯一绘制：`LayerRenderer` | `LayerRenderer` |
 | `Storage/` | 非破坏修订：`ShotStore` + `ShotReading/Writing` 协议首刀 | `ShotStore/ShotReading` |
-| `Services/Platform` | 副作用收口：剪贴板、导出、窗口、AI HTTP/Keychain | `Clipboard/OpenAICompatibleSelectionAIProvider/SelectionAIKeychain` |
-| `Services/Intelligence` | OCR/CLIP/分类/敏感/选区智能契约 | `VisionOCR/CLIP*/SelectionAI/*` |
+| `Platform/` | macOS 副作用收口：剪贴板、导出、窗口、ScreenCaptureKit、Keychain | `macOS/Clipboard` `macOS/Capture` `macOS/Security` |
+| `Intelligence/` | OCR/CLIP/分类/敏感分析、选区智能契约与跨平台 HTTP Provider | `VisionOCR/CLIP*/SelectionAI/*` |
 | `Services/Recording` | 录屏 `ScreenRecorder/GIFExporter` | `ScreenRecorder` |
 | `Settings/` | 普通配置由 `AppSettings`（UserDefaults）管理；AI 密钥只经 Keychain | `AppSettings/SelectionAISettings` |
 | `Shelf/` | 暂存卡片真文件拖拽 | `ShelfController` |

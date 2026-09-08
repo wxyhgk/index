@@ -76,7 +76,8 @@ final class ClipboardHistoryStore: @unchecked Sendable {
         }
     }()
 
-    private let writer: any DatabaseWriter
+    /// 同一领域内的扩展仓库（例如胶囊）复用一个连接池和事务边界。
+    let writer: any DatabaseWriter
     /// 图片落盘目录（Application Support/Index/clipboard/）。
     let assetDirectory: URL
 
@@ -283,11 +284,16 @@ final class ClipboardHistoryStore: @unchecked Sendable {
     }
 
     func rename(_ title: String?, for item: ClipboardHistoryItem) {
+        guard let id = item.id else { return }
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = (trimmed?.isEmpty == false) ? trimmed : nil
         try? writer.write { db in
-            var updated = item
-            updated.title = (trimmed?.isEmpty == false) ? trimmed : nil
-            try updated.update(db)
+            // 改名只更新 title。卡片是列表快照，整行 update 会把编辑期间发生的
+            // 固定、收藏或 lastUsedAt 变化用旧值覆盖掉。
+            try db.execute(
+                sql: "UPDATE clipboardHistory SET title = ? WHERE id = ?",
+                arguments: [normalized, id]
+            )
         }
     }
 
@@ -327,6 +333,12 @@ final class ClipboardHistoryStore: @unchecked Sendable {
                 .filter(Column("capturedAt") < cutoff
                     && Column("pinned") == false
                     && Column("isFavorite") == false)
+                .filter(sql: """
+                    NOT EXISTS (
+                        SELECT 1 FROM clipboardCapsuleItem c
+                        WHERE c.clipboardID = clipboardHistory.id
+                    )
+                    """)
                 .fetchAll(db)
             for item in stale {
                 if let assetPath = item.assetPath {

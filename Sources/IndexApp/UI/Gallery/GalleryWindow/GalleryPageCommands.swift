@@ -9,6 +9,7 @@ import SwiftUI
 struct GalleryPageCommands {
     private let openEditorAction: @MainActor (Int64?) -> Void
     private let openMarkdownEditorAction: @MainActor (Int64?) -> Void
+    private let openCodeEditorAction: @MainActor (Int64?) -> Void
     private let openSettingsAction: @MainActor () -> Void
     private let returnToGalleryAction: @MainActor () -> Void
     private let presentQuickLookAction: @MainActor () -> Void
@@ -20,6 +21,7 @@ struct GalleryPageCommands {
     init(
         openEditor: @escaping @MainActor (Int64?) -> Void,
         openMarkdownEditor: @escaping @MainActor (Int64?) -> Void,
+        openCodeEditor: @escaping @MainActor (Int64?) -> Void,
         openSettings: @escaping @MainActor () -> Void,
         returnToGallery: @escaping @MainActor () -> Void,
         presentQuickLook: @escaping @MainActor () -> Void,
@@ -30,6 +32,7 @@ struct GalleryPageCommands {
     ) {
         openEditorAction = openEditor
         openMarkdownEditorAction = openMarkdownEditor
+        openCodeEditorAction = openCodeEditor
         openSettingsAction = openSettings
         returnToGalleryAction = returnToGallery
         presentQuickLookAction = presentQuickLook
@@ -41,6 +44,7 @@ struct GalleryPageCommands {
 
     @MainActor func openEditor(shotID: Int64?) { openEditorAction(shotID) }
     @MainActor func openMarkdownEditor(shotID: Int64?) { openMarkdownEditorAction(shotID) }
+    @MainActor func openCodeEditor(shotID: Int64?) { openCodeEditorAction(shotID) }
     @MainActor func openSettings() { openSettingsAction() }
     @MainActor func returnToGallery() { returnToGalleryAction() }
     @MainActor func presentQuickLook() { presentQuickLookAction() }
@@ -59,6 +63,9 @@ struct GalleryPageCommands {
             openEditor: { GalleryWindowController.shared.mode.openEditor(shotID: $0) },
             openMarkdownEditor: {
                 GalleryWindowController.shared.mode.openMarkdownEditor(shotID: $0)
+            },
+            openCodeEditor: {
+                GalleryWindowController.shared.mode.openCodeEditor(shotID: $0)
             },
             openSettings: { GalleryWindowController.shared.mode.openSettings() },
             returnToGallery: { GalleryWindowController.shared.mode.returnToGallery() },

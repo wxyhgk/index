@@ -133,7 +133,8 @@ struct SelectionAISettings: View {
                 configuration: .init(
                     baseURL: settings.intelligence.selectionAIBaseURL,
                     model: settings.intelligence.selectionAIModel
-                )
+                ),
+                credentialStore: MacSelectionAIKeychain.shared
             )
             let result = try await provider.perform(SelectionAIRequest(
                 task: .explain,

@@ -25,10 +25,13 @@ final class AgentPlugin: Plugin {
     private let ruleEngine = RuleEngine()
     private var tools: [AgentTool] = []
     private var settings: (any PluginPreferences)?
+    private var actionService: AgentActionService?
 
     func activate(_ ctx: PluginContext) {
         // 注册核心工具（agent 能调用的操作）
-        tools = Self.builtinTools(ctx: ctx)
+        let actionService = AgentActionService(store: ctx.shotStore)
+        tools = Self.builtinTools(ctx: ctx) + AgentActionTools.make(service: actionService)
+        self.actionService = actionService
         settings = ctx.settings
 
         // 挂 afterCapture hook：截图后跑本地规则引擎
@@ -42,6 +45,7 @@ final class AgentPlugin: Plugin {
         HookRegistry.shared.clear(.afterCapture)
         tools = []
         settings = nil
+        actionService = nil
     }
 
     /// agent 的工具表（= LLM function calling 的 tools）。

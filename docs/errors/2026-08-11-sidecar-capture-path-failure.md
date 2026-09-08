@@ -116,7 +116,7 @@ Xcode 15.2 SDK 的头文件也将 `CGDisplayCreateImage` 标为 macOS 15 obsolet
 
 主要实现位置：
 
-- `Platform/macOS/MacScreenCapturer.swift`：实时画布准备、拓扑和 Retina 结果校验；
+- `Platform/macOS/Capture/MacScreenCapturer.swift`：实时画布准备、拓扑和 Retina 结果校验；
 - `Platform/macOS/MacSystemDisplayCapturer.swift`：目标屏 Quartz bounds、系统截图子进程、超时、取消和进程回收；
 - `Capture/Overlay/OverlayView.swift`：确认选区后才发起冻结，并在冻结完成前阻止像素相关操作；
 - `Capture/Selection/SelectionOverlayController.swift`：把目标屏冻结结果安装回对应覆盖层；

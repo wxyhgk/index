@@ -1,6 +1,6 @@
 import Foundation
 
-/// 选区 AI 的唯一生产装配点。Capture/Toolbar 不认识具体服务，Platform Provider
+/// 选区 AI 的唯一生产装配点。Capture/Toolbar 不认识具体服务，HTTP Provider
 /// 也不反向读取 AppSettings；每次打开截图覆盖层时在这里冻结当前普通配置。
 @MainActor
 enum SelectionAIAssembly {

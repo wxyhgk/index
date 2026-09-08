@@ -400,6 +400,74 @@ enum AppDatabase {
             }
         }
 
+        // 剪贴板胶囊：用户确认保存的可复用粘贴序列。成员只引用历史条目，
+        // 不重复保存图片或文本；sortOrder 明确保留用户选择时的顺序。
+        migrator.registerMigration("v16_clipboard_capsules") { db in
+            try db.create(table: "clipboardCapsule") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("name", .text).notNull()
+                t.column("separator", .text).notNull().defaults(to: "newline")
+                t.column("isPinned", .boolean).notNull().defaults(to: false)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull().indexed()
+                t.column("lastUsedAt", .datetime)
+            }
+            try db.create(table: "clipboardCapsuleItem") { t in
+                t.column("capsuleID", .integer)
+                    .notNull()
+                    .references("clipboardCapsule", onDelete: .cascade)
+                t.column("clipboardID", .integer)
+                    .notNull()
+                    .references("clipboardHistory", onDelete: .cascade)
+                t.column("sortOrder", .integer).notNull()
+                t.column("addedAt", .datetime).notNull()
+                t.primaryKey(["capsuleID", "clipboardID"])
+            }
+            try db.create(
+                indexOn: "clipboardCapsuleItem",
+                columns: ["capsuleID", "sortOrder"]
+            )
+            try db.create(indexOn: "clipboardCapsuleItem", columns: ["clipboardID"])
+        }
+
+        // 便签体验升级：
+        // · shot 加 updatedAt（编辑时间，"继续上次便签"按此排序）
+        // · shot 加 markdownSource（Markdown 源码，进 FTS 可搜索）
+        // · 重建 shotFts 加 markdownSource 列
+        // · 迁移现有便签：ocrText 里的源码搬到 markdownSource
+        migrator.registerMigration("v17_markdown_source") { db in
+            try db.execute(sql: "ALTER TABLE shot ADD COLUMN updatedAt DATETIME")
+            try db.execute(sql: "ALTER TABLE shot ADD COLUMN markdownSource TEXT")
+            try db.create(indexOn: "shot", columns: ["updatedAt"])
+
+            // 迁移现有便签的 ocrText → markdownSource
+            try db.execute(sql: """
+                UPDATE shot SET markdownSource = ocrText
+                WHERE contentKind = 'markdown' AND ocrText IS NOT NULL AND markdownSource IS NULL
+                """)
+            // 清空 ocrText（语义归还给真正的 OCR 文本）
+            try db.execute(sql: """
+                UPDATE shot SET ocrText = NULL
+                WHERE contentKind = 'markdown'
+                """)
+
+            // 重建 shotFts（加 markdownSource 列）
+            for suffix in ["ai", "ad", "au"] {
+                try db.execute(sql: "DROP TRIGGER IF EXISTS __shotFts_\(suffix)")
+            }
+            try db.drop(table: "shotFts")
+            try db.create(virtualTable: "shotFts", using: FTS5()) { t in
+                t.tokenizer = FTS5TokenizerDescriptor(components: ["trigram"])
+                t.synchronize(withTable: "shot")
+                t.column("customTitle")
+                t.column("appName")
+                t.column("windowTitle")
+                t.column("sourceURL")
+                t.column("ocrText")
+                t.column("markdownSource")
+            }
+        }
+
         return migrator
     }
 }

@@ -221,6 +221,49 @@ struct ShotAttributeRepository {
         }
     }
 
+    /// 在一次事务中批量增删标签，避免多选时每张图单独提交并反复唤醒 WAL。
+    func setTag(shotIDs: [Int64], name: String, isPresent: Bool) throws {
+        let ids = Array(Set(shotIDs))
+        guard !ids.isEmpty else { return }
+
+        try database.write { db in
+            if !isPresent {
+                for start in stride(from: 0, to: ids.count, by: 500) {
+                    let chunk = Array(ids[start..<min(start + 500, ids.count)])
+                    try db.execute(sql: """
+                        DELETE FROM shotAttribute
+                        WHERE key = ? AND text = ?
+                          AND shotID IN (\(chunk.map { _ in "?" }.joined(separator: ",")))
+                        """, arguments: StatementArguments([AttributeKey.tag, name] + chunk))
+                }
+                return
+            }
+
+            let insert = try db.makeStatement(sql: """
+                INSERT INTO shotAttribute (shotID, key, text, payload, createdAt)
+                SELECT ?, ?, ?, NULL, ?
+                WHERE EXISTS (SELECT 1 FROM shot WHERE id = ?)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM shotAttribute
+                    WHERE shotID = ? AND key = ? AND text = ?
+                  )
+                """)
+            let now = Date()
+            for id in ids {
+                try insert.execute(arguments: [
+                    id,
+                    AttributeKey.tag,
+                    name,
+                    now,
+                    id,
+                    id,
+                    AttributeKey.tag,
+                    name,
+                ])
+            }
+        }
+    }
+
     func tags(shotID: Int64) throws -> [String] {
         try database.read { db in
             try String.fetchAll(db, sql: """

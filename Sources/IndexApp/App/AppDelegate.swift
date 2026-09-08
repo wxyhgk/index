@@ -362,7 +362,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.toggleSearchPanel()
         }
         GlobalHotKeyCenter.shared.bind("quick-note", to: settings.quickNoteShortcut) { [weak self] in
-            self?.toggleQuickNote()
+            self?.newQuickNote()
+        }
+        GlobalHotKeyCenter.shared.bind("quick-note-resume", to: settings.quickNoteResumeShortcut) { [weak self] in
+            self?.resumeQuickNote()
         }
         GlobalHotKeyCenter.shared.bind("agent", to: settings.agentShortcut) { [weak self] in
             self?.toggleAgent()
@@ -379,6 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotKeyCenter.shared.update("clipboard-history", to: settings.clipboardHistoryShortcut)
         GlobalHotKeyCenter.shared.update("search-panel", to: settings.searchPanelShortcut)
         GlobalHotKeyCenter.shared.update("quick-note", to: settings.quickNoteShortcut)
+        GlobalHotKeyCenter.shared.update("quick-note-resume", to: settings.quickNoteResumeShortcut)
         GlobalHotKeyCenter.shared.update("agent", to: settings.agentShortcut)
     }
 
@@ -447,8 +451,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SearchPanelCoordinator.shared.togglePanel()
     }
 
-    @objc private func toggleQuickNote() {
-        QuickNoteCoordinator.shared.toggle()
+    @objc private func newQuickNote() {
+        QuickNoteCoordinator.shared.showNew()
+    }
+
+    @objc private func resumeQuickNote() {
+        QuickNoteCoordinator.shared.showResume()
     }
 
     @objc private func toggleAgent() {

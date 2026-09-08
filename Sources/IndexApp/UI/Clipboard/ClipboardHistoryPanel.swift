@@ -5,12 +5,95 @@ import SwiftUI
 // MARK: - 剪贴板历史浮动面板
 //
 // Paste 式设计：横向卡片流，彩色标题栏（类型+时间+来源），
-// 键盘导航（←→ 选择 + Enter 复制 + Delete 删除），类型过滤。
+// 键盘导航（←→ 选择 + Enter 粘贴 + Delete 删除），类型过滤。
 //
 // 窗口用 nonactivatingPanel：它可以自己成为 key window 接收键盘事件，
 // 但不能激活整个 Index、把图库窗口所在的 Stage 一起拉到前台。
 // 点击面板外面自动关闭。
 // ============================================================
+
+enum ClipboardPanelShortcutCommand: Equatable {
+    case close
+    case movePrevious
+    case moveNext
+    case paste
+    case pasteAsPlainText
+    case copy
+    case rename
+    case delete
+    case previewStart
+    case previewEnd
+    case consume
+}
+
+enum ClipboardPanelShortcutResolver {
+    static func command(
+        keyCode: UInt16,
+        eventType: NSEvent.EventType,
+        modifiers: NSEvent.ModifierFlags,
+        isRepeat: Bool = false
+    ) -> ClipboardPanelShortcutCommand? {
+        let relevantModifiers = modifiers.intersection([.command, .shift, .option, .control])
+
+        if keyCode == KeyCode.space, relevantModifiers.isEmpty {
+            if eventType == .keyUp { return .previewEnd }
+            guard eventType == .keyDown else { return nil }
+            return isRepeat ? .consume : .previewStart
+        }
+        guard eventType == .keyDown else { return nil }
+
+        switch (keyCode, relevantModifiers) {
+        case (KeyCode.escape, []): return .close
+        case (KeyCode.left, []): return .movePrevious
+        case (KeyCode.right, []): return .moveNext
+        case (KeyCode.returnKey, []), (KeyCode.keypadEnter, []): return .paste
+        case (KeyCode.returnKey, [.shift]), (KeyCode.keypadEnter, [.shift]):
+            return .pasteAsPlainText
+        case (KeyCode.c, [.command]): return .copy
+        case (KeyCode.r, [.command]): return .rename
+        case (KeyCode.delete, []), (KeyCode.forwardDelete, []): return .delete
+        default: return nil
+        }
+    }
+}
+
+/// 搜索框通常会保留 first responder，以便用户打开面板后直接输入。
+/// 不能因此把 Paste 式命令全部交给 NSText；只有真正属于文本编辑的按键
+/// （字符、空格、光标移动、退格）才应留在搜索框。卡片标题改名期间则完全
+/// 交还原生 field editor，让 Enter/Esc 分别提交和取消改名。
+enum ClipboardPanelTextInputShortcutPolicy {
+    static func defersToTextInput(
+        _ command: ClipboardPanelShortcutCommand,
+        isRenaming: Bool
+    ) -> Bool {
+        if isRenaming { return true }
+        switch command {
+        case .paste, .pasteAsPlainText, .copy, .rename, .close:
+            return false
+        case .movePrevious, .moveNext, .delete, .previewStart, .previewEnd, .consume:
+            return true
+        }
+    }
+}
+
+@MainActor
+final class ClipboardHistoryPanelCommands: ObservableObject {
+    @Published private(set) var renameGeneration = 0
+    private(set) var isRenaming = false
+    var onCardInteraction: (() -> Void)?
+
+    func requestRename() {
+        renameGeneration &+= 1
+    }
+
+    func setRenaming(_ isRenaming: Bool) {
+        self.isRenaming = isRenaming
+    }
+
+    func prepareForCardInteraction() {
+        onCardInteraction?()
+    }
+}
 
 @MainActor
 final class ClipboardHistoryPanel: NSPanel {
@@ -20,6 +103,7 @@ final class ClipboardHistoryPanel: NSPanel {
     var onPanelShown: (() -> Void)?
 
     private var viewModel: ClipboardHistoryViewModel!
+    private let commands = ClipboardHistoryPanelCommands()
     private var localMonitor: Any?
     private var globalMonitor: Any?
     /// 钉住模式：点击外部不关闭。
@@ -56,8 +140,18 @@ final class ClipboardHistoryPanel: NSPanel {
         isMovable = true
         becomesKeyOnlyIfNeeded = false
         PanelPlacement.detachFromAppStage(self)
+        commands.onCardInteraction = { [weak self] in
+            // 卡片的点击由手势识别器完成，不会像原生可选列表那样自动接管
+            // first responder。显式结束搜索框的 field editor，随后方向键、
+            // Space 和 Delete 才归卡片流处理。
+            self?.makeFirstResponder(nil)
+        }
 
-        let root = ClipboardHistoryView(viewModel: resolvedViewModel, store: store)
+        let root = ClipboardHistoryView(
+            viewModel: resolvedViewModel,
+            commands: commands,
+            store: store
+        )
         let hosting = NSHostingController(rootView: root)
         hosting.view.wantsLayer = true
         hosting.view.layer?.cornerRadius = DS.radiusPanel
@@ -127,56 +221,71 @@ final class ClipboardHistoryPanel: NSPanel {
 
     private func installMonitors() {
         removeMonitors()
-        // 键盘导航：Esc 关闭，←→ 选择，Enter 粘贴，Delete 删除，空格 大图预览。
+        // 键盘导航集中由纯解析器解释。搜索框拿到 first responder 时仍接管
+        // Enter/Shift+Enter/⌘C/⌘R/Esc；重命名输入框则完全保留原生编辑语义。
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] (event: NSEvent) -> NSEvent? in
             guard let self else { return event }
-            // 焦点在文本输入框内时，放行按键给文本框（退格、方向键等）
-            if let responder = self.firstResponder, responder is NSText {
-                return event
-            }
-            // 空格键：按下显示大图，松开隐藏（类似 Finder Quick Look）。
-            // isARepeat 过滤：按住不放时系统连续发 keyDown，只在第一次按下时定位，
-            // 否则图片会跟着鼠标移动（每次 repeat 都用新的 mouseLocation 重新定位）。
-            if event.keyCode == 49 {
-                if event.type == .keyDown, !event.isARepeat {
-                    self.showPreviewForSelection()
-                } else if event.type == .keyUp {
-                    ImagePreviewController.shared.cancel()
-                }
-                return nil
-            }
-            guard event.type == .keyDown else { return event }
-            // Esc 始终关闭面板
-            if event.keyCode == 53 {
-                self.close()
-                return nil
-            }
-            switch event.keyCode {
-            case 123: // ←
-                self.viewModel.moveSelection(
-                    -1,
-                    preservingQueue: self.viewModel.isContinuousSelectionEnabled
-                )
-                return nil
-            case 124: // →
-                self.viewModel.moveSelection(
-                    1,
-                    preservingQueue: self.viewModel.isContinuousSelectionEnabled
-                )
-                return nil
-            case 36: // Enter = 粘贴选中项
-                self.viewModel.pasteSelected()
-                return nil
-            case 51, 117: // Delete / Forward Delete
-                self.viewModel.deleteSelected()
-                return nil
-            default:
-                return event
-            }
+            return self.handleShortcutEvent(event)
         }
         if !isPinned {
             installGlobalMonitor()
         }
+    }
+
+    /// 保持为独立事件入口，测试要覆盖真实 first-responder 门，而不只验证 keyCode 表。
+    func handleShortcutEvent(_ event: NSEvent) -> NSEvent? {
+        guard let command = ClipboardPanelShortcutResolver.command(
+                keyCode: event.keyCode,
+                eventType: event.type,
+                modifiers: event.modifierFlags,
+                isRepeat: event.isARepeat
+        ) else { return event }
+        if firstResponder is NSText,
+           ClipboardPanelTextInputShortcutPolicy.defersToTextInput(
+               command,
+               isRenaming: commands.isRenaming
+           ) {
+            return event
+        }
+
+        NSLog(
+            "[Index][ClipboardShortcut] command=%@ keyWindow=%d responder=%@",
+            String(describing: command),
+            isKeyWindow ? 1 : 0,
+            firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+        )
+
+        switch command {
+        case .close:
+            close()
+        case .movePrevious:
+            viewModel.moveSelection(
+                -1,
+                preservingQueue: viewModel.isContinuousSelectionEnabled
+            )
+        case .moveNext:
+            viewModel.moveSelection(
+                1,
+                preservingQueue: viewModel.isContinuousSelectionEnabled
+            )
+        case .paste:
+            viewModel.pasteSelected()
+        case .pasteAsPlainText:
+            viewModel.pasteSelectedAsPlainText()
+        case .copy:
+            viewModel.copySelected()
+        case .rename:
+            commands.requestRename()
+        case .delete:
+            viewModel.deleteSelected()
+        case .previewStart:
+            showPreviewForSelection()
+        case .previewEnd:
+            ImagePreviewController.shared.cancel()
+        case .consume:
+            break
+        }
+        return nil
     }
 
     /// 空格键触发：选中项是图片时显示大图预览。
@@ -245,6 +354,13 @@ final class ClipboardHistoryPanel: NSPanel {
     override func close() {
         // 面板关闭时取消图片预览，避免预览窗残留。
         ImagePreviewController.shared.cancel()
+        // nonactivatingPanel 可以在目标 App 仍 active 时成为 key window。关闭前先
+        // 结束 field editor 并释放 key 状态，让 WindowServer 把输入焦点交还给
+        // 原窗口；否则双击和 Enter 随后发出的 ⌘V 会落在“没有 key window”的间隙。
+        makeFirstResponder(nil)
+        if isKeyWindow {
+            resignKey()
+        }
         // 保存相对位置（比例），下次打开时按当前主屏尺寸还原。
         if let screen = NSScreen.main {
             let relX = (frame.midX - screen.frame.minX) / screen.frame.width

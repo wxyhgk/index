@@ -57,6 +57,9 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
     /// 类型化附件与真实 `shotAsset` 分开建模，避免测试替身掩盖旧属性依赖。
     private var moleculeSourceStore: [Int64: MoleculeSourceAttachment] = [:]
     private var recordingPathStore: [Int64: String] = [:]
+    /// 结构化正文。Fake 以 shotID 为键；`contentID` 仅用于对齐值类型字段。
+    private var codeStore: [Int64: ContentCode] = [:]
+    private var markdownStore: [Int64: String] = [:]
     /// 原图内存缓存：sha256 -> CGImage（供 originalImage 快速命中）
     private var imageCache: [String: CGImage] = [:]
 
@@ -161,6 +164,8 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         payloadStore.removeAll()
         moleculeSourceStore.removeAll()
         recordingPathStore.removeAll()
+        codeStore.removeAll()
+        markdownStore.removeAll()
         imageCache.removeAll()
         nextID = 1
         objectWillChange.send()
@@ -315,8 +320,29 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
     var totalCount: Int { shots.count }
 
     func markdownSource(for shot: Shot) -> String? {
-        // 内存版不维护 contentMarkdown 表，调用方兜底生成。
-        nil
+        shot.id.flatMap { markdownStore[$0] }
+    }
+
+    func pinnedShotIDs() -> Set<Int64> {
+        Set(shots.compactMap { shot in
+            guard let id = shot.id, shot.contentKind == "markdown", tags(shotID: id).contains("pinned") else { return nil }
+            return id
+        })
+    }
+
+    func markdownShots(query: String?, limit: Int) -> [Shot] {
+        var result = shots.filter { $0.contentKind == "markdown" }
+        if let query, !query.isEmpty {
+            result = result.filter { shot in
+                (shot.windowTitle ?? "").localizedCaseInsensitiveContains(query)
+                    || (shot.markdownSource ?? "").localizedCaseInsensitiveContains(query)
+            }
+        }
+        return Array(result.sorted { ($0.updatedAt ?? $0.capturedAt) > ($1.updatedAt ?? $1.capturedAt) }.prefix(limit))
+    }
+
+    func codeContent(for shot: Shot) -> ContentCode? {
+        shot.id.flatMap { codeStore[$0] }
     }
 
     // MARK: - 额外读辅助（供 GalleryBatch 以外调用方）
@@ -394,6 +420,8 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
             payloadStore[id] = nil
             moleculeSourceStore[id] = nil
             recordingPathStore[id] = nil
+            codeStore[id] = nil
+            markdownStore[id] = nil
             favoriteIDs.remove(id)
         }
         // 引用计数：sha 仍被剩余记录引用则保留文件
@@ -460,6 +488,29 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         objectWillChange.send()
     }
 
+    func setTag(shotIDs: [Int64], name rawName: String, isPresent: Bool) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let existing = Set(shots.compactMap(\.id))
+        for id in Set(shotIDs).intersection(existing) {
+            if isPresent {
+                tagsStore[id, default: []].insert(name)
+            } else {
+                tagsStore[id]?.remove(name)
+            }
+        }
+        objectWillChange.send()
+    }
+
+    func togglePin(shotID: Int64) {
+        if tagsStore[shotID]?.contains("pinned") == true {
+            tagsStore[shotID]?.remove("pinned")
+        } else {
+            tagsStore[shotID, default: []].insert("pinned")
+        }
+        objectWillChange.send()
+    }
+
     func renameTag(_ old: String, to new: String) {
         let name = new.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name != old else { return }
@@ -515,10 +566,25 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
     }
 
     func saveContent(for shotID: Int64, kind: ContentKind, payload: ContentPayload, updateKind: Bool) throws {
-        if let idx = shots.firstIndex(where: { $0.id == shotID }) {
-            if updateKind {
-                shots[idx].contentKind = kind.rawValue
-            }
+        guard let idx = shots.firstIndex(where: { $0.id == shotID }) else {
+            throw ShotStore.StoreError.missingShotID
+        }
+        if updateKind {
+            shots[idx].contentKind = kind.rawValue
+        }
+        switch payload {
+        case .markdown(let source):
+            markdownStore[shotID] = source
+            codeStore[shotID] = nil
+        case .code(let text, let language):
+            codeStore[shotID] = ContentCode(
+                contentID: shotID,
+                language: ContentCode.normalizedLanguage(language),
+                text: text
+            )
+            markdownStore[shotID] = nil
+        case .pdf:
+            break
         }
         objectWillChange.send()
     }
@@ -551,6 +617,44 @@ final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObser
         nextID += 1
         shot.id = id
         shots.insert(shot, at: 0)
+        markdownStore[id] = source
+        objectWillChange.send()
+        return shot
+    }
+
+    @discardableResult
+    func createCodeShot(title: String, text: String, language: String?) throws -> Shot {
+        var shot = Shot(
+            id: nil,
+            sha256: UUID().uuidString,
+            capturedAt: Date(),
+            pixelWidth: 0,
+            pixelHeight: 0,
+            scale: 1.0,
+            appName: nil,
+            appBundleID: nil,
+            appVersion: nil,
+            appBuild: nil,
+            windowTitle: title,
+            sourceURL: nil,
+            displayID: nil,
+            displayName: nil,
+            regionX: 0,
+            regionY: 0,
+            regionW: 0,
+            regionH: 0,
+            ocrText: nil
+        )
+        shot.contentKind = ContentKind.code.rawValue
+        let id = nextID
+        nextID += 1
+        shot.id = id
+        shots.insert(shot, at: 0)
+        codeStore[id] = ContentCode(
+            contentID: id,
+            language: ContentCode.normalizedLanguage(language),
+            text: text
+        )
         objectWillChange.send()
         return shot
     }

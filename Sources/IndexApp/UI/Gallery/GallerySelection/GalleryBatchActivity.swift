@@ -12,11 +12,13 @@ final class GalleryBatchActivity: ObservableObject {
     enum Kind: Equatable {
         case copy
         case export
+        case archive
 
         var title: String {
             switch self {
             case .copy: return "正在准备复制"
             case .export: return "正在导出"
+            case .archive: return "正在打包 ZIP"
             }
         }
     }

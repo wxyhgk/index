@@ -57,4 +57,6 @@ enum CardDoubleClickAction: Equatable {
     case none
     /// 在图库主窗口内打开 Markdown 编辑器。
     case openMarkdownEditor
+    /// 在图库主窗口内打开代码编辑器。
+    case openCodeEditor
 }

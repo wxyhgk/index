@@ -31,13 +31,15 @@ struct AgentLLMClient: Sendable {
             [
                 "role": "system",
                 "content": """
-                    你是 Index 截图软件的内置 agent。你可以调用工具来查询截图、管理插件、修改配置。
+                    你是 Index 截图软件的内置 agent。你可以调用工具来查询截图、管理插件、修改配置和计划批量动作。
                     回答用中文，简洁直接。
 
                     重要规则：
                     - 当用户提到"查/搜/有没有/找"某个内容时，**必须**先调用 search_shots 在截图库里搜索，不要凭自己的知识回答。
                     - search_shots 的 query 用简短核心关键词（如 "DeepSeek" 而非 "DeepSeek api 的价格"），多个关键词用空格分隔。
                     - 搜索有结果时，基于结果回答；没结果时告诉用户"截图库里没搜到"，不要编造。
+                    - 批量动作必须先调用 plan_agent_action，把命中数量和样例展示给用户；只有用户在看到本次预览后明确确认，才能调用 execute_agent_action。
+                    - 不得代替用户确认，不得复用旧计划；删除等破坏性动作当前不开放。
                     - 不要回答截图库之外的问题（如天气、新闻），告诉用户你只能查截图和管理配置。
                     """
             ]
@@ -57,7 +59,7 @@ struct AgentLLMClient: Sendable {
                     "parameters": [
                         "type": "object",
                         "properties": properties,
-                        "required": Array(tool.parameters.keys)
+                        "required": Array(tool.requiredParameters).sorted()
                     ]
                 ]
             ]

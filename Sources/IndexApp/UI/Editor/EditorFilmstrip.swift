@@ -40,6 +40,23 @@ enum EditorFilmstripWheel {
     }
 }
 
+enum EditorFilmstripItems {
+    /// 胶片条主体是最近项目；当前项目可能来自很早的搜索结果、不在最近一页里。
+    /// 这种情况下把当前项目补在最前面，保证高亮和滚动锚点永远存在。
+    static func mergingCurrent<Item>(
+        into recent: [Item],
+        current: Item?,
+        currentID: Int64?,
+        id: (Item) -> Int64?
+    ) -> [Item] {
+        guard let currentID,
+              !recent.contains(where: { id($0) == currentID }),
+              let current,
+              id(current) == currentID else { return recent }
+        return [current] + recent
+    }
+}
+
 /// SwiftUI 的横向 ScrollView 对普通鼠标纵向滚轮支持不稳定。
 ///
 /// 这枚零视觉背景只在自己的命中区域里监听滚轮，把“纵向为主”的 delta 写进
@@ -91,14 +108,19 @@ private struct EditorFilmstripWheelBridge: NSViewRepresentable {
             guard view.bounds.contains(point) else { return event }
 
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard modifiers.isEmpty,
-                  EditorFilmstripWheel.shouldConvert(
-                    deltaX: event.scrollingDeltaX,
-                    deltaY: event.scrollingDeltaY
-                  ),
-                  let scrollView = enclosingHorizontalScrollView(from: view),
-                  let documentView = scrollView.documentView
-            else { return event }
+            guard modifiers.isEmpty else { return event }
+            guard EditorFilmstripWheel.shouldConvert(
+                deltaX: event.scrollingDeltaX,
+                deltaY: event.scrollingDeltaY
+            ) else { return event }
+
+            // 光标已经在胶片条里，纵向滚轮的所有权就属于胶片条。
+            // 即使暂时找不到内部 SwiftUI NSScrollView，或已经到达左右边界，
+            // 也必须消费事件，不能让它继续影响上方编辑画布。
+            guard let scrollView = enclosingHorizontalScrollView(
+                from: view,
+                atWindowPoint: event.locationInWindow
+            ), let documentView = scrollView.documentView else { return nil }
 
             let clipView = scrollView.contentView
             let destination = EditorFilmstripWheel.destinationX(
@@ -108,7 +130,7 @@ private struct EditorFilmstripWheelBridge: NSViewRepresentable {
                 deltaY: event.scrollingDeltaY,
                 hasPreciseDeltas: event.hasPreciseScrollingDeltas
             )
-            guard destination != clipView.bounds.origin.x else { return event }
+            guard destination != clipView.bounds.origin.x else { return nil }
 
             clipView.scroll(to: CGPoint(x: destination, y: clipView.bounds.origin.y))
             scrollView.reflectScrolledClipView(clipView)
@@ -118,29 +140,53 @@ private struct EditorFilmstripWheelBridge: NSViewRepresentable {
         /// SwiftUI 可能把 representable 放在 documentView 内，也可能作为 ScrollView
         /// 的布局兄弟。先走 AppKit 的 enclosingScrollView，再在最近祖先的小子树中找
         /// 真正有横向溢出的那一枚，避免误命中编辑器画布的 NSScrollView。
-        private func enclosingHorizontalScrollView(from view: NSView) -> NSScrollView? {
+        private func enclosingHorizontalScrollView(
+            from view: NSView,
+            atWindowPoint windowPoint: CGPoint
+        ) -> NSScrollView? {
             if let scrollView = view.enclosingScrollView,
-               hasHorizontalOverflow(scrollView) {
+               isFilmstripScrollView(scrollView, atWindowPoint: windowPoint) {
                 return scrollView
             }
 
             var ancestor = view.superview
             while let candidate = ancestor {
-                if let scrollView = firstHorizontalScrollView(in: candidate) { return scrollView }
+                if let scrollView = firstHorizontalScrollView(
+                    in: candidate,
+                    atWindowPoint: windowPoint
+                ) { return scrollView }
                 ancestor = candidate.superview
             }
             return nil
         }
 
-        private func firstHorizontalScrollView(in root: NSView) -> NSScrollView? {
+        private func firstHorizontalScrollView(
+            in root: NSView,
+            atWindowPoint windowPoint: CGPoint
+        ) -> NSScrollView? {
             for child in root.subviews {
                 if let scrollView = child as? NSScrollView,
-                   hasHorizontalOverflow(scrollView) {
+                   isFilmstripScrollView(scrollView, atWindowPoint: windowPoint) {
                     return scrollView
                 }
-                if let nested = firstHorizontalScrollView(in: child) { return nested }
+                if let nested = firstHorizontalScrollView(
+                    in: child,
+                    atWindowPoint: windowPoint
+                ) { return nested }
             }
             return nil
+        }
+
+        private func isFilmstripScrollView(
+            _ scrollView: NSScrollView,
+            atWindowPoint windowPoint: CGPoint
+        ) -> Bool {
+            // CanvasScrollNSView 也会横向溢出，但它属于上方编辑画布，绝不能被
+            // 胶片条的 app 级滚轮监视器选中。
+            guard !(scrollView is CanvasScrollNSView),
+                  hasHorizontalOverflow(scrollView) else { return false }
+            let local = scrollView.convert(windowPoint, from: nil)
+            return scrollView.bounds.contains(local)
         }
 
         private func hasHorizontalOverflow(_ scrollView: NSScrollView) -> Bool {
@@ -150,14 +196,20 @@ private struct EditorFilmstripWheelBridge: NSViewRepresentable {
     }
 }
 
-/// 编辑器底部的胶片条（Snagit 式）：全库截图缩略图横排，不出编辑器直接换图。
+/// 编辑器底部的胶片条（Snagit 式）：最近项目缩略图横排，不出编辑器直接换图。
 ///
-/// 数据源是 `ShotStore.allShots()` —— 全库时间倒序，**刻意不跟图库的搜索 / 筛选联动**：
+/// 数据源是 `ShotStore.allShots()` —— 最近一页时间倒序，**刻意不跟图库的搜索 / 筛选联动**：
 /// 编辑器换图的心智是「库里最近截了什么」，不该被另一个窗口的筛选状态牵着走。
+/// 当前项目若不在最近一页（例如从很早的搜索结果进入），会单独补到最前面。
 /// 订阅 store 的变更通知刷新，新截图 / 删除都会即时体现。
 ///
 /// 自带顶部 Divider，由稳定的 `EditorModeView` 放在会话化画布之外。
 struct EditorFilmstrip: View, Equatable {
+
+    private struct CurrentResolutionID: Hashable {
+        let currentShotID: Int64?
+        let isAlreadyRecent: Bool
+    }
 
     /// 相等性**只看当前编辑的是哪张图**。
     ///
@@ -182,10 +234,28 @@ struct EditorFilmstrip: View, Equatable {
     @AppStorage(PagePreferences.editorFilmstripCollapsed.key)
     private var collapsed = PagePreferences.editorFilmstripCollapsed.defaultValue
 
-    @State private var shots: [Shot] = []
+    @State private var recentShots: [Shot] = []
+    @State private var currentFallback: Shot?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let store: ShotStore
+
+    private var shots: [Shot] {
+        EditorFilmstripItems.mergingCurrent(
+            into: recentShots,
+            current: currentFallback,
+            currentID: currentShotID,
+            id: \.id
+        )
+    }
+
+    private var currentResolutionID: CurrentResolutionID {
+        CurrentResolutionID(
+            currentShotID: currentShotID,
+            isAlreadyRecent: recentShots.contains { $0.id == currentShotID }
+        )
+    }
 
     init(currentShotID: Int64?, onSelect: @escaping (Shot) -> Void, store: ShotStore = .shared) {
         self.currentShotID = currentShotID
@@ -198,7 +268,7 @@ struct EditorFilmstrip: View, Equatable {
             Divider()
             HStack(spacing: 0) {
                 if collapsed {
-                    Text("胶片条（\(shots.count)）")
+                    Text("最近项目（\(shots.count)）")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .padding(.leading, DS.s4)
@@ -211,6 +281,9 @@ struct EditorFilmstrip: View, Equatable {
             .frame(height: collapsed ? 24 : 72)
         }
         .onAppear(perform: refresh)
+        .task(id: currentResolutionID) {
+            await resolveCurrentFallback()
+        }
         // 只订「库存内容变了」，**不订 objectWillChange**。
         //
         // 后者任何写入都会发，包括编辑器自己每隔一秒多的一次修订保存 ——
@@ -285,6 +358,7 @@ struct EditorFilmstrip: View, Equatable {
         .help(shot.sourceSummary)
         .accessibilityLabel(shot.primaryDisplayName)
         .accessibilityValue(isCurrent ? "当前正在编辑" : "")
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 
     private func scrollToCurrent(_ proxy: ScrollViewProxy, animated: Bool) {
@@ -302,7 +376,11 @@ struct EditorFilmstrip: View, Equatable {
 
     private var toggleButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) { collapsed.toggle() }
+            if reduceMotion {
+                collapsed.toggle()
+            } else {
+                withAnimation(.easeInOut(duration: 0.15)) { collapsed.toggle() }
+            }
         } label: {
             Image(systemName: collapsed ? "chevron.up" : "chevron.down")
                 .font(.caption)
@@ -313,6 +391,7 @@ struct EditorFilmstrip: View, Equatable {
         .foregroundStyle(.secondary)
         .padding(.trailing, DS.s2)
         .help(collapsed ? "展开胶片条" : "收起胶片条")
+        .accessibilityLabel(collapsed ? "展开最近项目" : "收起最近项目")
     }
 
     /// 重查全库。
@@ -329,7 +408,17 @@ struct EditorFilmstrip: View, Equatable {
         let latest = store.allShots()
         // Shot 是 Equatable，但逐个比对 500 个结构体也不必要：
         // 胶片条只关心「有哪些图、什么顺序」，比 ID 序列就够了。
-        guard latest.map(\.id) != shots.map(\.id) else { return }
-        shots = latest
+        guard latest.map(\.id) != recentShots.map(\.id) else { return }
+        recentShots = latest
+    }
+
+    private func resolveCurrentFallback() async {
+        currentFallback = nil
+        guard let currentShotID,
+              !recentShots.contains(where: { $0.id == currentShotID }) else { return }
+
+        let resolved = await store.shotsInBackground(ids: [currentShotID]).first
+        guard self.currentShotID == currentShotID else { return }
+        currentFallback = resolved
     }
 }

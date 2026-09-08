@@ -121,6 +121,7 @@ final class AppSettings: ObservableObject {
         static let clipboardHistoryShortcut = "clipboardHistoryShortcut"
         static let searchPanelShortcut = "searchPanelShortcut"
         static let quickNoteShortcut = "quickNoteShortcut"
+        static let quickNoteResumeShortcut = "quickNoteResumeShortcut"
         static let agentShortcut = "agentShortcut"
 
         static let clipboardHistoryEnabled = "clipboardHistoryEnabled"
@@ -133,7 +134,7 @@ final class AppSettings: ObservableObject {
         static let agentAPIKey = "agentAPIKey"
     }
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
 
     // MARK: - 领域偏好（@Published 驱动 UI 绑定，didSet 落盘）
 
@@ -222,6 +223,9 @@ final class AppSettings: ObservableObject {
             store(shortcuts.scrollCaptureShortcut, forKey: Keys.scrollCaptureShortcut)
             store(shortcuts.moleculePinShortcut, forKey: Keys.moleculePinShortcut)
             store(shortcuts.clipboardHistoryShortcut, forKey: Keys.clipboardHistoryShortcut)
+            store(shortcuts.searchPanelShortcut, forKey: Keys.searchPanelShortcut)
+            store(shortcuts.quickNoteShortcut, forKey: Keys.quickNoteShortcut)
+            store(shortcuts.quickNoteResumeShortcut, forKey: Keys.quickNoteResumeShortcut)
             store(shortcuts.agentShortcut, forKey: Keys.agentShortcut)
             onShortcutsChanged?()
         }
@@ -264,7 +268,8 @@ final class AppSettings: ObservableObject {
 
     // MARK: - 装配
 
-    private init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         // 默认值单一真相源：全部取自 XxxPrefs.defaults。
         defaults.register(defaults: [
             Keys.copyToClipboard: CapturePrefs.defaults.copyToClipboard,
@@ -387,6 +392,7 @@ final class AppSettings: ObservableObject {
             clipboardHistoryShortcut: Self.load(Keys.clipboardHistoryShortcut, from: defaults) ?? .clipboardHistoryDefault,
             searchPanelShortcut: Self.load(Keys.searchPanelShortcut, from: defaults) ?? .searchPanelDefault,
             quickNoteShortcut: Self.load(Keys.quickNoteShortcut, from: defaults) ?? .quickNoteDefault,
+            quickNoteResumeShortcut: Self.load(Keys.quickNoteResumeShortcut, from: defaults) ?? .quickNoteResumeDefault,
             agentShortcut: Self.load(Keys.agentShortcut, from: defaults) ?? .agentDefault
         )
         clipboardHistory = ClipboardHistoryPrefs(
@@ -500,6 +506,7 @@ extension AppSettings: CapturePreferences, RecordingPreferences, ExportPreferenc
     var clipboardHistoryShortcut: KeyboardShortcut { shortcuts.clipboardHistoryShortcut }
     var searchPanelShortcut: KeyboardShortcut { shortcuts.searchPanelShortcut }
     var quickNoteShortcut: KeyboardShortcut { shortcuts.quickNoteShortcut }
+    var quickNoteResumeShortcut: KeyboardShortcut { shortcuts.quickNoteResumeShortcut }
     var agentShortcut: KeyboardShortcut { shortcuts.agentShortcut }
 
     var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }

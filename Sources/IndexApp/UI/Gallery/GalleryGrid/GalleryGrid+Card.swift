@@ -46,7 +46,8 @@ extension GalleryGrid {
     func card(
         for shot: Shot,
         height: CGFloat,
-        reportsVisibility: Bool = true
+        reportsVisibility: Bool = true,
+        isHovering: Bool = false
     ) -> some View {
         if !isScrolling,
            !isLiveResizing,
@@ -57,14 +58,16 @@ extension GalleryGrid {
             cardBody(
                 for: shot,
                 height: height,
-                reportsVisibility: reportsVisibility
+                reportsVisibility: reportsVisibility,
+                isHovering: isHovering
             )
             .scrollDepth()
         } else {
             cardBody(
                 for: shot,
                 height: height,
-                reportsVisibility: reportsVisibility
+                reportsVisibility: reportsVisibility,
+                isHovering: isHovering
             )
         }
     }
@@ -72,7 +75,8 @@ extension GalleryGrid {
     func cardBody(
         for shot: Shot,
         height: CGFloat,
-        reportsVisibility: Bool = true
+        reportsVisibility: Bool = true,
+        isHovering: Bool = false
     ) -> some View {
         return ShotCard(
             shot: shot,
@@ -80,6 +84,7 @@ extension GalleryGrid {
             isSelected: selection.isSelected(shot.id),
             isFavorite: shot.id.map(store.isFavorite) ?? false,
             isRecording: recordingAsset(for: shot).isRecording,
+            isHovering: isHovering,
             onToggleFavorite: { store.toggleFavorite(shot) }
         )
         .equatable()
@@ -98,6 +103,10 @@ extension GalleryGrid {
                 let mode = PluginRegistry.shared.mode(for: ContentKind(rawValue: shot.contentKind) ?? .image)
                 if mode.doubleClick == .openMarkdownEditor {
                     pageCommands.openMarkdownEditor(shotID: shot.id)
+                    return
+                }
+                if mode.doubleClick == .openCodeEditor {
+                    pageCommands.openCodeEditor(shotID: shot.id)
                     return
                 }
                 pageCommands.performPrimaryRecordingAction(
@@ -180,6 +189,10 @@ extension GalleryGrid {
         .disabled(batchActivity.isBusy)
         Button("导出 \(count) 张…") {
             Task { _ = await GalleryBatch.exportAll(ids: ids) }
+        }
+        .disabled(batchActivity.isBusy)
+        Button("导出为 ZIP…") {
+            Task { _ = await GalleryBatch.exportZIP(ids: ids) }
         }
         .disabled(batchActivity.isBusy)
         Divider()

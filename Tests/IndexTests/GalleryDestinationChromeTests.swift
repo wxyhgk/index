@@ -13,6 +13,7 @@ final class GalleryDestinationChromeTests: XCTestCase {
                 showsSearch: true,
                 showsLayoutControls: true,
                 showsInspector: true,
+                inspectorRequiresSelection: true,
                 showsThumbnailSizePicker: true
             )
         )
@@ -23,15 +24,19 @@ final class GalleryDestinationChromeTests: XCTestCase {
         XCTAssertFalse(GalleryDestinationChrome.recordings.showsMarkdownControl)
         XCTAssertTrue(GalleryDestinationChrome.recordings.showsCaptureControl)
         XCTAssertTrue(GalleryDestinationChrome.recordings.showsInspector)
+        XCTAssertTrue(GalleryDestinationChrome.recordings.inspectorRequiresSelection)
 
         XCTAssertEqual(
             .clipboard,
             GalleryDestinationChrome(
                 showsSearch: false,
                 showsLayoutControls: false,
-                showsInspector: true
+                showsInspector: true,
+                inspectorRequiresSelection: false
             )
         )
+        XCTAssertFalse(GalleryDestinationChrome.clipboard.inspectorRequiresSelection)
+        XCTAssertTrue(GalleryDestinationChrome.clipboard.canPresentInspector(hasSelection: false))
 
         XCTAssertEqual(
             .conversation,
@@ -41,6 +46,12 @@ final class GalleryDestinationChromeTests: XCTestCase {
                 showsInspector: false
             )
         )
+    }
+
+    func testScreenshotInspectorOnlyPresentsAfterSelection() {
+        XCTAssertFalse(GalleryDestinationChrome.library.canPresentInspector(hasSelection: false))
+        XCTAssertTrue(GalleryDestinationChrome.library.canPresentInspector(hasSelection: true))
+        XCTAssertFalse(GalleryDestinationChrome.conversation.canPresentInspector(hasSelection: true))
     }
 
     func testOverviewAndDrillChangeTheWholePageCapabilitySnapshot() {

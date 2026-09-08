@@ -40,4 +40,18 @@ enum BuiltinContentModes {
             "italic": KeyboardShortcut(keyCode: 75, modifiers: UInt32(cmdKey)),
         ]
     )
+
+    /// 代码片段模式：使用轻量等宽预览，双击在图库主窗口内编辑。
+    static let codeMode = ContentMode(
+        kind: .code,
+        label: "代码",
+        barColor: Color(nsColor: .systemIndigo),
+        icon: NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: "代码"),
+        caption: { shot in
+            (shot.customTitle ?? shot.windowTitle ?? "代码片段", "代码")
+        },
+        renderer: CodeContentRenderer(),
+        doubleClick: .openCodeEditor,
+        keymap: [:]
+    )
 }

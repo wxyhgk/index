@@ -24,16 +24,14 @@ struct GalleryFloatingToolbar: View {
     /// 设计稿 §5 的 540 × 56。宽度是**上限**不是定值 ——
     /// 窗口收到最小宽（1000）时中栏只剩 350 上下，写死 540 会横向溢出。
     /// 网格的底部让位高度（`contentBottomInset`）也读这里，两边同一份常量。
-    static let barHeight: CGFloat = 56
-    static let maxWidth: CGFloat = 540
+    static var barHeight: CGFloat { DS.floatingToolbarHeight }
+    static var maxWidth: CGFloat { DS.floatingToolbarMaxWidth }
 
     @ObservedObject var viewModel: GalleryViewModel
     /// 语义搜索命中数（`visibleShots.count`）——状态文案要报它。
     let visibleCount: Int
     @Binding var layoutMode: GalleryLayoutKind
     @Binding var zoom: Double
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: DS.s3) {
@@ -67,20 +65,7 @@ struct GalleryFloatingToolbar: View {
     /// 挂常驻 `.animation(value:)` —— 后者会让网格里任何一次尺寸变化（比如缩放滑杆）
     /// 都被顺带动画掉。
     private var layoutPicker: some View {
-        Picker("显示模式", selection: Binding(
-            get: { layoutMode },
-            set: { newValue in
-                withAnimation(DS.Motion.standard(reduced: reduceMotion)) { layoutMode = newValue }
-            }
-        )) {
-            ForEach(GalleryLayoutKind.allCases, id: \.self) { kind in
-                Image(systemName: kind.symbol).tag(kind)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        .help("网格：整齐等高，超出裁切；瀑布：等宽不裁切，完整显示长图")
+        GalleryLayoutPicker(layoutMode: $layoutMode)
     }
 
     /// 缩放滑杆：左端小图标、中间滑杆、右端大图标（设计稿 §5）。
@@ -92,8 +77,8 @@ struct GalleryFloatingToolbar: View {
                 .foregroundStyle(.tertiary)
             // maxWidth 而不是 width：窗口窄到中栏只剩几百点时，滑杆先让位，
             // 而不是把分段控件挤出胶囊。
-            Slider(value: $zoom, in: 140...320)
-                .frame(maxWidth: 200)
+            Slider(value: $zoom, in: DS.zoomRange)
+                .frame(maxWidth: DS.zoomSliderMaxWidth)
                 .controlSize(.small)
                 .accessibilityLabel("缩略图大小")
             Image(systemName: "square.grid.2x2")

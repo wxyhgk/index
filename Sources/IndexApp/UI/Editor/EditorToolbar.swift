@@ -8,9 +8,19 @@ struct EditorToolbar: View {
     @ObservedObject var model: EditorModel
     var textFieldFocused: FocusState<Bool>.Binding
 
-    /// 唯一真相：跟覆盖层/钉图的 `ToolControl` 同源 `BuiltinTools.all`，声明顺序即展示顺序。
-    private static var toolOrder: [AnnotationTool?] {
-        [nil] + BuiltinTools.all.map(\.tool)
+    /// 与覆盖层 / 钉图共用同一个“常驻工具”契约。低频工具不再一次铺满
+    /// 顶栏；从“更多”激活后临时露在常驻工具后面，用户仍能看见当前模式。
+    private var visibleDrawingTools: [AnnotationTool] {
+        var tools = BuiltinTools.all.filter(\.isPinnedToBar).map { $0.tool }
+        if let active = annotation.tool,
+           !ToolRegistry.descriptor(for: active).isPinnedToBar {
+            tools.append(active)
+        }
+        return tools
+    }
+
+    private var overflowTools: [AnnotationTool] {
+        BuiltinTools.all.filter { !$0.isPinnedToBar }.map(\.tool)
     }
 
     var body: some View {
@@ -35,9 +45,10 @@ struct EditorToolbar: View {
             HStack(spacing: DS.s1 / 2) {
                 toolButton(nil)
                 handButton
-                ForEach(Array(Self.toolOrder.dropFirst().enumerated()), id: \.offset) { _, tool in
+                ForEach(visibleDrawingTools, id: \.self) { tool in
                     toolButton(tool)
                 }
+                overflowMenu
             }
 
             Spacer(minLength: DS.s2)
@@ -135,6 +146,34 @@ struct EditorToolbar: View {
         .help(disabled
               ? "抓手：放大后可拖拽平移画布（按住空格临时抓手）"
               : "抓手：拖拽平移画布（按住空格临时抓手）")
+    }
+
+    private var overflowMenu: some View {
+        Menu {
+            ForEach(overflowTools, id: \.self) { tool in
+                Button {
+                    selectTool(tool)
+                } label: {
+                    Label(tool.title, systemImage: tool.symbolName)
+                }
+                .keyboardShortcut(bareKeyShortcut(
+                    AnnotationTool.shortcuts.first { $0.tool == tool }?.label
+                ))
+            }
+        } label: {
+            VStack(spacing: DS.s1 - 1) {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: DS.font15))
+                    .frame(height: 18)
+                Text("更多")
+                    .font(.caption2)
+            }
+            .frame(width: 48, height: 44)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("更多标注工具")
     }
 
     private func toggleHandMode() {

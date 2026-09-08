@@ -64,9 +64,11 @@ struct EditorCanvasScrollView<Content: View>: NSViewRepresentable {
     func makeNSView(context: Context) -> CanvasScrollNSView {
         let scroll = CanvasScrollNSView()
         scroll.drawsBackground = false
-        scroll.hasHorizontalScroller = true
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
+        // 编辑器是无限画布语义，不是文档阅读器：保留 NSScrollView 的滚动、
+        // 触控板与程序化平移能力，但不展示会遮住图片的传统滚动条。
+        // 抓手、空格拖动、中键和滚轮已经提供了完整的空间导航。
+        scroll.hasHorizontalScroller = false
+        scroll.hasVerticalScroller = false
         scroll.allowsMagnification = false
         let host = NSHostingView(rootView: content())
         // 尺寸完全由 contentSize 驱动（内容已显式 .frame），不让 SwiftUI 反向撑。

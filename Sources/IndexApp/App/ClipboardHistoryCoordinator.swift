@@ -21,8 +21,8 @@ final class ClipboardHistoryCoordinator {
     private let store: ClipboardHistoryStore
     private let recorder: ClipboardHistoryRecorder
     private var panel: ClipboardHistoryPanel?
-    /// 面板打开前的前台应用，粘贴时恢复焦点到它。
-    private var previousFrontmostApp: NSRunningApplication?
+    /// 面板打开前的应用、窗口与输入控件，粘贴时逐层恢复。
+    private var previousPasteTarget: ClipboardPasteTarget?
 
     /// 面板显示状态的观察者（菜单栏/设置用）。
     var onPanelVisibilityChanged: ((Bool) -> Void)?
@@ -72,8 +72,13 @@ final class ClipboardHistoryCoordinator {
         // 记住打开面板前的前台应用（排除 Index 自身），粘贴时恢复焦点到它。
         let frontmost = NSWorkspace.shared.frontmostApplication
         if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
-            previousFrontmostApp = frontmost
+            previousPasteTarget = frontmost.map(ClipboardPasteTarget.capture)
         }
+        NSLog(
+            "[Index][ClipboardPaste] panel show targetPID=%d targetBundle=%@",
+            previousPasteTarget?.processIdentifier ?? 0,
+            previousPasteTarget?.application.bundleIdentifier ?? "none"
+        )
         panel?.show()
     }
 
@@ -95,8 +100,14 @@ final class ClipboardHistoryCoordinator {
         // 否则下一轮 ClipboardWatcher 会把“粘贴历史”误当成一次新的外部复制。
         watcher.suppressCurrentPasteboardChange()
 
-        let target = previousFrontmostApp
-        previousFrontmostApp = nil
+        let target = previousPasteTarget
+        previousPasteTarget = nil
+        NSLog(
+            "[Index][ClipboardPaste] dispatch direct=%d targetPID=%d panelVisible=%d",
+            supportsDirectPaste ? 1 : 0,
+            target?.processIdentifier ?? 0,
+            panel?.isVisible == true ? 1 : 0
+        )
         if let panel, panel.isVisible {
             panel.close()
         }
@@ -105,7 +116,7 @@ final class ClipboardHistoryCoordinator {
         // 内容已经在剪贴板中：只恢复目标应用，让用户按一次系统 Cmd+V。
         guard supportsDirectPaste else {
             if let target {
-                target.activate(options: [])
+                target.application.activate(options: [])
             } else {
                 AgentCoordinator.shared.refocus()
             }

@@ -30,6 +30,9 @@ struct GalleryDestinationChrome: Equatable {
     let showsSearch: Bool
     let showsLayoutControls: Bool
     let showsInspector: Bool
+    /// 截图类页面只有选中内容时才需要占用右侧宽度。
+    /// 剪切板等拥有自己空态的 Inspector 可以显式关闭此策略。
+    let inspectorRequiresSelection: Bool
     let showsThumbnailSizePicker: Bool
 
     init(
@@ -39,6 +42,7 @@ struct GalleryDestinationChrome: Equatable {
         showsSearch: Bool = true,
         showsLayoutControls: Bool = true,
         showsInspector: Bool = true,
+        inspectorRequiresSelection: Bool = true,
         showsThumbnailSizePicker: Bool = false
     ) {
         self.showsImportControl = showsImportControl
@@ -47,6 +51,7 @@ struct GalleryDestinationChrome: Equatable {
         self.showsSearch = showsSearch
         self.showsLayoutControls = showsLayoutControls
         self.showsInspector = showsInspector
+        self.inspectorRequiresSelection = inspectorRequiresSelection
         self.showsThumbnailSizePicker = showsThumbnailSizePicker
     }
 
@@ -67,6 +72,14 @@ struct GalleryDestinationChrome: Equatable {
     var showsGridControls: Bool { showsLayoutControls }
     var showsInspectorToggle: Bool { showsInspector }
 
+    /// 页面此刻是否真的有内容可交给详情栏显示。
+    ///
+    /// 截图类页面依赖卡片选择；剪切板拥有自己的空态，不依赖图库选择。
+    /// 底栏按钮和右侧面板必须共用这个判断，否则会出现“按钮亮着、面板却没开”的假状态。
+    func canPresentInspector(hasSelection: Bool) -> Bool {
+        showsInspector && (!inspectorRequiresSelection || hasSelection)
+    }
+
     /// 未声明专属 chrome 的普通 destination：保留搜索、布局和 Inspector，
     /// 但不会擅自获得导入、Markdown 或截图等写入能力。
     static let standard = GalleryDestinationChrome()
@@ -85,7 +98,8 @@ struct GalleryDestinationChrome: Equatable {
     static let clipboard = GalleryDestinationChrome(
         showsSearch: false,
         showsLayoutControls: false,
-        showsInspector: true
+        showsInspector: true,
+        inspectorRequiresSelection: false
     )
     static let conversation = GalleryDestinationChrome(
         showsSearch: false,

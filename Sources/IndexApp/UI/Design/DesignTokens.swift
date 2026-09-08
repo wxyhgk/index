@@ -77,6 +77,32 @@ enum DS {
     /// 复制反馈时长（复制后图标变对勾的停留时间）。
     static let copyFeedbackDelay: Duration = .milliseconds(1500)
 
+    /// 卡片角标尺寸（选中勾 / 收藏星 / 录屏播放）。
+    static let badgeSelection: CGFloat = 22
+    static let badgeFavorite: CGFloat = 28
+    static let badgeRecording: CGFloat = 48
+    /// 角标弹出动画的起始缩放。
+    static let badgePopScale: CGFloat = 0.6
+
+    /// 收藏星填充色。
+    static let favoriteFill = Color.yellow
+    /// 角标底不透明度（录屏播放 / 收藏星）。
+    static let badgeBackingOpacity: Double = 0.9
+
+    /// 浮动面板关闭按钮边长（设计稿 §6：圆形浅底，直径 28）。
+    static let panelCloseSide: CGFloat = 28
+
+    /// 底部悬浮工具条（设计稿 §5 的 540 × 56）。
+    static let floatingToolbarHeight: CGFloat = 56
+    static let floatingToolbarMaxWidth: CGFloat = 540
+    /// 缩放滑杆范围与最大宽度。
+    static let zoomRange: ClosedRange<Double> = 140...320
+    static let zoomSliderMaxWidth: CGFloat = 200
+    /// 缩略图档位（小 / 中 / 大）。
+    static let thumbnailSmall: Double = 160
+    static let thumbnailMedium: Double = 220
+    static let thumbnailLarge: Double = 300
+
     // MARK: - 圆角（只有两档）
 
     /// 按钮 / 胶囊等小件。
@@ -172,7 +198,7 @@ enum DS {
 
     // MARK: - 剪贴板历史卡片
 
-    /// 卡片标题栏背景色（按类型）。
+    /// 来源 App 图标暂未解析或不存在时的卡片标题栏回退色（按类型）。
     static let clipboardTextBar = Color(white: 0.22)
     static let clipboardImageBar = Color.blue
     static let clipboardFileBar = Color.orange
@@ -619,12 +645,12 @@ extension DS {
         static let searchHeight: CGFloat = 34
         /// 顶栏右侧图标按钮的边长（设计稿 36×36 圆角方）。
         static let controlSide: CGFloat = 36
+        /// 底栏自身是一块浮动面板。内容比搜索框高一档，避免焦点环和按钮贴边。
+        static let bottomBarPanelHeight: CGFloat = controlSide + DS.s2
         /// 筛选胶囊行的高度（设计稿 34）。
         static let chipHeight: CGFloat = 34
-        /// 底部工具栏总高度：搜索框上下各保留一个窗口边距。
-        /// 留白必须算进工具栏自身，不能只在外层补 bottom padding，
-        /// 否则控件只会在去掉底部留白前的局部区域里居中。
-        static let bottomBarHeight: CGFloat = searchHeight + (windowMargin * 2)
+        /// 底部工具栏总高度：浮动面板上下各保留一个窗口边距。
+        static let bottomBarHeight: CGFloat = bottomBarPanelHeight + (windowMargin * 2)
     }
 
     // MARK: - 悬停 / 容器填充（深浅两值，视图不再现写 white/black opacity）

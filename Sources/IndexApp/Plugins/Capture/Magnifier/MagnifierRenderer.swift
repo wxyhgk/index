@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 
 /// 光标处的放大镜 + 取色读数。
 enum MagnifierRenderer {
@@ -6,6 +7,17 @@ enum MagnifierRenderer {
     static let boxSize: CGFloat = 116
     private static let readoutHeight: CGFloat = 38
     private static let cursorGap: CGFloat = 18
+
+    /// 放大镜会跟随鼠标高频重绘。字体只解析一次，并直接以 CTFont 交给 CoreText，
+    /// 避免每一帧都让 NSString/AppKit 把 NSFont attributes 转成 CoreText attributes。
+    /// 后者曾在系统字体解析的瞬时异常下向内部字典插入 nil，导致 NSException 直接终止进程。
+    private static let hexFont = makeFont(
+        uiType: .userFixedPitch,
+        size: DS.font11,
+        traits: .boldTrait
+    )
+    private static let coordinateFont = makeFont(uiType: .userFixedPitch, size: DS.font9)
+    private static let hintFont = makeFont(uiType: .system, size: DS.font9)
 
     static var totalSize: CGSize {
         CGSize(width: boxSize, height: boxSize + readoutHeight)
@@ -30,7 +42,8 @@ enum MagnifierRenderer {
         drawZoom(sample, in: imageBox, ctx: ctx)
         drawReadout(
             sample,
-            in: CGRect(x: frame.minX, y: frame.minY, width: boxSize, height: readoutHeight)
+            in: CGRect(x: frame.minX, y: frame.minY, width: boxSize, height: readoutHeight),
+            ctx: ctx
         )
     }
 
@@ -101,7 +114,7 @@ enum MagnifierRenderer {
         ctx.restoreGState()
     }
 
-    private static func drawReadout(_ sample: PixelSample, in box: CGRect) {
+    static func drawReadout(_ sample: PixelSample, in box: CGRect, ctx: CGContext) {
         let swatch = NSRect(x: box.minX + 9, y: box.midY - 7, width: 14, height: 14)
         sample.color.nsColor.setFill()
         NSBezierPath(roundedRect: swatch, xRadius: 3, yRadius: 3).fill()
@@ -110,34 +123,70 @@ enum MagnifierRenderer {
         ring.lineWidth = DS.hairline
         ring.stroke()
 
-        let hexAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: DS.font11, weight: .semibold),
-            .foregroundColor: NSColor.white
-        ]
-        (sample.color.hexString as NSString).draw(
-            at: NSPoint(x: swatch.maxX + 7, y: box.midY - 1),
-            withAttributes: hexAttrs
+        drawText(
+            sample.color.hexString,
+            font: hexFont,
+            color: CGColor(gray: 1, alpha: 1),
+            at: CGPoint(x: swatch.maxX + 7, y: box.midY - 1),
+            ctx: ctx
         )
 
-        let coordAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: DS.font9, weight: .regular),
-            .foregroundColor: NSColor.white.withAlphaComponent(0.55)
-        ]
         let coords = "\(Int(sample.pixelPoint.x)), \(Int(sample.pixelPoint.y))"
-        (coords as NSString).draw(
-            at: NSPoint(x: swatch.maxX + 7, y: box.midY - 13),
-            withAttributes: coordAttrs
+        drawText(
+            coords,
+            font: coordinateFont,
+            color: CGColor(gray: 1, alpha: 0.55),
+            at: CGPoint(x: swatch.maxX + 7, y: box.midY - 13),
+            ctx: ctx
         )
 
         let hint = "C 复制色值"
-        let hintAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9),
-            .foregroundColor: NSColor.white.withAlphaComponent(0.4)
-        ]
-        let width = (hint as NSString).size(withAttributes: hintAttrs).width
-        (hint as NSString).draw(
-            at: NSPoint(x: box.maxX - width - 9, y: box.midY - 5),
-            withAttributes: hintAttrs
+        let hintLine = makeLine(hint, font: hintFont, color: CGColor(gray: 1, alpha: 0.4))
+        let hintWidth = CGFloat(CTLineGetTypographicBounds(hintLine, nil, nil, nil))
+        drawLine(
+            hintLine,
+            at: CGPoint(x: box.maxX - hintWidth - 9, y: box.midY - 5),
+            ctx: ctx
         )
+    }
+
+    private static func makeFont(
+        uiType: CTFontUIFontType,
+        size: CGFloat,
+        traits: CTFontSymbolicTraits = []
+    ) -> CTFont {
+        // CoreText 文档允许 UI font 查找失败；固定回退保证 attribute 永远有真实字体对象。
+        let base = CTFontCreateUIFontForLanguage(uiType, size, nil)
+            ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
+        guard !traits.isEmpty else { return base }
+        return CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits) ?? base
+    }
+
+    private static func makeLine(_ text: String, font: CTFont, color: CGColor) -> CTLine {
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
+        ]
+        return CTLineCreateWithAttributedString(
+            NSAttributedString(string: text, attributes: attributes)
+        )
+    }
+
+    private static func drawText(
+        _ text: String,
+        font: CTFont,
+        color: CGColor,
+        at point: CGPoint,
+        ctx: CGContext
+    ) {
+        drawLine(makeLine(text, font: font, color: color), at: point, ctx: ctx)
+    }
+
+    private static func drawLine(_ line: CTLine, at point: CGPoint, ctx: CGContext) {
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.textMatrix = .identity
+        ctx.textPosition = point
+        CTLineDraw(line, ctx)
     }
 }

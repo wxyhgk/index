@@ -82,6 +82,7 @@ protocol ShortcutPreferences: AnyObject {
     var clipboardHistoryShortcut: KeyboardShortcut { get }
     var searchPanelShortcut: KeyboardShortcut { get }
     var quickNoteShortcut: KeyboardShortcut { get }
+    var quickNoteResumeShortcut: KeyboardShortcut { get }
     var agentShortcut: KeyboardShortcut { get }
 }
 

@@ -195,6 +195,12 @@ struct Shot: Codable, FetchableRecord, MutablePersistableRecord, Identifiable, E
     /// Vision OCR 结果，异步回填，进 FTS5 索引。
     var ocrText: String?
 
+    /// Markdown 便签的源码（contentKind = 'markdown' 时有值），进 FTS5 索引。
+    var markdownSource: String?
+
+    /// 最近编辑时间（便签/内容变更时更新）。"继续上次便签"按此排序。
+    var updatedAt: Date?
+
     /// 原图文件扩展名（截图恒为 png；导入的 SVG 保留矢量文件为 svg）。
     var originalExtension: String? = "png"
 

@@ -19,10 +19,11 @@ final class PluginRegistry {
 
     init() {}
 
-    /// 装配层调用：注册内置内容模式（image + markdown）。
+    /// 装配层调用：注册内置内容模式。
     static func registerBuiltins() {
         shared.registerMode(BuiltinContentModes.imageMode)
         shared.registerMode(BuiltinContentModes.markdownMode)
+        shared.registerMode(BuiltinContentModes.codeMode)
     }
 
     // MARK: - 注册 / 查找

@@ -15,16 +15,20 @@ final class CanvasHolder {
 @MainActor
 final class EditorSessionRelay: ObservableObject {
     private var shotID: Int64?
-    private var flushAction: (() -> Void)?
+    private var flushAction: (() -> Bool)?
 
-    func install(shotID: Int64?, flush: @escaping () -> Void) {
+    func install(shotID: Int64?, flush: @escaping () -> Bool) {
         self.shotID = shotID
         flushAction = flush
     }
 
-    func flush(shotID: Int64?) {
-        guard self.shotID == shotID else { return }
-        flushAction?()
+    func flush(shotID: Int64?) -> Bool {
+        // 编辑模式刚切入、SwiftUI 会话尚未 onAppear 时还没有任何内存画布可保存；
+        // 这种“无活动会话”应视为安全成功，避免红色关闭被永久卡住。
+        guard let flushAction else { return true }
+        // 已有活动会话却收到另一张图的请求，说明模式切换尚未完成，保守阻止离开。
+        guard self.shotID == shotID else { return false }
+        return flushAction()
     }
 
     func remove(shotID: Int64?) {
@@ -42,7 +46,8 @@ final class EditorSessionRelay: ObservableObject {
 struct EditorModeView: View {
     let shot: Shot
     let styleStore: any AnnotationStylePreferences
-    @StateObject private var sessionRelay = EditorSessionRelay()
+    /// 由图库窗口持有，确保红色关闭按钮和编辑器导航询问的是同一个保存会话。
+    let sessionRelay: EditorSessionRelay
     @Environment(\.galleryPageCommands) private var pageCommands
 
     var body: some View {
@@ -67,7 +72,7 @@ struct EditorModeView: View {
 
     private func switchEditor(to target: Shot) {
         guard target.id != shot.id else { return }
-        sessionRelay.flush(shotID: shot.id)
+        guard sessionRelay.flush(shotID: shot.id) else { return }
         pageCommands.openEditor(shotID: target.id)
     }
 }
@@ -143,11 +148,6 @@ struct EditorView: View {
     /// 右侧文字框获得焦点时，裸键工具快捷键（R / A / …）必须让位给打字。
     @FocusState private var textFieldFocused: Bool
 
-    /// 编辑器工具栏的展示顺序。`nil` 是指针模式。
-    private static let toolOrder: [AnnotationTool?] =
-        [nil, .rect, .ellipse, .arrow, .line, .text, .counter, .highlight, .spotlight,
-         .dimension, .pixelate, .crop]
-
     var body: some View {
         VStack(spacing: 0) {
             toolbar
@@ -158,7 +158,7 @@ struct EditorView: View {
                     .background(Color(nsColor: .underPageBackgroundColor))
                 Divider()
                 inspector
-                    .frame(width: 260)
+                    .frame(width: 288)
             }
             Divider()
             bottomBar
@@ -177,7 +177,7 @@ struct EditorView: View {
             middlePanMonitor.remove()
             // 视图消失（换图重建、窗口关闭、切到别的顶层选项）时**立即**落库，
             // 不等节流 —— 节流任务会随视图一起没掉，等不到它自己触发。
-            model.flushSave()
+            _ = model.flushSave()
             sessionRelay?.remove(shotID: shot.id)
         }
         .onChange(of: model.zoomLevel) { _, newValue in
@@ -235,6 +235,8 @@ struct EditorView: View {
                 .keyboardShortcut("0", modifiers: .command)
             Button("放大") { zoomIn() }
                 .keyboardShortcut("+", modifiers: .command)
+            Button("返回图库") { requestReturnToGallery() }
+                .keyboardShortcut(.cancelAction)
         }
         .opacity(0)
         .frame(width: 0, height: 0)
@@ -320,6 +322,21 @@ struct EditorView: View {
             layers: annotation.displayLayers.projected(onto: .zero, scale: 1),
             pixelatePreviews: annotation.pixelatePreviews,
             selectedLayerID: annotation.selectedID,
+            allowsLiveTextInteraction: LayerCanvasInteractionPolicy.allowsLiveText(
+                annotationToolActive: annotation.tool != nil,
+                handModeActive: handActive
+            ),
+            capturesAnnotationPointerEvents: annotation.tool != nil && !handActive,
+            onAnnotationPointerBegan: { point in
+                handleAnnotationPointerBegan(point, fitted: fitted)
+            },
+            onAnnotationPointerChanged: { point in
+                guard canvasDrag == .draw else { return }
+                annotation.updateDraw(to: point)
+            },
+            onAnnotationPointerEnded: {
+                handleDragEnded()
+            },
             onCreated: { canvasHolder.view = $0 },
             // 标注图层优先于背景选字：点在自己的图层上时事件归标注，
             // 不交给系统选字层（与下面 DragGesture 的命中口径是同一份）。
@@ -371,8 +388,11 @@ struct EditorView: View {
                     handleDragChanged(value, fitted: fitted)
                 }
                 .onEnded { _ in
-                    handleDragEnded()
-                }
+                    // 有标注工具时完整鼠标序列由 CanvasView 处理；这里仅负责
+                    // 指针模式的选择 / 移动 / 缩放，避免同一序列提交两次。
+                    if annotation.tool == nil { handleDragEnded() }
+                },
+            including: annotation.tool == nil ? .all : .none
         )
         // 抓手激活时外层平移手势独占（.gesture 掩码屏蔽内层标注手势），
         // 掩码切换不改视图 identity，空格按住 / 松开的瞬间切换不重建画布。
@@ -400,6 +420,9 @@ struct EditorView: View {
     }
 
     private func handleDragChanged(_ value: DragGesture.Value, fitted: CGRect) {
+        // 标注工具的鼠标序列由 CanvasView 直接处理。滚动态下不能依赖这一层
+        // SwiftUI 手势是否能从 NSScrollView / NSHostingView 的命中链拿到事件。
+        guard annotation.tool == nil else { return }
         let point = imagePoint(value.location, fitted: fitted)
 
         if canvasDrag == nil {
@@ -418,13 +441,7 @@ struct EditorView: View {
             let dragScale = Double(CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width))
             if annotation.strokeScale != dragScale { annotation.strokeScale = dragScale }
 
-            if annotation.tool == .text {
-                placeTextLayer(at: start)
-                canvasDrag = .idle
-            } else if annotation.tool != nil {
-                annotation.beginDraw(at: start)
-                canvasDrag = .draw
-            } else if let handle = annotation.resizeHandle(at: start) {
+            if let handle = annotation.resizeHandle(at: start) {
                 // 选中图层的缩放控制点优先于图层本体的命中。
                 annotation.endTextEditing()
                 annotation.beginResize(handle: handle, at: start)
@@ -445,6 +462,22 @@ struct EditorView: View {
         case .resize: annotation.updateResize(to: point)
         default: break
         }    }
+
+    /// 标注工具的可靠输入入口。CanvasView 已把 AppKit 左下原点坐标转换为
+    /// 图像像素（左上原点），这里不再接触滚动原点或 SwiftUI offset。
+    private func handleAnnotationPointerBegan(_ point: CGPoint, fitted: CGRect) {
+        guard canvasDrag == nil, let tool = annotation.tool else { return }
+        let dragScale = Double(CGFloat(max(1, shot.pixelWidth)) / max(1, fitted.width))
+        if annotation.strokeScale != dragScale { annotation.strokeScale = dragScale }
+
+        if tool == .text {
+            placeTextLayer(at: point)
+            canvasDrag = .idle
+        } else {
+            annotation.beginDraw(at: point)
+            canvasDrag = .draw
+        }
+    }
 
     private func handleDragEnded() {
         switch canvasDrag {
@@ -628,8 +661,6 @@ struct EditorView: View {
             saveStatus
             Button("复制") { copyRendered() }
             Button("导出 PNG") { exportRendered() }
-            Button("返回图库") { requestReturnToGallery() }
-                .keyboardShortcut(.cancelAction)
                 .buttonStyle(.borderedProminent)
         }
         .padding(.horizontal, DS.s4 - 2)
@@ -705,30 +736,71 @@ struct EditorView: View {
     /// 那份安心感原本是靠离开时那个对话框提供的（用一次打断换一次确认）。
     @ViewBuilder
     private var saveStatus: some View {
-        // model 是 @StateObject，图层一变本行就跟着重算（未落库 → 「保存中…」）。
         let pending = model.hasPendingChanges
+        let viewingHistory = !model.isViewingLatestRevision
 
-        Label(
-            pending ? "保存中…" : (model.savedAt == nil ? "已是最新" : "已保存"),
-            systemImage: pending ? "arrow.triangle.2.circlepath" : "checkmark.circle"
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .help(pending ? "停手约一秒后自动存为新版本" : "改动已存进修订链，原图从未被修改")
-        .accessibilityLabel(pending ? "正在保存" : "已保存")
+        switch model.saveState {
+        case .failed(let message):
+            Button {
+                model.retrySave()
+            } label: {
+                Label("保存失败，重试", systemImage: "exclamationmark.triangle.fill")
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .foregroundStyle(DS.statusWarningStroke)
+            .help("\(message) 点击重试。")
+            .accessibilityHint("当前改动仍保留在编辑器中。点击重新保存。")
+
+        case .saving:
+            saveStatusLabel("正在保存…", symbol: "arrow.triangle.2.circlepath")
+
+        case .idle, .saved:
+            if pending {
+                saveStatusLabel(
+                    "等待自动保存…",
+                    symbol: "arrow.triangle.2.circlepath",
+                    help: "停手约一秒后自动存为新版本"
+                )
+            } else if viewingHistory {
+                saveStatusLabel(
+                    "正在查看历史 v\(model.loadedRevisionNumber ?? 1)",
+                    symbol: "clock.arrow.circlepath",
+                    help: "这是历史快照；继续编辑会追加一个新版本，不会覆盖原图或后续版本"
+                )
+            } else {
+                saveStatusLabel(
+                    model.hasSavedSuccessfully ? "已保存" : "已是最新",
+                    symbol: "checkmark.circle",
+                    help: "改动已存进修订链，原图从未被修改"
+                )
+            }
+        }
+    }
+
+    private func saveStatusLabel(
+        _ label: String,
+        symbol: String,
+        help: String? = nil
+    ) -> some View {
+        Label(label, systemImage: symbol)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help(help ?? label)
+            .accessibilityLabel(label)
     }
 
     // 自动保存（节流、立即冲、内容比对）整段搬进了 `EditorModel` ——
     // 它是数据生命周期，不是视图。
 
-    /// 左上「‹ 图库」/ 底部「返回图库」/ Esc：落库后整窗切回图库模式。
+    /// 左上「‹ 图库」/ Esc：落库后整窗切回图库模式。
     private func requestReturnToGallery() {
         model.requestReturnToGallery()
     }
 
-    // 这里曾经还有两个对话框，都随自动保存一起删掉了：
-    //
-    //   · 「有未保存的标注，仍要离开吗？」—— 现在没有「未保存」这个状态了。
+    // 正常情况下仍由自动保存无打扰落库；写入失败时底栏会保留错误和重试入口，
+    // 返回图库、切图与切历史也都会停在当前会话，不会继续丢弃内存改动。
+    // 这里曾经还有一个并发修订对话框：
     //
     //   · 「图库中已有更新的修订，仍要保存吗？」—— 它防的是「编辑期间别处
     //     （钉图 / 自动脱敏）又落了一版」。但修订链是 append-only 的，追加

@@ -406,10 +406,84 @@ final class ShotStore: ObservableObject {
         }
     }
 
+    /// 收口三步查询：shot → content → contentCode。
+    func codeContent(for shot: Shot) -> ContentCode? {
+        guard let shotID = shot.id,
+              let content = try? content(for: shotID),
+              content.kind == ContentKind.code.rawValue,
+              let contentID = content.id,
+              let code = try? codeContent(for: contentID) else { return nil }
+        return code
+    }
+
     /// 获取 Markdown 类型的扩展内容。
     func markdownContent(for contentID: Int64) throws -> ContentMarkdown? {
         try writer.read { db in
             try ContentMarkdown.fetchOne(db, key: contentID)
+        }
+    }
+
+    /// 查询所有置顶便签的 shotID（tag = 'pinned'）。
+    func pinnedShotIDs() -> Set<Int64> {
+        do {
+            return try writer.read { db in
+                let ids = try Int64.fetchAll(
+                    db,
+                    sql: "SELECT shotID FROM shotAttribute WHERE key = 'tag' AND text = 'pinned'"
+                )
+                return Set(ids)
+            }
+        } catch {
+            return []
+        }
+    }
+
+    /// 切换便签置顶状态（tag = 'pinned'）。
+    func togglePin(shotID: Int64) {
+        do {
+            try writer.write { db in
+                let exists = try Int64.fetchOne(
+                    db,
+                    sql: "SELECT id FROM shotAttribute WHERE shotID = ? AND key = 'tag' AND text = 'pinned'",
+                    arguments: [shotID]
+                )
+                if exists != nil {
+                    try db.execute(
+                        sql: "DELETE FROM shotAttribute WHERE shotID = ? AND key = 'tag' AND text = 'pinned'",
+                        arguments: [shotID]
+                    )
+                } else {
+                    try db.execute(
+                        sql: "INSERT INTO shotAttribute (shotID, key, text, createdAt) VALUES (?, 'tag', 'pinned', ?)",
+                        arguments: [shotID, Date()]
+                    )
+                }
+            }
+        } catch {
+            NSLog("[Index] 置顶切换失败: \(error)")
+        }
+    }
+
+    /// 查询所有 Markdown 便签（contentKind = 'markdown'），按编辑时间倒序。
+    func markdownShots(query: String?, limit: Int) -> [Shot] {
+        do {
+            return try writer.read { db in
+                if let query, !query.isEmpty {
+                    let pattern = "%\(query)%"
+                    return try Shot.fetchAll(
+                        db,
+                        sql: "SELECT * FROM shot WHERE contentKind = 'markdown' AND (windowTitle LIKE ? OR markdownSource LIKE ?) ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
+                        arguments: [pattern, pattern, limit]
+                    )
+                }
+                return try Shot.fetchAll(
+                    db,
+                    sql: "SELECT * FROM shot WHERE contentKind = 'markdown' ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
+                    arguments: [limit]
+                )
+            }
+        } catch {
+            return []
         }
     }
 
@@ -457,6 +531,7 @@ final class ShotStore: ObservableObject {
             // 按 payload 类型写对应扩展表（主键是 contentID，同样用 ON CONFLICT 保幂等）
             switch payload {
             case .markdown(let source):
+                try db.execute(sql: "DELETE FROM contentCode WHERE contentID = ?", arguments: [contentID])
                 try db.execute(
                     sql: """
                         INSERT INTO contentMarkdown (contentID, source) VALUES (?, ?)
@@ -464,7 +539,13 @@ final class ShotStore: ObservableObject {
                         """,
                     arguments: [contentID, source]
                 )
+                // 同步 shot.markdownSource（进 FTS）+ updatedAt（"继续上次"排序）
+                try db.execute(
+                    sql: "UPDATE shot SET markdownSource = ?, updatedAt = ? WHERE id = ?",
+                    arguments: [source, now, shotID]
+                )
             case .code(let text, let language):
+                try db.execute(sql: "DELETE FROM contentMarkdown WHERE contentID = ?", arguments: [contentID])
                 try db.execute(
                     sql: """
                         INSERT INTO contentCode (contentID, language, text) VALUES (?, ?, ?)
@@ -472,7 +553,7 @@ final class ShotStore: ObservableObject {
                             language = excluded.language,
                             text = excluded.text
                         """,
-                    arguments: [contentID, language, text]
+                    arguments: [contentID, ContentCode.normalizedLanguage(language), text]
                 )
             case .pdf:
                 break // PDF 扩展表待建
@@ -489,10 +570,24 @@ final class ShotStore: ObservableObject {
     }
 
     /// 手动新建一个 Markdown 卡片（无原图，contentKind = "markdown"）。
+    /// 如果已存在相同 markdownSource 的便签，直接复用（更新 updatedAt），不创建新行。
     @discardableResult
     func createMarkdownShot(title: String, source: String) throws -> Shot {
         try writer.write { db in
             let now = Date()
+            // 去重：相同内容的便签只保留一条
+            if let existingID = try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM shot WHERE contentKind = 'markdown' AND markdownSource = ? LIMIT 1",
+                arguments: [source]
+            ) {
+                try db.execute(
+                    sql: "UPDATE shot SET updatedAt = ? WHERE id = ?",
+                    arguments: [now, existingID]
+                )
+                return try Shot.fetchOne(db, key: existingID)!
+            }
+
             let sha256 = UUID().uuidString
             // 纯 SQL 插入，避免 GRDB save 后 id 为 nil 的问题
             let shotID = try Int64.fetchOne(
@@ -500,11 +595,11 @@ final class ShotStore: ObservableObject {
                 sql: """
                     INSERT INTO shot (sha256, capturedAt, pixelWidth, pixelHeight, scale,
                                       windowTitle, regionX, regionY, regionW, regionH,
-                                      contentKind, originalExtension)
-                    VALUES (?, ?, 0, 0, 1.0, ?, 0, 0, 0, 0, 'markdown', 'png')
+                                      contentKind, originalExtension, markdownSource, updatedAt)
+                    VALUES (?, ?, 0, 0, 1.0, ?, 0, 0, 0, 0, 'markdown', 'png', ?, ?)
                     RETURNING id
                     """,
-                arguments: [sha256, now, title]
+                arguments: [sha256, now, title, source, now]
             ) ?? { throw StoreError.missingShotID }()
 
             // 写 shotContent + contentMarkdown（ON CONFLICT 保 contentID 稳定）
@@ -530,6 +625,44 @@ final class ShotStore: ObservableObject {
                     ON CONFLICT(contentID) DO UPDATE SET source = excluded.source
                     """,
                 arguments: [contentID, source]
+            )
+            return try Shot.fetchOne(db, key: shotID)!
+        }
+    }
+
+    /// 手动新建一个代码卡片（无原图，contentKind = "code"）。
+    @discardableResult
+    func createCodeShot(title: String, text: String, language: String?) throws -> Shot {
+        try writer.write { db in
+            let now = Date()
+            let sha256 = UUID().uuidString
+            let shotID = try Int64.fetchOne(
+                db,
+                sql: """
+                    INSERT INTO shot (sha256, capturedAt, pixelWidth, pixelHeight, scale,
+                                      windowTitle, regionX, regionY, regionW, regionH,
+                                      contentKind, originalExtension)
+                    VALUES (?, ?, 0, 0, 1.0, ?, 0, 0, 0, 0, 'code', 'png')
+                    RETURNING id
+                    """,
+                arguments: [sha256, now, title]
+            ) ?? { throw StoreError.missingShotID }()
+
+            try db.execute(
+                sql: """
+                    INSERT INTO shotContent (shotID, kind, confidence, createdAt)
+                    VALUES (?, 'code', 1.0, ?)
+                    """,
+                arguments: [shotID, now]
+            )
+            guard let contentID = try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM shotContent WHERE shotID = ?",
+                arguments: [shotID]
+            ) else { throw StoreError.missingShotID }
+            try db.execute(
+                sql: "INSERT INTO contentCode (contentID, language, text) VALUES (?, ?, ?)",
+                arguments: [contentID, ContentCode.normalizedLanguage(language), text]
             )
             return try Shot.fetchOne(db, key: shotID)!
         }

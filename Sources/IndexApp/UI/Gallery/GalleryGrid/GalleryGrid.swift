@@ -485,7 +485,18 @@ struct GalleryGrid: View {
             pinsHeaders: true,
             scrollTarget: selection.primaryID,
             card: { shot in
-                card(for: shot, height: zoom * 0.68, reportsVisibility: false)
+                RecyclingCardHoverReader { nativeHover in
+                    card(
+                        for: shot,
+                        height: zoom * 0.68,
+                        reportsVisibility: false,
+                        // The native recycling grid suppresses hover while its
+                        // viewport moves and re-hits after it settles. Do not gate
+                        // this on the coarse SwiftUI scroll flag: one missed AppKit
+                        // end notification must never disable Star permanently.
+                        isHovering: nativeHover
+                    )
+                }
                     .environment(\.galleryIsScrolling, isScrolling)
                     .environment(\.galleryDefersThumbnailLoading, isLiveResizing)
             },

@@ -82,6 +82,23 @@ enum GalleryBatch {
         writer.setFavorite(shotIDs: ids, isFavorite: targetFavorited)
     }
 
+    /// 给选中集合批量新增/移除一个标签。当前 ShotWriting 的标签入口是单项契约，
+    /// 所以这里只做稳定去重与幂等分发；等 Storage 提供批量事务入口时，UI 无需再改。
+    static func setTag(ids: [Int64], name rawName: String, isPresent: Bool) {
+        setTag(ids: ids, name: rawName, isPresent: isPresent, writer: ShotStore.shared)
+    }
+
+    static func setTag(
+        ids: [Int64],
+        name rawName: String,
+        isPresent: Bool,
+        writer: ShotWriting
+    ) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        writer.setTag(shotIDs: unique(ids), name: name, isPresent: isPresent)
+    }
+
     @discardableResult
     static func copySelectedImages() async -> Int {
         await copyImages(
@@ -222,6 +239,100 @@ enum GalleryBatch {
                 await activity.update(token: token, processed: index + 1)
             }
             return exported
+        }
+        activity.attachCancellation(token: token) { worker.cancel() }
+        return await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+    }
+
+    /// 把选中的成品图（原图 + 最新标注）流式写成一个 ZIP。
+    /// 取消或失败时只清理同目录临时文件，不会留下半截目标文件。
+    static func exportZIP(ids: [Int64]) async -> Int {
+        await exportZIP(ids: ids, reader: ShotStore.shared)
+    }
+
+    static func exportZIP(ids: [Int64], reader: ShotReading) async -> Int {
+        let orderedIDs = unique(ids)
+        guard !orderedIDs.isEmpty,
+              !GalleryWindowController.shared.batchActivity.isBusy,
+              let destination = BatchArchiveExporter.chooseDestination(itemCount: orderedIDs.count)
+        else { return 0 }
+        return await exportZIP(
+            ids: orderedIDs,
+            reader: reader,
+            destination: destination,
+            allowsReplacingExisting: true
+        )
+    }
+
+    static func exportZIP(
+        ids: [Int64],
+        reader: ShotReading,
+        destination: URL,
+        allowsReplacingExisting: Bool = false
+    ) async -> Int {
+        let orderedIDs = unique(ids)
+        let activity = GalleryWindowController.shared.batchActivity
+        guard let token = activity.begin(kind: .archive, total: orderedIDs.count) else { return 0 }
+        defer { activity.finish(token: token) }
+
+        let materials = await reader.outputMaterialsInBackground(ids: orderedIDs)
+        let jobs = materials.map { material in
+            ExportJob(
+                renderJob: RenderJob(url: material.originalURL, layers: material.layers),
+                name: ImageExporter.suggestedName(for: material.shot)
+            )
+        }
+        let worker = Task.detached(priority: .userInitiated) {
+            let writer: BatchArchiveExporter.Writer
+            do {
+                writer = try BatchArchiveExporter.Writer(
+                    destination: destination,
+                    allowsReplacingExisting: allowsReplacingExisting
+                )
+            } catch {
+                NSLog("[Index] 无法创建批量 ZIP: \(error.localizedDescription)")
+                return 0
+            }
+
+            var exported = 0
+            for (index, job) in jobs.enumerated() {
+                guard !Task.isCancelled else {
+                    writer.cancel()
+                    return 0
+                }
+                let png = autoreleasepool { () -> Data? in
+                    guard let rendered = job.renderJob.render() else { return nil }
+                    return ImageCodec.pngData(from: rendered)
+                }
+                if let png {
+                    do {
+                        try writer.appendPNG(png, preferredName: job.name)
+                        exported += 1
+                    } catch {
+                        writer.cancel()
+                        NSLog("[Index] ZIP 写入图片失败: \(error.localizedDescription)")
+                        return 0
+                    }
+                }
+                await activity.update(token: token, processed: index + 1)
+            }
+
+            guard !Task.isCancelled, exported > 0 else {
+                writer.cancel()
+                return 0
+            }
+            do {
+                try writer.finish()
+                return exported
+            } catch {
+                writer.cancel()
+                NSLog("[Index] 完成批量 ZIP 失败: \(error.localizedDescription)")
+                return 0
+            }
         }
         activity.attachCancellation(token: token) { worker.cancel() }
         return await withTaskCancellationHandler {

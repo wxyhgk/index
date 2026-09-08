@@ -46,13 +46,9 @@ struct FloatingPanelModifier: ViewModifier {
         let surface = content
             .background(DS.panelFill(level), in: shape)
             .clipShape(shape)
-            // 大页面不再使用高对比渐变框。当前 Mac 设计把层级交给材质与
-            // 亮度差；这里保留一条低对比发丝线，只用于明确窗口边界。
             .overlay {
-                shape.strokeBorder(
-                    DS.panelStroke(scheme, level: level),
-                    lineWidth: 1
-                )
+                shape
+                    .strokeBorder(DS.panelStroke(scheme, level: level), lineWidth: DS.hairline)
                     .allowsHitTesting(false)
             }
 
@@ -167,6 +163,37 @@ extension ButtonStyle where Self == ShellIconButtonStyle {
 }
 
 // ============================================================
+// MARK: - 显示模式分段控件
+// ============================================================
+
+/// 网格 / 瀑布切换。底栏与悬浮工具条共用同一份实现 ——
+/// 动画包在 setter 事务里（standard，整片内容重排），不给网格挂常驻
+/// `.animation(value:)`，否则缩放滑杆的尺寸变化也会被顺带动画掉。
+struct GalleryLayoutPicker: View {
+
+    @Binding var layoutMode: GalleryLayoutKind
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Picker("显示模式", selection: Binding(
+            get: { layoutMode },
+            set: { newValue in
+                withAnimation(DS.Motion.standard(reduced: reduceMotion)) { layoutMode = newValue }
+            }
+        )) {
+            ForEach(GalleryLayoutKind.allCases, id: \.self) { kind in
+                Image(systemName: kind.symbol).tag(kind)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("网格：整齐等高，超出裁切；瀑布：等宽不裁切，完整显示长图")
+    }
+}
+
+// ============================================================
 // MARK: - 面板关闭按钮
 // ============================================================
 
@@ -185,7 +212,7 @@ struct PanelCloseButton: View {
             Image(systemName: "xmark")
                 .font(.system(size: DS.font10, weight: .bold))
         }
-        .buttonStyle(ShellIconButtonStyle(side: 28))
+        .buttonStyle(ShellIconButtonStyle(side: DS.panelCloseSide))
         .clipShape(Circle())
         .accessibilityLabel(label)
         .help(label)

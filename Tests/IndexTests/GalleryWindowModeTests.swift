@@ -34,4 +34,25 @@ final class GalleryWindowModeTests: XCTestCase {
 
         XCTAssertEqual(subject.mode, .library)
     }
+
+    func testCodeEditorUsesItsOwnInWindowMode() {
+        let subject = GalleryWindowMode()
+
+        subject.openCodeEditor(shotID: 84)
+
+        XCTAssertEqual(subject.mode, .codeEditing(84))
+        XCTAssertEqual(subject.activeShotID, 84)
+        XCTAssertEqual(subject.codeEditingShotID, 84)
+        XCTAssertNil(subject.editingShotID)
+        XCTAssertNil(subject.markdownEditingShotID)
+        XCTAssertTrue(subject.isEditing)
+    }
+
+    func testNilCodeShotDoesNotLeaveLibrary() {
+        let subject = GalleryWindowMode()
+
+        subject.openCodeEditor(shotID: nil)
+
+        XCTAssertEqual(subject.mode, .library)
+    }
 }

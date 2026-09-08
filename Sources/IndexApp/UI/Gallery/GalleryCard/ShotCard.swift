@@ -12,13 +12,12 @@ struct ShotCard: View, Equatable {
     let isSelected: Bool
     let isFavorite: Bool
     let isRecording: Bool
+    let isHovering: Bool
     let onToggleFavorite: () -> Void
     var store: ShotStore = .shared
 
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.galleryIsScrolling) private var galleryIsScrolling
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovering = false
 
     private var thumbnailURL: URL { store.thumbnailURL(for: shot) }
 
@@ -35,22 +34,21 @@ struct ShotCard: View, Equatable {
             && lhs.isSelected == rhs.isSelected
             && lhs.isFavorite == rhs.isFavorite
             && lhs.isRecording == rhs.isRecording
+            && lhs.isHovering == rhs.isHovering
             && lhs.store === rhs.store
     }
 
     var body: some View {
         thumbnail
             .contentShape(Rectangle())
-            .onHover { hovering in
-                // A stationary pointer otherwise enters every card moving below it.
-                isHovering = galleryIsScrolling ? false : hovering
-            }
-            .onChange(of: galleryIsScrolling) { _, scrolling in
-                if scrolling { isHovering = false }
-            }
             .overlay { selectionRing }
+            // 只做合成阶段的缩放，不改变网格测量尺寸；复用池无需重新
+            // layout，CachedImage 也不会因为悬停重新解码。2% 足够让卡片
+            // 有抬起感，又不会明显侵占相邻卡片。
+            .scaleEffect(isHovering ? DS.Lift.hoverScale : 1)
             // 只恢复选中反馈：蓝框淡入、勾选徽章弹出。它们不参与布局，
             // 也不需要阴影 / blur / drawingGroup，复用网格里仍是廉价动效。
+            .animation(DS.Motion.micro(reduced: reduceMotion), value: isHovering)
             .animation(DS.Motion.standard(reduced: reduceMotion), value: isSelected)
             .accessibilityLabel(shot.primaryDisplayName)
     }
@@ -121,11 +119,11 @@ struct ShotCard: View, Equatable {
             Image(systemName: "checkmark")
                 .font(.system(size: DS.font11, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 22, height: 22)
+                .frame(width: DS.badgeSelection, height: DS.badgeSelection)
                 .background(DS.accent, in: Circle())
-                .overlay { Circle().strokeBorder(DS.badgeStroke, lineWidth: 1) }
+                .overlay { Circle().strokeBorder(DS.badgeStroke, lineWidth: DS.hairline) }
                 .padding(DS.s2)
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                .transition(.scale(scale: DS.badgePopScale).combined(with: .opacity))
                 .allowsHitTesting(false)
         }
     }
@@ -136,8 +134,8 @@ struct ShotCard: View, Equatable {
             Image(systemName: "play.fill")
                 .font(.system(size: DS.font20, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(width: 48, height: 48)
-                .background(DS.panelFill(.overlay).opacity(0.86), in: Circle())
+                .frame(width: DS.badgeRecording, height: DS.badgeRecording)
+                .background(DS.panelFill(.overlay).opacity(DS.badgeBackingOpacity), in: Circle())
                 .allowsHitTesting(false)
                 .accessibilityLabel("录屏")
         }
@@ -149,9 +147,9 @@ struct ShotCard: View, Equatable {
             Button(action: onToggleFavorite) {
                 Image(systemName: isFavorite ? "star.fill" : "star")
                     .font(.system(size: DS.font12, weight: .semibold))
-                    .foregroundStyle(isFavorite ? .yellow : .primary)
-                    .frame(width: 28, height: 28)
-                    .background(DS.panelFill(.overlay).opacity(0.92), in: Circle())
+                    .foregroundStyle(isFavorite ? DS.favoriteFill : .primary)
+                    .frame(width: DS.badgeFavorite, height: DS.badgeFavorite)
+                    .background(DS.panelFill(.overlay).opacity(DS.badgeBackingOpacity), in: Circle())
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)

@@ -18,6 +18,11 @@ struct ContentCode: Codable, FetchableRecord, MutablePersistableRecord, Equatabl
     var contentID: Int64
     var language: String?
     var text: String
+
+    static func normalizedLanguage(_ language: String?) -> String? {
+        let normalized = language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.flatMap { $0.isEmpty ? nil : $0 }
+    }
 }
 
 /// Markdown 类型专属扩展表。

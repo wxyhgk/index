@@ -1,12 +1,6 @@
 import Foundation
 import Security
 
-protocol SelectionAIAPIKeyStoring: Sendable {
-    func loadAPIKey() throws -> String?
-    func saveAPIKey(_ apiKey: String) throws
-    func deleteAPIKey() throws
-}
-
 enum SelectionAIKeychainError: LocalizedError {
     case unexpectedStatus(OSStatus)
     case invalidEncoding

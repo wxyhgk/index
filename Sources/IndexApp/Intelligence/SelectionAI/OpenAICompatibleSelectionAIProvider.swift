@@ -100,7 +100,7 @@ struct OpenAICompatibleSelectionAIProvider: SelectionAIProvider {
 
     init(
         configuration: OpenAICompatibleSelectionAIConfiguration,
-        credentialStore: any SelectionAIAPIKeyStoring = MacSelectionAIKeychain.shared,
+        credentialStore: any SelectionAIAPIKeyStoring,
         session: URLSession? = nil
     ) {
         self.configuration = configuration

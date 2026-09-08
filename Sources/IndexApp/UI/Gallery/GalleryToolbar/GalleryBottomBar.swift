@@ -24,8 +24,8 @@ struct GalleryBottomBar: View {
     @AppStorage(PagePreferences.galleryZoom.key)
     private var zoom = PagePreferences.galleryZoom.defaultValue
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.galleryPageCommands) private var pageCommands
+    @EnvironmentObject private var selection: GallerySelection
 
     init(
         showInspector: Binding<Bool>,
@@ -42,32 +42,45 @@ struct GalleryBottomBar: View {
     }
 
     var body: some View {
-        ZStack {
+        Group {
             if currentChrome.showsSearch {
-                GallerySearchField(viewModel: viewModel)
-            }
+                HStack(spacing: DS.s3) {
+                    leftControls
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: DS.s2) {
-                leftControls
-                Spacer()
-                rightControls
+                    GallerySearchField(viewModel: viewModel)
+                        .frame(width: DS.Shell.searchWidth)
+
+                    rightControls
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            } else {
+                HStack(spacing: DS.s2) {
+                    leftControls
+                    Spacer(minLength: DS.s2)
+                    rightControls
+                }
             }
         }
+        .padding(.horizontal, DS.s2)
         .frame(maxWidth: .infinity)
-        .frame(height: DS.Shell.bottomBarHeight)
+        .frame(height: DS.Shell.bottomBarPanelHeight)
+        .floatingPanel(radius: DS.radiusPanel, level: .overlay)
         .padding(.horizontal, DS.Shell.windowMargin)
+        .padding(.vertical, DS.Shell.windowMargin)
+        .frame(height: DS.Shell.bottomBarHeight)
         .layoutPriority(1)
     }
 
     // MARK: - 左侧：主要操作
 
     private var leftControls: some View {
-        Group {
+        HStack(spacing: DS.s1) {
             if currentChrome.showsImportControl {
                 importButton
             }
             if currentChrome.showsMarkdownControl {
-                newMarkdownButton
+                newContentMenu
             }
             if currentChrome.showsCaptureControl {
                 captureButton
@@ -75,24 +88,13 @@ struct GalleryBottomBar: View {
         }
     }
 
-    private var newMarkdownButton: some View {
-        Button {
-            viewModel.createMarkdownCard()
-        } label: {
-            Label("Markdown", systemImage: "text.badge.plus")
-                .font(.system(size: DS.font13, weight: .medium))
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .help("新建 Markdown 卡片")
-        .accessibilityLabel("新建 Markdown 卡片")
-    }
-
     // MARK: - 右侧：辅助操作
 
     private var rightControls: some View {
-        Group {
-            if currentChrome.showsLayoutControls {
+        HStack(spacing: DS.s1) {
+            // 瀑布流已退出公开布局，只剩一个选项时不显示无法操作的分段控件。
+            if currentChrome.showsLayoutControls,
+               GalleryLayoutKind.allCases.count > 1 {
                 layoutPicker
             }
             if currentChrome.showsInspector {
@@ -100,6 +102,28 @@ struct GalleryBottomBar: View {
             }
             moreMenu
         }
+    }
+
+    private var newContentMenu: some View {
+        Menu {
+            Button {
+                viewModel.createMarkdownCard()
+            } label: {
+                Label("Markdown 便签", systemImage: "text.badge.plus")
+            }
+            Button {
+                viewModel.createCodeCard()
+            } label: {
+                Label("代码片段", systemImage: "chevron.left.forwardslash.chevron.right")
+            }
+        } label: {
+            Label("新建内容", systemImage: "plus")
+                .font(.system(size: DS.font13, weight: .medium))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help("新建便签或代码片段")
+        .accessibilityLabel("新建内容")
     }
 
     private var currentChrome: GalleryDestinationChrome {
@@ -164,20 +188,7 @@ struct GalleryBottomBar: View {
     }
 
     private var layoutPicker: some View {
-        Picker("显示模式", selection: Binding(
-            get: { layout },
-            set: { newValue in
-                withAnimation(DS.Motion.standard(reduced: reduceMotion)) { layout = newValue }
-            }
-        )) {
-            ForEach(GalleryLayoutKind.allCases, id: \.self) { kind in
-                Image(systemName: kind.symbol).tag(kind)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        .help("网格：整齐等高，超出裁切；瀑布：等宽不裁切，完整显示长图")
+        GalleryLayoutPicker(layoutMode: $layout)
     }
 
     private var inspectorToggle: some View {
@@ -186,18 +197,32 @@ struct GalleryBottomBar: View {
         } label: {
             Image(systemName: "sidebar.trailing")
         }
-        .buttonStyle(.shellIcon(active: showInspector))
-        .help(showInspector ? "隐藏详情栏" : "显示详情栏")
+        .buttonStyle(.shellIcon(active: inspectorIsPresented))
+        .disabled(!inspectorIsAvailable)
+        .help(inspectorHelp)
         .accessibilityLabel("详情栏")
+    }
+
+    private var inspectorIsAvailable: Bool {
+        currentChrome.canPresentInspector(hasSelection: !selection.selectedIDs.isEmpty)
+    }
+
+    private var inspectorIsPresented: Bool {
+        inspectorIsAvailable && showInspector
+    }
+
+    private var inspectorHelp: String {
+        guard inspectorIsAvailable else { return "选择一项后查看详情" }
+        return showInspector ? "隐藏详情栏" : "显示详情栏"
     }
 
     private var moreMenu: some View {
         Menu {
             if currentChrome.showsThumbnailSizePicker {
                 Picker("缩略图大小", selection: $zoom) {
-                    Text("小").tag(160.0)
-                    Text("中").tag(220.0)
-                    Text("大").tag(300.0)
+                    Text("小").tag(DS.thumbnailSmall)
+                    Text("中").tag(DS.thumbnailMedium)
+                    Text("大").tag(DS.thumbnailLarge)
                 }
                 .pickerStyle(.inline)
                 Divider()

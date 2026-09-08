@@ -2,6 +2,41 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
+enum ClipboardWorkspaceMode: String, CaseIterable, Identifiable {
+    case history
+    case threads
+    case capsules
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .history: return "历史"
+        case .threads: return "线程"
+        case .capsules: return "胶囊"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .history: return "clock.arrow.circlepath"
+        case .threads: return "point.3.connected.trianglepath.dotted"
+        case .capsules: return "shippingbox"
+        }
+    }
+}
+
+struct ClipboardCapsulePasteProgress: Equatable {
+    let capsuleID: Int64
+    let name: String
+    let items: [ClipboardHistoryItem]
+    var nextIndex: Int
+
+    var progressLabel: String {
+        "继续粘贴 \(nextIndex + 1)/\(items.count)"
+    }
+}
+
 // ============================================================
 // MARK: - 剪贴板历史视图模型
 //
@@ -31,6 +66,13 @@ final class ClipboardHistoryViewModel: ObservableObject {
     @Published var collectionMemberships: [Int64: Set<Int64>] = [:]
     @Published private(set) var hasMoreItems = false
     @Published private(set) var isLoadingMore = false
+    @Published var workspaceMode: ClipboardWorkspaceMode = .history
+    @Published private(set) var threads: [ClipboardThread] = []
+    @Published private(set) var capsules: [ClipboardCapsuleSnapshot] = []
+    @Published private(set) var activeCapsulePaste: ClipboardCapsulePasteProgress?
+    @Published var capsuleQuery = ""
+    @Published private(set) var editingCapsuleID: Int64?
+    @Published private(set) var editingCapsuleName: String?
 
     private var searchTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
@@ -55,6 +97,18 @@ final class ClipboardHistoryViewModel: ObservableObject {
 
     var orderedSelectedIDs: [Int64] { pasteQueueItems.compactMap(\.id) }
     var selectedCount: Int { pasteQueueItems.count }
+
+    var filteredCapsules: [ClipboardCapsuleSnapshot] {
+        let trimmed = capsuleQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return capsules }
+        return capsules.filter { snapshot in
+            snapshot.capsule.name.lowercased().contains(trimmed)
+                || snapshot.items.contains { item in
+                    item.displayName.lowercased().contains(trimmed)
+                        || item.sourceApp?.lowercased().contains(trimmed) == true
+                }
+        }
+    }
 
     func selectionOrdinal(for item: ClipboardHistoryItem) -> Int? {
         guard let id = item.id,
@@ -86,11 +140,18 @@ final class ClipboardHistoryViewModel: ObservableObject {
             async let summaries: [ShotCollectionSummary] = Task.detached(priority: .utility) {
                 (try? collectionRepo.summaries()) ?? []
             }.value
+            async let capsuleSnapshots: [ClipboardCapsuleSnapshot] = Task.detached(priority: .utility) {
+                (try? store.capsuleSnapshots()) ?? []
+            }.value
 
             var items = await newItems
             let hasMore = items.count > Self.pageSize
             if hasMore { items.removeLast(items.count - Self.pageSize) }
             let collections = await summaries
+            let capsules = await capsuleSnapshots
+            let threads = await Task.detached(priority: .utility) {
+                ClipboardThreadBuilder.build(from: items)
+            }.value
             let ids = items.compactMap(\.id)
             let memberships = await Task.detached(priority: .utility) {
                 store.collectionMemberships(clipboardIDs: ids)
@@ -99,6 +160,8 @@ final class ClipboardHistoryViewModel: ObservableObject {
             guard !Task.isCancelled, generation == self.loadGeneration else { return }
             // 专题集列表不依赖剪贴板数据，每次 refresh 都更新（新建/删除专题集后立即可见）。
             self.collectionSummaries = collections
+            self.capsules = capsules
+            self.threads = threads
 
             let focusedID = self.selectedItemID
             self.items = items
@@ -132,7 +195,16 @@ final class ClipboardHistoryViewModel: ObservableObject {
                   self.query.trimmingCharacters(in: .whitespaces) == q
             else { return }
             let hasMore = newItems.count > Self.pageSize
-            self.items = Array(newItems.prefix(Self.pageSize))
+            let items = Array(newItems.prefix(Self.pageSize))
+            let threads = await Task.detached(priority: .utility) {
+                ClipboardThreadBuilder.build(from: items)
+            }.value
+            guard !Task.isCancelled,
+                  generation == self.loadGeneration,
+                  self.query.trimmingCharacters(in: .whitespaces) == q
+            else { return }
+            self.items = items
+            self.threads = threads
             self.hasMoreItems = hasMore
             self.selectedIndex = 0
             self.updateQueuedSnapshots(from: newItems)
@@ -188,6 +260,14 @@ final class ClipboardHistoryViewModel: ObservableObject {
                 return
             }
             self.items.append(contentsOf: appended)
+            let allItems = self.items
+            self.threads = await Task.detached(priority: .utility) {
+                ClipboardThreadBuilder.build(from: allItems)
+            }.value
+            guard !Task.isCancelled, generation == self.loadGeneration else {
+                self.isLoadingMore = false
+                return
+            }
             self.collectionMemberships.merge(memberships) { _, new in new }
             self.hasMoreItems = hasMore
             self.isLoadingMore = false
@@ -243,6 +323,180 @@ final class ClipboardHistoryViewModel: ObservableObject {
         autoSelectsCurrentWhenQueueEmpty = false
     }
 
+    func loadPasteQueue(
+        _ items: [ClipboardHistoryItem],
+        switchingToHistory: Bool = true
+    ) {
+        let unique = items.reduce(into: [ClipboardHistoryItem]()) { result, item in
+            guard item.id != nil, !result.contains(where: { $0.id == item.id }) else { return }
+            result.append(item)
+        }
+        pasteQueueItems = unique
+        isContinuousSelectionEnabled = true
+        autoSelectsCurrentWhenQueueEmpty = false
+        pasteFeedback = unique.isEmpty ? "没有可加入队列的内容" : "已加入 \(unique.count) 项"
+        if switchingToHistory { workspaceMode = .history }
+    }
+
+    func movePasteQueueItem(_ item: ClipboardHistoryItem, by delta: Int) {
+        guard let source = pasteQueueItems.firstIndex(where: { $0.id == item.id }) else { return }
+        let destination = min(max(0, source + delta), pasteQueueItems.count - 1)
+        guard destination != source else { return }
+        let moved = pasteQueueItems.remove(at: source)
+        pasteQueueItems.insert(moved, at: destination)
+        pasteFeedback = nil
+    }
+
+    // MARK: 线程 / 胶囊
+
+    func createCapsuleFromQueue() {
+        createCapsule(items: pasteQueueItems, proposedName: "")
+    }
+
+    func createCapsule(from thread: ClipboardThread) {
+        createCapsule(items: Array(thread.items.reversed()), proposedName: thread.title)
+    }
+
+    func renameCapsule(_ name: String, snapshot: ClipboardCapsuleSnapshot) {
+        guard snapshot.id >= 0 else { return }
+        store.renameCapsule(name, capsuleID: snapshot.id)
+        refreshCapsules()
+    }
+
+    func toggleCapsulePin(_ snapshot: ClipboardCapsuleSnapshot) {
+        guard snapshot.id >= 0 else { return }
+        store.setCapsulePinned(!snapshot.capsule.isPinned, capsuleID: snapshot.id)
+        refreshCapsules()
+    }
+
+    func deleteCapsule(_ snapshot: ClipboardCapsuleSnapshot) {
+        guard snapshot.id >= 0 else { return }
+        store.deleteCapsule(snapshot.id)
+        if activeCapsulePaste?.capsuleID == snapshot.id { activeCapsulePaste = nil }
+        if editingCapsuleID == snapshot.id {
+            editingCapsuleID = nil
+            editingCapsuleName = nil
+            pasteQueueItems = []
+        }
+        refreshCapsules()
+    }
+
+    func beginEditingCapsule(_ snapshot: ClipboardCapsuleSnapshot) {
+        editingCapsuleID = snapshot.id
+        editingCapsuleName = snapshot.capsule.name
+        loadPasteQueue(snapshot.items, switchingToHistory: true)
+        pasteFeedback = "拖动顺序可用上下箭头调整；也可以继续添加或移除卡片"
+    }
+
+    func saveCapsuleEditing() {
+        guard let capsuleID = editingCapsuleID else { return }
+        do {
+            try store.replaceCapsuleItems(capsuleID: capsuleID, items: pasteQueueItems)
+            editingCapsuleID = nil
+            editingCapsuleName = nil
+            pasteQueueItems = []
+            autoSelectsCurrentWhenQueueEmpty = false
+            pasteFeedback = "胶囊顺序已保存"
+            refreshCapsules(selectMode: true)
+        } catch {
+            pasteFeedback = "胶囊至少需要保留一项内容"
+        }
+    }
+
+    func cancelCapsuleEditing() {
+        editingCapsuleID = nil
+        editingCapsuleName = nil
+        clearPasteQueue()
+        workspaceMode = .capsules
+    }
+
+    /// 同类型胶囊一次粘贴；混合类型自动进入安全的逐项粘贴，不合成含糊的 pasteboard。
+    func pasteCapsule(_ snapshot: ClipboardCapsuleSnapshot) {
+        guard !snapshot.items.isEmpty else {
+            pasteFeedback = "这个胶囊已经没有可用内容"
+            return
+        }
+        let kinds = Set(snapshot.items.map(\.kind))
+        if kinds.count > 1 {
+            activeCapsulePaste = ClipboardCapsulePasteProgress(
+                capsuleID: snapshot.id,
+                name: snapshot.capsule.name,
+                items: snapshot.items,
+                nextIndex: 0
+            )
+            continueCapsulePaste()
+            return
+        }
+
+        store.markCapsuleUsed(snapshot.id)
+        if snapshot.items[0].kind == .text {
+            let texts = snapshot.items.compactMap { store.content(of: $0).text }
+            guard texts.count == snapshot.items.count else {
+                pasteFeedback = "胶囊中的部分文字已不可用"
+                return
+            }
+            finishPaste(
+                items: snapshot.items,
+                didCopy: Clipboard.copy(text: texts.joined(separator: snapshot.capsule.separator.value))
+            )
+        } else {
+            loadPasteQueue(snapshot.items, switchingToHistory: false)
+            pasteSelected()
+        }
+    }
+
+    func continueCapsulePaste() {
+        guard var progress = activeCapsulePaste,
+              progress.items.indices.contains(progress.nextIndex)
+        else {
+            activeCapsulePaste = nil
+            return
+        }
+        let item = progress.items[progress.nextIndex]
+        if progress.nextIndex == 0 { store.markCapsuleUsed(progress.capsuleID) }
+        progress.nextIndex += 1
+        activeCapsulePaste = progress.nextIndex < progress.items.count ? progress : nil
+        paste(item)
+    }
+
+    func cancelCapsulePaste() {
+        activeCapsulePaste = nil
+        pasteFeedback = nil
+    }
+
+    private func createCapsule(items: [ClipboardHistoryItem], proposedName: String) {
+        guard !items.isEmpty else {
+            pasteFeedback = "请先选择要保存的卡片"
+            return
+        }
+        let store = self.store
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try store.createCapsule(name: proposedName, items: items) }
+            }.value
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.pasteFeedback = "已保存为上下文胶囊"
+                self.refreshCapsules(selectMode: true)
+            case .failure:
+                self.pasteFeedback = "无法保存胶囊"
+            }
+        }
+    }
+
+    private func refreshCapsules(selectMode: Bool = false) {
+        let store = self.store
+        Task { [weak self] in
+            let snapshots = await Task.detached(priority: .utility) {
+                (try? store.capsuleSnapshots()) ?? []
+            }.value
+            guard let self else { return }
+            self.capsules = snapshots
+            if selectMode { self.workspaceMode = .capsules }
+        }
+    }
+
     /// 连续选择是显式模式，不能由“当前是否正在搜索”隐式推断。
     /// 关闭时立即回到当前候选的单选语义。
     func setContinuousSelectionEnabled(_ enabled: Bool) {
@@ -262,6 +516,12 @@ final class ClipboardHistoryViewModel: ObservableObject {
     /// 文本用换行拼接；图片/文件使用系统的多条目剪贴板表示。
     func pasteSelected() {
         let selectedItems = pasteQueueItems
+        NSLog(
+            "[Index][ClipboardPaste] selected count=%d visible=%d index=%d",
+            selectedItems.count,
+            filteredItems.count,
+            selectedIndex
+        )
         guard !selectedItems.isEmpty else {
             pasteFeedback = "请先选择要粘贴的卡片"
             return
@@ -313,6 +573,12 @@ final class ClipboardHistoryViewModel: ObservableObject {
         finishPaste(items: selectedItems, didCopy: didCopy)
     }
 
+    /// Paste 的 Shift+Enter 语义：无论来源中以后是否保留富文本表示，
+    /// 都只向系统剪贴板写 public.utf8-plain-text 再执行一次粘贴。
+    func pasteSelectedAsPlainText() {
+        pasteAsPlainText(pasteQueueItems)
+    }
+
     nonisolated static func joinedTexts(_ texts: [String]) -> String {
         texts.joined(separator: "\n")
     }
@@ -333,6 +599,30 @@ final class ClipboardHistoryViewModel: ObservableObject {
         }
         pasteFeedback = nil
         ClipboardHistoryCoordinator.shared.performPaste()
+    }
+
+    func pasteAsPlainText(_ item: ClipboardHistoryItem) {
+        pasteAsPlainText([item])
+    }
+
+    private func pasteAsPlainText(_ items: [ClipboardHistoryItem]) {
+        guard !items.isEmpty else {
+            pasteFeedback = "请先选择要粘贴的文字卡片"
+            return
+        }
+        guard items.allSatisfy({ $0.kind == .text }) else {
+            pasteFeedback = "只有文字卡片可以按纯文本粘贴"
+            return
+        }
+        let texts = items.compactMap { store.content(of: $0).text }
+        guard texts.count == items.count else {
+            pasteFeedback = "部分文字内容已不可用"
+            return
+        }
+        finishPaste(
+            items: items,
+            didCopy: Clipboard.copy(text: Self.joinedTexts(texts))
+        )
     }
 
     /// 图片历史本来就是 PNG 文件。文件读取移到后台，主线程只负责一次
@@ -362,6 +652,12 @@ final class ClipboardHistoryViewModel: ObservableObject {
     }
 
     private func finishPaste(items: [ClipboardHistoryItem], didCopy: Bool) {
+        NSLog(
+            "[Index][ClipboardPaste] pasteboard write=%d count=%d kind=%@",
+            didCopy ? 1 : 0,
+            items.count,
+            items.first.map { String(describing: $0.kind) } ?? "none"
+        )
         guard didCopy else {
             pasteFeedback = "无法写入系统剪贴板"
             return
@@ -382,6 +678,15 @@ final class ClipboardHistoryViewModel: ObservableObject {
             selectedIndex = max(0, filteredItems.count - 1)
         }
         refresh()
+    }
+
+    func copySelected() {
+        let visible = filteredItems
+        guard visible.indices.contains(selectedIndex) else {
+            pasteFeedback = "请先选择要复制的卡片"
+            return
+        }
+        pasteFeedback = copyBack(visible[selectedIndex]) ? nil : "这条记录的内容已不可用"
     }
 
     // MARK: 动作

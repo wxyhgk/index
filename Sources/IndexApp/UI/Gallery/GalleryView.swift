@@ -40,9 +40,13 @@ struct GalleryView: View {
     /// 编辑器会话的设置切片。窗口装配点（GalleryWindowController）注入，
     /// 沿 GalleryView → EditorModeView → EditorView → EditorModel 传递。
     private let styleStore: any AnnotationStylePreferences
+    /// 窗口级编辑会话保存握手。红色关闭与胶片条切图必须命中同一份 relay，
+    /// 否则窗口控制器无法在真正关闭前得知落库是否成功。
+    private let editorSessionRelay: EditorSessionRelay
 
     init(
         styleStore: any AnnotationStylePreferences,
+        editorSessionRelay: EditorSessionRelay,
         store: ShotStore = .shared,
         viewModel: GalleryViewModel? = nil,
         destinationRegistry: GalleryDestinationRegistry = .shared
@@ -52,6 +56,7 @@ struct GalleryView: View {
             ?? .resolve(for: store)
         self.viewModel = resolvedViewModel
         self.styleStore = styleStore
+        self.editorSessionRelay = editorSessionRelay
         self.destinationRegistry = destinationRegistry
         let destinationChrome = GalleryDestinationChromeState()
         _destinationChrome = StateObject(wrappedValue: destinationChrome)
@@ -90,10 +95,17 @@ struct GalleryView: View {
             } else if let shot = mode.resolveMarkdownEditingShot() {
                 MarkdownEditorModeView(shot: shot)
                     .id(shot.id)
+            } else if let shot = mode.resolveCodeEditingShot() {
+                CodeEditorModeView(shot: shot)
+                    .id(shot.id)
             } else if let shot = mode.resolveEditingShot() {
                 // 编辑会话按 shot ID 重建；Filmstrip 由稳定外壳保留，避免切图时
                 // 同时丢失其数据和横向滚动位置。
-                EditorModeView(shot: shot, styleStore: styleStore)
+                EditorModeView(
+                    shot: shot,
+                    styleStore: styleStore,
+                    sessionRelay: editorSessionRelay
+                )
             } else {
                 gallery
             }
@@ -169,9 +181,10 @@ struct GalleryView: View {
                     if currentChrome.showsInspector,
                        showInspector,
                        let inspector = destination?.inspector(context: destinationContext) {
-                        inspector
-                            .frame(width: DS.Shell.inspectorWidth)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                        GalleryInspectorSlot(
+                            inspector: inspector,
+                            chrome: currentChrome
+                        )
                     }
                 }
                 .padding(.horizontal, DS.Shell.windowMargin)
@@ -235,5 +248,32 @@ struct GalleryView: View {
     private func closeEditorIfShotDeleted() {
         guard mode.isEditing, mode.resolveActiveShot() == nil else { return }
         mode.returnToGallery()
+    }
+}
+
+/// 不让“未选择截图”空态永久占用 320pt。
+///
+/// 选中订阅收口在这个小视图内，卡片点击时只会重算 Inspector slot，
+/// 不会让顶栏、底栏和整个 destination 外壳跟着失效。
+private struct GalleryInspectorSlot: View {
+    let inspector: AnyView
+    let chrome: GalleryDestinationChrome
+
+    @EnvironmentObject private var selection: GallerySelection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var hasContent: Bool {
+        chrome.canPresentInspector(hasSelection: !selection.selectedIDs.isEmpty)
+    }
+
+    var body: some View {
+        Group {
+            if hasContent {
+                inspector
+                    .frame(width: DS.Shell.inspectorWidth)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(DS.Motion.standard(reduced: reduceMotion), value: hasContent)
     }
 }

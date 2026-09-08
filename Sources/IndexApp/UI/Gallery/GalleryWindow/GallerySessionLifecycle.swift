@@ -68,7 +68,7 @@ final class GallerySessionLifecycle: ObservableObject {
         install(key, operation: operation)
     }
 
-    /// 关闭窗口的固定顺序：先退出当前视图（编辑器由 onDisappear 立即落库），
+    /// 关闭窗口的固定顺序：窗口代理先确认编辑器落库成功，再退出当前视图，
     /// 同步结束会话并取消任务，再让出一次主线程，最后暂停/释放缩略图。
     /// 返回的 task 由窗口控制器持有，重新打开时可取消；generation 守卫则挡住迟到释放。
     func closeAfterExitingView(

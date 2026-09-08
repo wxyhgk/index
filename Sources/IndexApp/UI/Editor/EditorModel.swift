@@ -20,7 +20,7 @@ final class EditorModel: ObservableObject {
     /// 不必经由本模型转发（转发等于把每个变更抄两遍）。
     let annotation: AnnotationState
 
-    private let store: ShotStore
+    private let store: any EditorPersistence
     private let styleStore: any AnnotationStylePreferences
     private let pageCommands: GalleryPageCommands
 
@@ -54,20 +54,43 @@ final class EditorModel: ObservableObject {
     /// 已落库的那一版图层。自动保存靠它和当前画布做**内容比对** ——
     /// 「画一笔再撤销」回到原样时不会留下一条空修订。
     @Published private(set) var baselineLayers: [Layer] = []
-    /// 最近一次落库的时刻。底栏那行状态字用它。
-    @Published private(set) var savedAt: Date?
+    enum SaveState: Equatable {
+        case idle
+        case saving
+        case saved(Date)
+        case failed(String)
+    }
+
+    /// 保存结果是编辑会话的一等状态。失败时基线绝不前移，当前图层继续留在内存里，
+    /// 底栏据此提供重试入口；导航与历史切换也据此决定能否离开当前画布。
+    @Published private(set) var saveState: SaveState = .idle
+
+    var isViewingLatestRevision: Bool {
+        if revisions.isEmpty { return true }
+        guard let loadedRevisionIndex else { return revisions.isEmpty }
+        return loadedRevisionIndex == revisions.indices.last
+    }
+
+    var loadedRevisionNumber: Int? {
+        loadedRevisionIndex.map { $0 + 1 }
+    }
+
+    var hasSavedSuccessfully: Bool {
+        if case .saved = saveState { return true }
+        return false
+    }
 
     private var autoSaveTask: Task<Void, Never>?
     private var annotationSubscription: AnyCancellable?
 
     init(
         shot: Shot,
-        store: ShotStore = .shared,
+        store: (any EditorPersistence)? = nil,
         styleStore: any AnnotationStylePreferences,
         pageCommands: GalleryPageCommands = .live
     ) {
         self.shot = shot
-        self.store = store
+        self.store = store ?? ShotStore.shared
         self.styleStore = styleStore
         self.pageCommands = pageCommands
         self.annotation = AnnotationState(styleStore: styleStore)
@@ -126,6 +149,23 @@ final class EditorModel: ObservableObject {
         refreshCanvasImage()
     }
 
+    /// 从历史面板切换版本前先把当前画布落库；否则用户刚画完就点历史，
+    /// `annotation.load` 会直接替换内存图层，1.2 秒自动保存再也等不到。
+    @discardableResult
+    func switchToRevision(at index: Int) -> Bool {
+        // 先拒绝无效索引，避免一个本来不会发生的导航反过来触发保存副作用。
+        guard revisions.indices.contains(index), flushSave() else { return false }
+        loadRevision(layers: revisions[index].layers, index: index)
+        return true
+    }
+
+    @discardableResult
+    func loadLatestRevision() -> Bool {
+        guard flushSave(), let index = revisions.indices.last else { return false }
+        loadRevision(layers: revisions[index].layers, index: index)
+        return true
+    }
+
     /// 马赛克贴片的像素来源：编辑器画布就是图片像素，直接从原图裁。
     func cropPixels(_ rect: CGRect) -> CGImage? {
         baseImage?.cropping(to: rect.integral)
@@ -172,9 +212,9 @@ final class EditorModel: ObservableObject {
 
     // MARK: - 自动保存
     //
-    // 编辑器**不需要手动保存**。此前离开画布时会弹「有未保存的标注，仍要离开吗？」
-    // 三选一对话框 —— 非破坏式编辑下每次保存只是往修订链追加一条、原图从不改动，
-    // 没有任何「保存失败会毁掉东西」的风险，却要求用户每次离开都做一次决定。
+    // 编辑器通常**不需要手动保存**。此前离开画布时会弹「有未保存的标注，仍要离开吗？」
+    // 三选一对话框；现在正常路径自动追加修订，只有真正写入失败时才保留 pending、
+    // 显示错误并要求用户重试，不能把失败误报成已保存。
     //
     // 节流 1.2 秒：画的过程中每一笔都会发变更，逐笔落库会把修订链撑成流水账；
     // 停下来一会儿才算「改完了」。离开画布时**立即冲一次**，不等节流。
@@ -186,29 +226,71 @@ final class EditorModel: ObservableObject {
         autoSaveTask = Task { [weak self] in
             try? await Task.sleep(for: Self.autoSaveDelay)
             guard !Task.isCancelled else { return }
-            self?.flushSave()
+            _ = self?.flushSave()
         }
     }
 
     /// 立即落库。没有实际改动时什么都不做 —— 内容比对（而不是图层数量比对）
     /// 保证「画一笔再撤销」不会留下一条空修订。
-    func flushSave() {
+    @discardableResult
+    func flushSave() -> Bool {
         autoSaveTask?.cancel()
         autoSaveTask = nil
         annotation.endTextEditing()
+        // endTextEditing 自己会发布若干次 annotation 变更并重新安排自动保存。
+        // 当前调用正在立即保存，不能在尾部遗留一枚重复的延迟任务。
+        autoSaveTask?.cancel()
+        autoSaveTask = nil
 
         let layers = exportedLayers
-        guard layers.persisted != baselineLayers else { return }
+        guard layers.persisted != baselineLayers else {
+            if case .failed = saveState { saveState = .idle }
+            return true
+        }
 
-        store.appendRevision(
-            shot: shot,
-            layers: layers,
-            note: "编辑 \(annotation.layers.count) 层"
-        )
-        revisions = store.revisions(for: shot)
-        loadedRevisionIndex = revisions.count - 1
-        baselineLayers = layers.persisted
-        savedAt = Date()
+        saveState = .saving
+        do {
+            let saved = try store.appendEditorRevision(
+                shot: shot,
+                layers: layers,
+                note: "编辑 \(annotation.layers.count) 层"
+            )
+            acceptSavedRevision(saved)
+            // 只有 append 明确成功后才能推进基线。失败路径保留旧基线，
+            // hasPendingChanges 因而继续为 true，关闭/导航也不会误判为安全。
+            baselineLayers = layers.persisted
+            saveState = .saved(Date())
+            return true
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+            saveState = .failed(message)
+            return false
+        }
+    }
+
+    func retrySave() {
+        _ = flushSave()
+    }
+
+    private func acceptSavedRevision(_ saved: Revision) {
+        let refreshed = store.revisions(for: shot)
+        if let savedID = saved.id,
+           let index = refreshed.firstIndex(where: { $0.id == savedID }) {
+            revisions = refreshed
+            loadedRevisionIndex = index
+            return
+        }
+
+        // 读取侧若暂时没有反映刚完成的写入，仍以 append 返回的 revision 为准，
+        // 避免把一次已确认成功的保存显示成不存在；下次打开会从库重新读取全链。
+        if let savedID = saved.id,
+           let index = revisions.firstIndex(where: { $0.id == savedID }) {
+            loadedRevisionIndex = index
+        } else {
+            revisions.append(saved)
+            loadedRevisionIndex = revisions.indices.last
+        }
     }
 
     /// 有改动还没落库。底栏的状态字用它。
@@ -223,10 +305,13 @@ final class EditorModel: ObservableObject {
 
     // MARK: - 导航
     //
-    // 换图与返回图库都**先落库再走**，不再有「未保存」这个状态。
+    // 换图与返回图库都**先落库再走**；写入失败时保留当前画布并留在编辑器，
+    // 让底栏的失败状态与重试入口保持可见。
 
-    func requestReturnToGallery() {
-        flushSave()
+    @discardableResult
+    func requestReturnToGallery() -> Bool {
+        guard flushSave() else { return false }
         pageCommands.returnToGallery()
+        return true
     }
 }

@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 
-/// 图库窗口的模式（图库 / 标注 / Markdown / 设置共用一个主窗口）。
+/// 图库窗口的模式（图库 / 标注 / Markdown / 代码 / 设置共用一个主窗口）。
 ///
 /// 这不是「选中了什么」（那是 GallerySelection 的事）而是「窗口整体处于哪个视图」，
 /// 所以单独建模。存的是 **ID 不是 Shot 快照** —— 需要 Shot 值的地方按 ID 现查
@@ -19,6 +19,8 @@ final class GalleryWindowMode: ObservableObject {
         case editing(Int64)
         /// Markdown 与标注编辑器一样住在图库主窗口内，但两者的编辑状态互不混用。
         case markdownEditing(Int64)
+        /// 代码编辑器同样在主窗口内打开。
+        case codeEditing(Int64)
         case settings
     }
 
@@ -31,7 +33,7 @@ final class GalleryWindowMode: ObservableObject {
 
     var activeShotID: Int64? {
         switch mode {
-        case .editing(let id), .markdownEditing(let id): return id
+        case .editing(let id), .markdownEditing(let id), .codeEditing(let id): return id
         case .library, .settings: return nil
         }
     }
@@ -47,6 +49,11 @@ final class GalleryWindowMode: ObservableObject {
         return nil
     }
 
+    var codeEditingShotID: Int64? {
+        if case .codeEditing(let id) = mode { return id }
+        return nil
+    }
+
     /// 进入编辑器。id 为 nil（未入库的 Shot 值）时忽略 ——
     /// 编辑器一定对应库里的一条记录。
     func openEditor(shotID: Int64?) {
@@ -58,6 +65,11 @@ final class GalleryWindowMode: ObservableObject {
     func openMarkdownEditor(shotID: Int64?) {
         guard let shotID else { return }
         mode = .markdownEditing(shotID)
+    }
+
+    func openCodeEditor(shotID: Int64?) {
+        guard let shotID else { return }
+        mode = .codeEditing(shotID)
     }
 
     /// 进入设置。
@@ -77,6 +89,10 @@ final class GalleryWindowMode: ObservableObject {
 
     func resolveMarkdownEditingShot() -> Shot? {
         markdownEditingShotID.flatMap { Self.resolveShot(id: $0) }
+    }
+
+    func resolveCodeEditingShot() -> Shot? {
+        codeEditingShotID.flatMap { Self.resolveShot(id: $0) }
     }
 
     func resolveActiveShot() -> Shot? {
@@ -118,8 +134,8 @@ enum GalleryKeyContext {
         switch GalleryWindowController.shared.mode.mode {
         case .library:  return .library
         case .editing:  return .editor
-        // Markdown 是文字编辑上下文，任何图库/标注快捷键都必须让位。
-        case .markdownEditing: return .none
+        // Markdown / 代码都是文字编辑上下文，图库/标注快捷键必须让位。
+        case .markdownEditing, .codeEditing: return .none
         // 设置页里全是输入控件，空格/方向键/回车都该留给它们 ——
         // 焦点不在文本框时也不能让图库的网格导航接管。
         case .settings: return .none

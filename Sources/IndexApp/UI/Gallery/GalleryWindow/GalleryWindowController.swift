@@ -4,7 +4,7 @@ import Quartz
 import SwiftUI
 
 @MainActor
-final class GalleryWindowController: NSWindowController, GalleryPresenting {
+final class GalleryWindowController: NSWindowController, GalleryPresenting, NSWindowDelegate {
 
     static let shared = GalleryWindowController()
 
@@ -20,6 +20,9 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     let quickLook = QuickLookController()
     /// 跨页批量复制/导出的单飞状态。窗口级会话状态，生命周期跟随窗口。
     let batchActivity = GalleryBatchActivity()
+    /// 编辑器的同步保存握手。由窗口持有并显式下传，不能另建全局单例：
+    /// `windowShouldClose` 与当前 EditorView 必须操作同一份会话。
+    let editorSessionRelay = EditorSessionRelay()
 
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
@@ -30,7 +33,10 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         // 没有 `sceneBridgingOptions = [.toolbars]` 了：窗口不再有工具栏，
         // 顶栏（logo / 搜索 / 控件组）整条由 SwiftUI 自绘，见 GalleryTopBar。
         let hosting = NSHostingController(
-            rootView: GalleryView(styleStore: AppSettings.shared)
+            rootView: GalleryView(
+                styleStore: AppSettings.shared,
+                editorSessionRelay: editorSessionRelay
+            )
                 .environmentObject(mode)
                 .environmentObject(selection)
                 .environmentObject(batchActivity)
@@ -80,6 +86,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
         }
         _ = window.setFrameAutosaveName("IndexGallery")
         super.init(window: window)
+        window.delegate = self
 
         keyboard.install()
 
@@ -103,6 +110,10 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
                     let title = GalleryWindowMode.resolveShot(id: id)?.primaryDisplayName
                     self?.window?.title = title.map { "Markdown — \($0)" } ?? "Index Markdown"
                     self?.quickLook.close()
+                case .codeEditing(let id):
+                    let title = GalleryWindowMode.resolveShot(id: id)?.primaryDisplayName
+                    self?.window?.title = title.map { "代码 — \($0)" } ?? "Index 代码"
+                    self?.quickLook.close()
                 }
             }
 
@@ -110,14 +121,14 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
-        ) { _ in
+        ) { [weak self] _ in
             MainActor.assumeIsolated {
-                let controller = GalleryWindowController.shared
+                guard let controller = self else { return }
                 controller.closeFinalizationTask?.cancel()
                 controller.closeFinalizationTask = GallerySessionLifecycle.shared.closeAfterExitingView(
                     exitView: {
-                        // 编辑器的正常退出路径会在 onDisappear 立即 flushSave。
-                        // 不先切回图库就 suspend 缩略图，会把资源回收抢在落库前面。
+                        // 编辑模式能走到 willClose，说明 windowShouldClose 已确认落库成功。
+                        // 这里切回图库只负责拆掉视图；onDisappear 的第二次 flush 是无改动空操作。
                         if controller.mode.isEditing {
                             controller.mode.returnToGallery()
                         }
@@ -131,6 +142,15 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 必须发生在 `willClose` 之前：编辑器落库失败时否决本次关闭，保留窗口、
+    /// 画布与底栏重试入口。图库、Markdown 与设置没有标注会话，不受影响。
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        GalleryWindowClosePolicy.shouldClose(
+            mode: mode.mode,
+            editorSessionRelay: editorSessionRelay
+        )
+    }
 
     deinit {
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
@@ -231,5 +251,18 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting {
     /// 进入编辑器（按 ID）。窗口未打开时仅切换模式。
     func openEditor(shotID: Int64?) {
         mode.openEditor(shotID: shotID)
+    }
+}
+
+/// 把关闭决策从 NSWindow 生命周期中提纯，便于覆盖成功、失败和非编辑态。
+/// 这是同步握手：当前 ShotStore 写入也是同步的，因此无需引入异步关闭状态机。
+@MainActor
+enum GalleryWindowClosePolicy {
+    static func shouldClose(
+        mode: GalleryWindowMode.Mode,
+        editorSessionRelay: EditorSessionRelay
+    ) -> Bool {
+        guard case .editing(let shotID) = mode else { return true }
+        return editorSessionRelay.flush(shotID: shotID)
     }
 }

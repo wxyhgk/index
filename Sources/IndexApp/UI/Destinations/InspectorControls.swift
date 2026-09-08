@@ -527,6 +527,12 @@ final class AppIconProvider {
         return cache.object(forKey: bundleID as NSString)
     }
 
+    /// 按应用显示名同步读取已经解析过的图标；只命中缓存，不触发磁盘 IO。
+    func cached(name: String?) -> NSImage? {
+        guard let name, !name.isEmpty else { return nil }
+        return cache.object(forKey: "name:\(name)" as NSString)
+    }
+
     /// 解析并缓存。
     ///
     /// 取舍：`NSWorkspace` 的这两个查询走 LaunchServices，实践上可以离开主线程；
