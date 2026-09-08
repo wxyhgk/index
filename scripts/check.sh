@@ -125,15 +125,14 @@ else
     bad "视图层裸写 Color.*.opacity —— 请收敛到 DS（见 DesignTokens.swift）"
 fi
 
-section "纪律五：DS vs Theme 双轨已收敛"
-# Theme 仅作兼容转发，新代码不得新增 Theme/MacTheme 调用点。
-# 允许的唯一 Theme 出现位置是 UI/Design/Theme.swift 本身（定义处）。
-theme_hits=$(grep -rn "Theme\.\|MacTheme\|: Theme" --include="*.swift" Sources 2>/dev/null | grep -v "UI/Design/Theme\.swift" | grep -v "//" | code_only || true)
+section "纪律五：DS 设计令牌唯一来源"
+# Theme 兼容层已删除，新代码一律 DS.xxx。
+theme_hits=$(grep -rn "Theme\.\|MacTheme\|: Theme" --include="*.swift" Sources 2>/dev/null | grep -v "//" | code_only || true)
 if [ -z "$theme_hits" ]; then
-    ok "Theme 仅在 UI/Design/Theme.swift 兼容转发，调用点只认 DS"
+    ok "无 Theme/MacTheme 调用点，设计令牌只认 DS"
 else
     printf "%s\n" "$theme_hits" | sed 's/^/    /'
-    bad "新增 Theme/MacTheme 调用点 —— 请改为 DS（Theme 已收敛为兼容层）"
+    bad "新增 Theme/MacTheme 调用点 —— 请改为 DS"
 fi
 
 section "纪律六：普通截图不准退回废弃的 CoreGraphics 代理"
@@ -316,6 +315,19 @@ if [ -z "$window_violations" ]; then
 else
     printf "%s" "$window_violations" | sed 's/^/    /'
     bad "Plugins/ 层出现未登记的窗口/视图子类 —— 加进白名单或移回 UI 层"
+fi
+
+section "UI 层不直调 ShotStore.shared 方法（类型声明豁免）"
+# @ObservedObject 要求具体类型 conform ObservableObject，SwiftUI 不支持 existential，
+# 所以 store: ShotStore 类型声明和 = .shared 默认参数值是合法的。
+# 但 UI 层不应直接调用 ShotStore.shared.xxx() 方法——应通过注入的 store 属性调用。
+shotstore_hits=$(grep -rn "ShotStore\.shared\." --include="*.swift" \
+    Sources/IndexApp/UI 2>/dev/null | grep -v "//" | code_only || true)
+if [ -z "$shotstore_hits" ]; then
+    ok "UI 层无 ShotStore.shared 直接方法调用"
+else
+    printf "%s\n" "$shotstore_hits" | sed 's/^/    /'
+    bad "UI 层出现 ShotStore.shared 直接方法调用 —— 请通过注入的 store 属性调用"
 fi
 
 # -------------------------------------------------------------------- 可选：打包

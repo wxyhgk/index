@@ -179,7 +179,7 @@ struct GalleryBottomBar: View {
         Task {
             defer { isImportingLibrary = false }
             do {
-                let report = try await ShotStore.shared.importPortableLibrary(at: directory)
+                let report = try await viewModel.store.importPortableLibrary(at: directory)
                 AppAlert.info("导入完成", message: report.summary)
             } catch {
                 AppAlert.info("导入失败", message: error.localizedDescription)
