@@ -116,9 +116,9 @@ struct SimilarShotsSheet: View {
 /// 同一件事没必要画两遍，而且它的两个不透明度都是拍脑袋来的。
 private struct SimilarShotCard: View {
     let shot: Shot
-    private let store: ShotStore
+    private let store: any ShotReading
 
-    init(shot: Shot, store: ShotStore = .shared) {
+    init(shot: Shot, store: any ShotReading = ShotStore.shared) {
         self.shot = shot
         self.store = store
     }

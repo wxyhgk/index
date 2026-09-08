@@ -47,7 +47,7 @@ struct PluginSettingsView: View {
                 .font(.title3.weight(.semibold))
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: DS.s3)], spacing: DS.s3) {
-                ForEach(BuiltinPluginCatalog.descriptors) { plugin in
+                ForEach(BuiltinPluginCatalog.shared.all) { plugin in
                     PluginCard(
                         plugin: plugin,
                         isEnabled: isPluginEnabled(plugin.id),

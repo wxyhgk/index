@@ -321,7 +321,7 @@ final class AppSettings: ObservableObject {
 
             // 未写过该偏好的旧用户默认启用全部内置插件。持久化空数组从现在起
             // 具有明确语义：用户关闭了全部插件，不能再被解释成“全开”。
-            Keys.enabledPluginIDs: BuiltinPluginCatalog.descriptors.map(\.id),
+            Keys.enabledPluginIDs: BuiltinPluginCatalog.shared.all.map(\.id),
             Keys.agentEnabled: PluginPrefs.defaults.agentEnabled,
             Keys.agentBaseURL: PluginPrefs.defaults.agentBaseURL,
             Keys.agentModel: PluginPrefs.defaults.agentModel
@@ -402,7 +402,7 @@ final class AppSettings: ObservableObject {
         plugin = PluginPrefs(
             enabledPluginIDs: PluginPreferenceMigration.resolveEnabledPluginIDs(
                 in: defaults,
-                availablePluginIDs: BuiltinPluginCatalog.descriptors.map(\.id)
+                availablePluginIDs: BuiltinPluginCatalog.shared.all.map(\.id)
             ),
             agentEnabled: defaults.bool(forKey: Keys.agentEnabled),
             agentBaseURL: defaults.string(forKey: Keys.agentBaseURL) ?? PluginPrefs.defaults.agentBaseURL,

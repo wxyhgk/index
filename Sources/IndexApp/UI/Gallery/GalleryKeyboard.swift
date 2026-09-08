@@ -12,11 +12,11 @@ import SwiftUI
 @MainActor
 final class GalleryKeyboard {
 
-    private let store: ShotReading
+    private let store: any ShotReading & ShotWriting
     private let displayedShots: () -> [Shot]
     private let matchingIDs: () async -> [Int64]
 
-    init(store: ShotReading = ShotStore.shared) {
+    init(store: any ShotReading & ShotWriting = ShotStore.shared) {
         self.store = store
         displayedShots = { GalleryViewModel.displayShots(for: store) ?? store.shots }
         matchingIDs = { await GalleryViewModel.allMatchingIDs(for: store) }
@@ -121,7 +121,7 @@ final class GalleryKeyboard {
             )
             metadata.windowTitle = "粘贴图片"
             do {
-                _ = try ShotStore.shared.save(image: image, metadata: metadata)
+                _ = try store.save(image: image, metadata: metadata)
             } catch {
                 NSLog("[Index] 粘贴导入失败: \(error)")
             }

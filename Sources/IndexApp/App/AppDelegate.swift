@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardReader: (any ClipboardReading)? = nil,
         moleculePinner: (any MoleculePinning)? = nil
     ) {
+        PluginAssembly.registerBuiltins()
         self.settings = settings ?? AppSettings.shared
         self.shotStore = shotStore ?? ShotStore.shared
         self.pipeline = pipeline ?? CapturePipeline.shared
@@ -73,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ToolbarRegistry.registerBuiltins(into: .shared)
         GalleryDestinationRegistry.registerBuiltins(into: .shared)
         PluginRegistry.registerBuiltins()
+        GalleryPresentingDefaults.presenter = GalleryWindowController.shared
         ImageExporter.nameTemplateProvider = { AppSettings.shared.export.exportNameTemplate }
 
         // 插件激活：截图/录屏/钉图/暂存架/输入即检索各是一个动作包。

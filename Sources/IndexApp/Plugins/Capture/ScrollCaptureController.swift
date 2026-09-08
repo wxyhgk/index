@@ -42,7 +42,7 @@ final class ScrollCaptureController {
         )
         self.shotStore = shotStore ?? ShotStore.shared
         self.pipeline = pipeline ?? CapturePipeline.shared
-        self.galleryPresenter = galleryPresenter ?? GalleryWindowController.shared
+        self.galleryPresenter = galleryPresenter ?? GalleryPresentingDefaults.presenter ?? NoOpGalleryPresenter()
     }
 
     /// 预览可用 Fake

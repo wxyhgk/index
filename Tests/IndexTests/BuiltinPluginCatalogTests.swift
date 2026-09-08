@@ -4,7 +4,8 @@ import XCTest
 @MainActor
 final class BuiltinPluginCatalogTests: XCTestCase {
     func testCatalogUsesUniqueIDsAndContainsInputSearchPlugin() throws {
-        let descriptors = BuiltinPluginCatalog.descriptors
+        PluginAssembly.registerBuiltins()
+        let descriptors = BuiltinPluginCatalog.shared.all
         XCTAssertEqual(Set(descriptors.map(\.id)).count, descriptors.count)
 
         let inputSearch = try XCTUnwrap(

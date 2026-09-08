@@ -16,11 +16,16 @@ final class SearchPanelViewModel: ObservableObject {
     @Published var previewText: String?
     @Published var isSearching = false
 
+    private let store: any ShotReading & ShotWriting
     private var searchTask: Task<Void, Never>?
     private var previewLoadTask: Task<Void, Never>?
     private var shotThumbnails: [Int64: NSImage] = [:]
     private var clipboardThumbnails: [Int64: NSImage] = [:]
     private var shotOriginals: [Int64: NSImage] = [:]
+
+    init() {
+        self.store = ShotStore.shared
+    }
 
     var selectedEntry: SearchEntry? {
         guard entries.indices.contains(selectedIndex) else { return nil }
@@ -72,7 +77,7 @@ final class SearchPanelViewModel: ObservableObject {
 
     private func performSearch(_ q: String) {
         isSearching = true
-        let shotStore = ShotStore.shared
+        let shotStore = self.store
         let clipboardStore = ClipboardHistoryStore.shared
 
         Task { [weak self] in
@@ -157,12 +162,12 @@ final class SearchPanelViewModel: ObservableObject {
             } else if let thumb = shotThumbnails[id] {
                 previewImage = thumb
             } else {
-                let url = ShotStore.shared.thumbnailURL(for: shot)
+                let url = store.thumbnailURL(for: shot)
                 previewImage = NSImage(contentsOf: url)
             }
             // 后台加载原图（放大不模糊）
             if shotOriginals[id] == nil {
-                let originalURL = ShotStore.shared.originalURL(for: shot)
+                let originalURL = store.originalURL(for: shot)
                 previewLoadTask = Task { [weak self] in
                     let image = await Task.detached {
                         NSImage(contentsOf: originalURL)
@@ -196,7 +201,7 @@ final class SearchPanelViewModel: ObservableObject {
             switch entry.source {
             case .shot(let shot):
                 guard let id = shot.id, shotThumbnails[id] == nil else { continue }
-                let url = ShotStore.shared.thumbnailURL(for: shot)
+                let url = store.thumbnailURL(for: shot)
                 Task.detached { [weak self] in
                     guard let image = NSImage(contentsOf: url) else { return }
                     await MainActor.run { self?.shotThumbnails[id] = image }
@@ -218,7 +223,7 @@ final class SearchPanelViewModel: ObservableObject {
         guard let entry else { return nil }
         switch entry.source {
         case .shot(let shot):
-            return ShotStore.shared.originalURL(for: shot)
+            return store.originalURL(for: shot)
         case .clipboard(let clip):
             return ClipboardHistoryStore.shared.content(of: clip).assetURL
         }
@@ -231,7 +236,7 @@ final class SearchPanelViewModel: ObservableObject {
         case .shot(let shot):
             guard let id = shot.id else { return nil }
             if let cached = shotThumbnails[id] { return cached }
-            let url = ShotStore.shared.thumbnailURL(for: shot)
+            let url = store.thumbnailURL(for: shot)
             return NSImage(contentsOf: url)
         case .clipboard(let clip):
             guard clip.kind == .image, let id = clip.id else { return nil }
@@ -252,7 +257,7 @@ final class SearchPanelViewModel: ObservableObject {
 
         switch entry.source {
         case .shot(let shot):
-            if let url = ShotStore.shared.originalURL(for: shot) as URL?,
+            if let url = store.originalURL(for: shot) as URL?,
                let image = NSImage(contentsOf: url) {
                 let w = Int(image.size.width)
                 let h = Int(image.size.height)
@@ -300,7 +305,7 @@ final class SearchPanelViewModel: ObservableObject {
         guard let entry = selectedEntry else { return }
         switch entry.source {
         case .shot(let shot):
-            if let url = ShotStore.shared.originalURL(for: shot) as URL?,
+            if let url = store.originalURL(for: shot) as URL?,
                let image = ImageCodec.load(from: url) {
                 Clipboard.copy(image)
             }
@@ -327,7 +332,7 @@ final class SearchPanelViewModel: ObservableObject {
         meta.appName = clip.sourceApp
         meta.windowTitle = clip.title
         do {
-            _ = try ShotStore.shared.save(image: image, metadata: meta)
+            _ = try store.save(image: image, metadata: meta)
             refresh()
         } catch {
             NSLog("[Index] 剪贴板保存到图库失败: \(error)")
@@ -346,7 +351,7 @@ final class SearchPanelViewModel: ObservableObject {
     func dragProvider(for entry: SearchEntry) -> NSItemProvider {
         switch entry.source {
         case .shot(let shot):
-            let url = ShotStore.shared.originalURL(for: shot)
+            let url = store.originalURL(for: shot)
             return NSItemProvider(item: url as NSURL, typeIdentifier: UTType.fileURL.identifier)
         case .clipboard(let clip):
             return ClipboardHistoryViewModel.shared.dragProvider(for: clip)

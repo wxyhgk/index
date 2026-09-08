@@ -32,7 +32,7 @@ struct QuickFavoritesCard: View {
 
 struct CollectionCard: View {
     let collection: ShotCollectionSummary
-    let store: ShotStore
+    let store: any ShotReading
     let action: () -> Void
     @State private var hovering = false
 
@@ -59,7 +59,7 @@ struct CollectionCardShell: View {
     let previews: [Shot]
     let icon: String
     let iconColor: Color
-    let store: ShotStore
+    let store: any ShotReading
     let hovering: Bool
     let action: () -> Void
     @Environment(\.colorScheme) private var scheme

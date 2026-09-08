@@ -32,7 +32,7 @@ final class ShelfCardController: NSWindowController {
         self.previewImage = previewImage
         self.shot = shot
         self.fullImageProvider = fullImageProvider
-        self.galleryPresenter = galleryPresenter ?? GalleryWindowController.shared
+        self.galleryPresenter = galleryPresenter ?? GalleryPresentingDefaults.presenter ?? NoOpGalleryPresenter()
 
         // 卡片宽度固定，缩略图高度按图片比例走，过宽/过高的截图夹在合理区间里。
         let aspect = CGFloat(previewImage.height) / CGFloat(max(previewImage.width, 1))

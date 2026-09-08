@@ -349,7 +349,7 @@ private struct AppsContent: View {
 
 private struct FeaturedAppCard: View {
     let app: CapturedAppSummary
-    let store: ShotStore
+    let store: ShotReading
     let action: () -> Void
 
     @Environment(\.colorScheme) private var scheme

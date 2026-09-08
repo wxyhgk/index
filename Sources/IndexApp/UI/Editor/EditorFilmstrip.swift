@@ -239,7 +239,7 @@ struct EditorFilmstrip: View, Equatable {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let store: ShotStore
+    private let store: any ShotReading & ShotObserving
 
     private var shots: [Shot] {
         EditorFilmstripItems.mergingCurrent(
@@ -257,7 +257,7 @@ struct EditorFilmstrip: View, Equatable {
         )
     }
 
-    init(currentShotID: Int64?, onSelect: @escaping (Shot) -> Void, store: ShotStore = .shared) {
+    init(currentShotID: Int64?, onSelect: @escaping (Shot) -> Void, store: any ShotReading & ShotObserving = ShotStore.shared) {
         self.currentShotID = currentShotID
         self.onSelect = onSelect
         self.store = store
