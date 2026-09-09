@@ -28,7 +28,7 @@ final class CodePreviewCache {
         cache.totalCostLimit = 4 * 1_024 * 1_024
     }
 
-    func preview(for shot: Shot, store: ShotStore) -> CodePreview {
+    func preview(for shot: Shot, store: any ShotReading) -> CodePreview {
         guard let shotID = shot.id else { return CodePreview(content: nil) }
         let key = NSNumber(value: shotID)
         if let cached = cache.object(forKey: key) { return cached.preview }
@@ -54,7 +54,7 @@ struct CodeContentRenderer: ContentRenderer {
     let kind: ContentKind = .code
 
     @MainActor
-    func render(shot: Shot, height: CGFloat, store: ShotStore, isHovering: Bool) -> AnyView {
+    func render(shot: Shot, height: CGFloat, store: any ShotReading, isHovering: Bool) -> AnyView {
         let preview = CodePreviewCache.shared.preview(for: shot, store: store)
         return AnyView(
             ZStack(alignment: .topLeading) {

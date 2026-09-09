@@ -26,7 +26,7 @@ import Combine
 //    `await MainActor.run {}` 或直接标记 `@MainActor` 即可。
 
 @MainActor
-final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObserving {
+final class FakeShotStore: ObservableObject, ShotReading, ShotWriting, ShotObserving, ShotNoteStore {
 
     // MARK: 可观察状态（对齐 ShotStore）
 

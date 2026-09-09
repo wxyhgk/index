@@ -1,9 +1,10 @@
 import SwiftUI
 
-// MARK: - 主窗口 Markdown 编辑器
+// MARK: - 主窗口 Markdown 编辑器（UI 层）
 //
 // Markdown 和标注、设置共用 GalleryWindowMode 的单窗口模式切换，不再创建第二个
-// NSWindow。编辑器复用 MarkdownEditorSurface，保存仍写回 contentMarkdown。
+// NSWindow。编辑器复用 MarkdownEditorSurface（Content 层共享组件），保存仍写回
+// contentMarkdown。依赖 GalleryWindowMode + DS 设计令牌，故归 UI 层。
 
 struct MarkdownEditorModeView: View {
     let shot: Shot

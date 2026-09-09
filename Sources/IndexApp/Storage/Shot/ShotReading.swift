@@ -41,14 +41,25 @@ protocol ShotReading: AnyObject {
     /// 取 shot 的 Markdown 源码（收口三步查询：content → contentID → markdownContent）。
     /// 没有存储的 Markdown 时返回 nil，调用方自行决定兜底策略。
     func markdownSource(for shot: Shot) -> String?
+    /// 取 shot 的代码正文与语言。没有代码载荷时返回 nil。
+    func codeContent(for shot: Shot) -> ContentCode?
+}
+
+/// 便签（Markdown 笔记）专用存储接口。
+///
+/// 从 ShotReading/ShotWriting 拆出，避免通用存储协议感知便签领域。
+/// ShotStore 和 FakeShotStore 同时 conform 此协议。
+@MainActor
+protocol ShotNoteStore: AnyObject {
     /// 查询所有 Markdown 便签（contentKind = 'markdown'），按编辑时间倒序。
     /// - Parameter query: 搜索关键词（匹配 windowTitle 或 markdownSource），nil 表示不过滤。
     /// - Parameter limit: 最大返回条数。
     func markdownShots(query: String?, limit: Int) -> [Shot]
     /// 查询所有置顶便签的 shotID（tag = 'pinned'）。
     func pinnedShotIDs() -> Set<Int64>
-    /// 取 shot 的代码正文与语言。没有代码载荷时返回 nil。
-    func codeContent(for shot: Shot) -> ContentCode?
+    @discardableResult func createMarkdownShot(title: String, source: String) throws -> Shot
+    /// 切换便签置顶状态（tag = 'pinned'）。
+    func togglePin(shotID: Int64)
 }
 
 /// 写侧：保存、删除、修订、收藏、标签。
@@ -75,10 +86,7 @@ protocol ShotWriting: AnyObject {
     func attachRecording(at url: URL, to shot: Shot) throws
     func writeAttribute(shotID: Int64, key: String, value: AttributeValue)
     func saveContent(for shotID: Int64, kind: ContentKind, payload: ContentPayload, updateKind: Bool) throws
-    @discardableResult func createMarkdownShot(title: String, source: String) throws -> Shot
     @discardableResult func createCodeShot(title: String, text: String, language: String?) throws -> Shot
-    /// 切换便签置顶状态（tag = 'pinned'）。
-    func togglePin(shotID: Int64)
 }
 
 /// 可观察：需要订阅刷新的视图。
@@ -171,4 +179,4 @@ extension ShotReading {
     func allShots() -> [Shot] { allShots(limit: ShotStore.pageSize) }
 }
 
-extension ShotStore: ShotReading, ShotWriting, ShotObserving {}
+extension ShotStore: ShotReading, ShotWriting, ShotObserving, ShotNoteStore {}

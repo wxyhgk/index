@@ -21,7 +21,7 @@ final class QuickNoteViewModel: ObservableObject {
 
     // MARK: 私有
 
-    private let store: any ShotReading & ShotWriting & ShotObserving
+    private let store: any ShotReading & ShotWriting & ShotObserving & ShotNoteStore
     private var saveTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     private var lastSavedText = ""
@@ -50,7 +50,7 @@ final class QuickNoteViewModel: ObservableObject {
 
     // MARK: 初始化
 
-    init(store: any ShotReading & ShotWriting & ShotObserving = ShotStore.shared) {
+    init(store: any ShotReading & ShotWriting & ShotObserving & ShotNoteStore = ShotStore.shared) {
         self.store = store
         // 侧边栏展开状态持久化；默认展开（便签核心是快速找上一条）
         sidebarCollapsed = UserDefaults.standard.bool(forKey: Self.sidebarCollapsedKey)

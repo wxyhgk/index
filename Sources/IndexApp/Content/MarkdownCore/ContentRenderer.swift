@@ -8,8 +8,8 @@ import SwiftUI
 // 设计原则：
 //   · 渲染器是纯 UI 组件，不碰数据库、不碰剪贴板
 //   · 输入只有 shot + 布局参数，输出一个 SwiftUI View
-//   · 注册表按 ContentKind 查找，找不到就退回图片渲染器（兜底）
-//   · 新增内容类型 = 新增一个渲染器文件 + 注册一行，不改卡片框架
+//   · 注册走 PluginRegistry（ContentMode.renderer），找不到就退回图片渲染器（兜底）
+//   · 新增内容类型 = 新增一个渲染器文件 + 注册一个 ContentMode，不改卡片框架
 
 /// 内容渲染器协议。
 ///
@@ -27,34 +27,7 @@ protocol ContentRenderer: Sendable {
     ///   - isHovering: 卡片是否悬停中（视差等交互效果需要）
     /// - Returns: 中间内容区的 SwiftUI 视图
     @MainActor
-    func render(shot: Shot, height: CGFloat, store: ShotStore, isHovering: Bool) -> AnyView
-}
-
-// MARK: - 注册表
-
-/// 按 ContentKind 查找渲染器。找不到时退回图片渲染器。
-@MainActor
-final class ContentRendererRegistry: Sendable {
-
-    static let shared = ContentRendererRegistry()
-
-    private var renderers: [ContentKind: any ContentRenderer] = [:]
-
-    init() {
-        // 默认：图片渲染器（兜底）
-        register(ImageContentRenderer())
-        register(MarkdownContentRenderer())
-        register(CodeContentRenderer())
-    }
-
-    func register(_ renderer: any ContentRenderer) {
-        renderers[renderer.kind] = renderer
-    }
-
-    /// 获取渲染器。未注册的类型退回图片渲染器。
-    func renderer(for kind: ContentKind) -> any ContentRenderer {
-        renderers[kind] ?? renderers[.image] ?? ImageContentRenderer()
-    }
+    func render(shot: Shot, height: CGFloat, store: any ShotReading, isHovering: Bool) -> AnyView
 }
 
 // MARK: - 默认图片渲染器
@@ -64,7 +37,7 @@ struct ImageContentRenderer: ContentRenderer {
     let kind: ContentKind = .image
 
     @MainActor
-    func render(shot: Shot, height: CGFloat, store: ShotStore, isHovering: Bool) -> AnyView {
+    func render(shot: Shot, height: CGFloat, store: any ShotReading, isHovering: Bool) -> AnyView {
         let image = CachedImage(url: store.thumbnailURL(for: shot), key: shot.sha256)
         // `visualEffect` 即使最终返回 identity，也仍会进入每个可见卡片的
         // 滚动几何更新。视差同一时刻只可能属于指针下的一张卡：只给那一张

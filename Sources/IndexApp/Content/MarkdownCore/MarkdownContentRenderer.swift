@@ -10,7 +10,7 @@ final class MarkdownPreviewCache {
     static let shared = MarkdownPreviewCache()
     private var sources: [Int64: String] = [:]
 
-    func source(for shot: Shot, store: ShotStore) -> String {
+    func source(for shot: Shot, store: any ShotReading) -> String {
         guard let id = shot.id else { return MarkdownGenerator.generate(for: shot) }
         if let cached = sources[id] { return cached }
         let source = store.markdownSource(for: shot) ?? MarkdownGenerator.generate(for: shot)
@@ -28,7 +28,7 @@ struct MarkdownContentRenderer: ContentRenderer {
     let kind: ContentKind = .markdown
 
     @MainActor
-    func render(shot: Shot, height: CGFloat, store: ShotStore, isHovering: Bool) -> AnyView {
+    func render(shot: Shot, height: CGFloat, store: any ShotReading, isHovering: Bool) -> AnyView {
         let source = MarkdownPreviewCache.shared.source(for: shot, store: store)
 
         return AnyView(
