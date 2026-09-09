@@ -189,37 +189,47 @@ final class ShotStore: ObservableObject {
 
     /// 保存导入的图片。`originalData` 非空时原图按原始字节落盘（SVG 保留矢量文件），
     /// 否则编码为 PNG。`originalExtension` 决定原图文件扩展名。
+    ///
+    /// 编码、哈希、缩略图与写盘全部在后台线程执行，主线程只保留数据库事务。
+    /// 签名保持同步：调用方（批量导入等）不需要改成 async，重活由后台线程承担，
+    /// 主线程在等待期间挂起而非忙等，UI 仍可响应。
     @discardableResult
     func save(image: CGImage, metadata: CaptureMetadata, originalData: Data?, originalExtension: String?) throws -> Shot {
         let ext = originalExtension ?? "png"
-        let original: Data
-        if let originalData, originalExtension != nil {
-            original = originalData
-        } else {
-            guard let png = ImageCodec.pngData(from: image) else {
-                throw StoreError.encodingFailed
+        // 目录是 Sendable 值类型，先在主线程取好，避免后台闭包读 MainActor 属性。
+        let originalsDir = originalsDirectory
+        let thumbnailsDir = thumbnailsDirectory
+
+        // 编码/哈希/缩略图/写盘在后台线程执行，主线程只等信号（不消耗 CPU）。
+        // semaphore.wait() 提供 happens-before 保证：signal 之前的写对 wait 之后的读可见。
+        let semaphore = DispatchSemaphore(value: 0)
+        var material: SaveMaterial?
+        var saveError: Error?
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let prepared = try Self.prepareSaveMaterial(
+                    image: image,
+                    originalData: originalData,
+                    originalExtension: originalExtension,
+                    fileExtension: ext,
+                    originalsDirectory: originalsDir,
+                    thumbnailsDirectory: thumbnailsDir
+                )
+                material = prepared
+            } catch {
+                saveError = error
             }
-            original = png
+            semaphore.signal()
         }
+        semaphore.wait()
 
-        let digest = SHA256.hash(data: original)
-        let sha = digest.map { String(format: "%02x", $0) }.joined()
-
-        let originalPath = originalsDirectory.appendingPathComponent("\(sha).\(ext)")
-        if !FileManager.default.fileExists(atPath: originalPath.path) {
-            try original.write(to: originalPath, options: .atomic)
-        }
-
-        let thumbPath = thumbnailsDirectory.appendingPathComponent("\(sha).jpg")
-        if !FileManager.default.fileExists(atPath: thumbPath.path),
-           let thumb = ImageCodec.resized(image, maxDimension: 640),
-           let jpg = ImageCodec.jpegData(from: thumb) {
-            try? jpg.write(to: thumbPath, options: .atomic)
-        }
+        if let saveError { throw saveError }
+        guard let material else { throw StoreError.encodingFailed }
 
         var shot = Shot(
             id: nil,
-            sha256: sha,
+            sha256: material.sha,
             capturedAt: Date(),
             pixelWidth: image.width,
             pixelHeight: image.height,
@@ -243,6 +253,52 @@ final class ShotStore: ObservableObject {
         shot = try revisionRepository.insertShotWithInitialRevision(shot, note: "原始")
 
         return shot
+    }
+
+    /// 后台保存材料：编码、哈希、缩略图与写盘的结果。
+    /// 写盘已在后台完成，主线程只拿 sha 落库。
+    private struct SaveMaterial {
+        let sha: String
+    }
+
+    /// 后台准备保存材料：编码原图、算 SHA256、生成缩略图并写盘。
+    ///
+    /// 全部是纯函数（`ImageCodec` 无 MainActor 标注）+ 线程安全的文件 IO，
+    /// 不碰数据库，可以在任意线程执行。`nonisolated` 让它脱离 `@MainActor` 隔离。
+    private nonisolated static func prepareSaveMaterial(
+        image: CGImage,
+        originalData: Data?,
+        originalExtension: String?,
+        fileExtension: String,
+        originalsDirectory: URL,
+        thumbnailsDirectory: URL
+    ) throws -> SaveMaterial {
+        let original: Data
+        if let originalData, originalExtension != nil {
+            original = originalData
+        } else {
+            guard let png = ImageCodec.pngData(from: image) else {
+                throw StoreError.encodingFailed
+            }
+            original = png
+        }
+
+        let digest = SHA256.hash(data: original)
+        let sha = digest.map { String(format: "%02x", $0) }.joined()
+
+        let originalPath = originalsDirectory.appendingPathComponent("\(sha).\(fileExtension)")
+        if !FileManager.default.fileExists(atPath: originalPath.path) {
+            try original.write(to: originalPath, options: .atomic)
+        }
+
+        let thumbPath = thumbnailsDirectory.appendingPathComponent("\(sha).jpg")
+        if !FileManager.default.fileExists(atPath: thumbPath.path),
+           let thumb = ImageCodec.resized(image, maxDimension: 640),
+           let jpg = ImageCodec.jpegData(from: thumb) {
+            try? jpg.write(to: thumbPath, options: .atomic)
+        }
+
+        return SaveMaterial(sha: sha)
     }
 
     /// 派生属性的统一落库入口。后处理器只认 key 和值，不知道它最终存在哪。

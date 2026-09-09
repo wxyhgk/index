@@ -77,6 +77,7 @@ final class SearchPanelViewModel: ObservableObject {
 
     private func performSearch(_ q: String) {
         isSearching = true
+        let previousSelectedID = selectedEntry?.id
         let shotStore = self.store
         let clipboardStore = ClipboardHistoryStore.shared
 
@@ -138,7 +139,12 @@ final class SearchPanelViewModel: ObservableObject {
             results = Array(results.prefix(30))
 
             self.entries = results
-            self.selectedIndex = 0
+            if let prevID = previousSelectedID,
+               let idx = results.firstIndex(where: { $0.id == prevID }) {
+                self.selectedIndex = idx
+            } else {
+                self.selectedIndex = 0
+            }
             self.isSearching = false
             self.updatePreview()
             self.loadThumbnails()
@@ -235,16 +241,10 @@ final class SearchPanelViewModel: ObservableObject {
         switch entry.source {
         case .shot(let shot):
             guard let id = shot.id else { return nil }
-            if let cached = shotThumbnails[id] { return cached }
-            let url = store.thumbnailURL(for: shot)
-            return NSImage(contentsOf: url)
+            return shotThumbnails[id]
         case .clipboard(let clip):
             guard clip.kind == .image, let id = clip.id else { return nil }
-            if let cached = clipboardThumbnails[id] { return cached }
-            if let url = ClipboardHistoryStore.shared.content(of: clip).assetURL {
-                return NSImage(contentsOf: url)
-            }
-            return nil
+            return clipboardThumbnails[id]
         }
     }
 
@@ -257,15 +257,13 @@ final class SearchPanelViewModel: ObservableObject {
 
         switch entry.source {
         case .shot(let shot):
+            if shot.pixelWidth > 0, shot.pixelHeight > 0 {
+                parts.append("\(shot.pixelWidth)×\(shot.pixelHeight)")
+            }
             if let url = store.originalURL(for: shot) as URL?,
-               let image = NSImage(contentsOf: url) {
-                let w = Int(image.size.width)
-                let h = Int(image.size.height)
-                parts.append("\(w)×\(h)")
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-                   let size = attrs[.size] as? Int {
-                    parts.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
-                }
+               let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let size = attrs[.size] as? Int {
+                parts.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
             }
             if let app = shot.appName, !app.isEmpty {
                 parts.append(app)

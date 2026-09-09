@@ -50,16 +50,41 @@ final class QuickNotePanel: NSPanel {
     // MARK: 窗口
 
     func show() {
-        if !setFrameUsingName("IndexQuickNote") {
-            if let screen = NSScreen.main {
-                let size = frame.size
-                let x = screen.frame.midX - size.width / 2
-                let y = screen.frame.midY - size.height / 2
-                setFrameOrigin(NSPoint(x: x, y: y))
+        // 关闭动画期间被再次 show：先取消收尾状态，避免 alpha 停在中间值
+        if isClosing {
+            isClosing = false
+            alphaValue = 1
+        }
+        if !isVisible {
+            if !setFrameUsingName("IndexQuickNote") {
+                if let screen = NSScreen.main {
+                    let size = frame.size
+                    let x = screen.frame.midX - size.width / 2
+                    let y = screen.frame.midY - size.height / 2
+                    setFrameOrigin(NSPoint(x: x, y: y))
+                }
             }
         }
         NSApp.activate(ignoringOtherApps: true)
+        // 入场动画：alpha 0→1 + 轻微缩放 0.98→1，与关闭动画对称
+        let targetFrame = frame
+        let scale: CGFloat = 0.98
+        let scaledWidth = targetFrame.width * scale
+        let scaledHeight = targetFrame.height * scale
+        let scaledFrame = NSRect(
+            x: targetFrame.midX - scaledWidth / 2,
+            y: targetFrame.midY - scaledHeight / 2,
+            width: scaledWidth,
+            height: scaledHeight
+        )
+        alphaValue = 0
+        setFrame(scaledFrame, display: false)
         makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            alphaValue = 1
+            setFrame(targetFrame, display: true)
+        }
         installMonitor()
         DispatchQueue.main.async { [weak self] in
             guard let self, let textView = Self.findTextView(in: self.contentView) else { return }
@@ -82,7 +107,6 @@ final class QuickNotePanel: NSPanel {
                 self?.orderOut(nil)
                 self?.alphaValue = 1
                 self?.isClosing = false
-                NSApp.hide(nil)
             }
         })
     }
@@ -230,42 +254,50 @@ struct QuickNoteView: View {
             Divider()
 
             // 列表
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    // 置顶
-                    let pinned = viewModel.shots.filter { viewModel.isPinned($0) }
-                    if !pinned.isEmpty {
-                        Text("置顶")
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.top, 8)
-                            .padding(.bottom, 2)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        // 置顶
+                        let pinned = viewModel.shots.filter { viewModel.isPinned($0) }
+                        if !pinned.isEmpty {
+                            Text("置顶")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.top, 8)
+                                .padding(.bottom, 2)
 
-                        ForEach(pinned) { shot in
-                            sidebarRow(shot)
+                            ForEach(pinned) { shot in
+                                sidebarRow(shot)
+                            }
+
+                            Divider().padding(.horizontal, 10).padding(.vertical, 4)
                         }
 
-                        Divider().padding(.horizontal, 10).padding(.vertical, 4)
+                        // 按天分组（排除已置顶的）
+                        let unpinned = viewModel.shots.filter { !viewModel.isPinned($0) }
+                        let grouped = QuickNoteViewModel.groupByDay(unpinned)
+                        ForEach(grouped, id: \.date) { group in
+                            Text(QuickNoteViewModel.dayLabel(for: group.date))
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.top, 8)
+                                .padding(.bottom, 2)
+
+                            ForEach(group.shots) { shot in
+                                sidebarRow(shot)
+                            }
+                        }
                     }
-
-                    // 按天分组（排除已置顶的）
-                    let unpinned = viewModel.shots.filter { !viewModel.isPinned($0) }
-                    let grouped = QuickNoteViewModel.groupByDay(unpinned)
-                    ForEach(grouped, id: \.date) { group in
-                        Text(QuickNoteViewModel.dayLabel(for: group.date))
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.top, 8)
-                            .padding(.bottom, 2)
-
-                        ForEach(group.shots) { shot in
-                            sidebarRow(shot)
-                        }
+                    .padding(.bottom, 8)
+                }
+                .onChange(of: viewModel.selectedShotID) { _, newID in
+                    guard !viewModel.sidebarCollapsed, let newID else { return }
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        proxy.scrollTo(newID, anchor: .center)
                     }
                 }
-                .padding(.bottom, 8)
             }
         }
         .background(Color(nsColor: DS.windowBase))
@@ -336,6 +368,7 @@ struct QuickNoteView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
+        .id(shot.id ?? 0)
         .onTapGesture {
             if let id = shot.id {
                 viewModel.select(shotID: id)

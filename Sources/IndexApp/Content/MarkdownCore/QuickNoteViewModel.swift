@@ -52,6 +52,8 @@ final class QuickNoteViewModel: ObservableObject {
 
     init(store: any ShotReading & ShotWriting & ShotObserving = ShotStore.shared) {
         self.store = store
+        // 侧边栏展开状态持久化；默认展开（便签核心是快速找上一条）
+        sidebarCollapsed = UserDefaults.standard.bool(forKey: Self.sidebarCollapsedKey)
     }
 
     // MARK: 生命周期
@@ -116,19 +118,19 @@ final class QuickNoteViewModel: ObservableObject {
     }
 
     func updateText(_ newText: String) {
+        let now = Date()
+        if now.timeIntervalSince(lastPushTime) > 0.5 {
+            lastPushTime = now
+            undoStack.append(text)
+            if undoStack.count > 50 { undoStack.removeFirst() }
+            redoStack.removeAll()
+        }
         text = newText
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(800))
             guard !Task.isCancelled, let self else { return }
             self.persist(newText)
-        }
-        let now = Date()
-        if now.timeIntervalSince(lastPushTime) > 0.5 {
-            lastPushTime = now
-            undoStack.append(newText)
-            if undoStack.count > 50 { undoStack.removeFirst() }
-            redoStack.removeAll()
         }
     }
 
@@ -177,7 +179,10 @@ final class QuickNoteViewModel: ObservableObject {
 
     func toggleSidebar() {
         sidebarCollapsed.toggle()
+        UserDefaults.standard.set(sidebarCollapsed, forKey: Self.sidebarCollapsedKey)
     }
+
+    private static let sidebarCollapsedKey = "quickNote.sidebarCollapsed"
 
     // MARK: 操作
 
