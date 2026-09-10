@@ -190,9 +190,9 @@ final class QuickNotePanel: NSPanel {
                     return nil
                 }
                 if event.keyCode == 9, event.modifierFlags.contains(.command) {
-                    // 剪贴板有图片时存文件 + 在光标位置插入 ![[filename]]
-                    if let name = QuickNoteImageStore.saveClipboardImage() {
-                        self.pasteImage(name: name)
+                    // 剪贴板有图片时导入图库 + 在光标位置插入 ![[sha256]]
+                    if let sha = QuickNoteImageStore.importClipboardImage() {
+                        self.pasteImage(name: sha)
                         return nil
                     }
                     if vm.pasteClipboardIfEmpty() { return nil }
