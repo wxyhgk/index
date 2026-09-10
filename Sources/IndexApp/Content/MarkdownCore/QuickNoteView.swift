@@ -236,15 +236,6 @@ struct QuickNoteView: View {
                     .lineLimit(1)
 
                 Spacer()
-
-                Button(action: { viewModel.toggleFloating() }) {
-                    Image(systemName: viewModel.isFloating ? "pin.fill" : "pin")
-                        .font(.system(size: 11, weight: .thin))
-                        .foregroundStyle(viewModel.isFloating ? .primary : .secondary)
-                        .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.plain)
-                .help(viewModel.isFloating ? "取消浮动" : "浮动（钉住到最前）")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -252,7 +243,12 @@ struct QuickNoteView: View {
             Divider()
 
             // 编辑器
-            MarkdownEditorSurface(text: $viewModel.text)
+            // 不能直接绑 $viewModel.text：SwiftUI 会绕过 updateText，
+            // 800ms 防抖保存和 undo 压栈都不会触发。
+            MarkdownEditorSurface(text: Binding(
+                get: { viewModel.text },
+                set: { viewModel.updateText($0) }
+            ))
                 .padding(14)
 
             // 待办清单（解析 - [ ] / - [x]）

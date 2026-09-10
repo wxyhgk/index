@@ -18,7 +18,6 @@ final class QuickNoteViewModel: ObservableObject {
     @Published var pinnedIDs: Set<Int64> = []
     @Published var sidebarCollapsed = true
     @Published var confirmDeleteID: Int64?
-    @Published var isFloating = false
 
     // MARK: 私有
 
@@ -62,7 +61,6 @@ final class QuickNoteViewModel: ObservableObject {
     init(store: any ShotReading & ShotWriting & ShotObserving & ShotNoteStore = ShotStore.shared) {
         self.store = store
         sidebarCollapsed = UserDefaults.standard.bool(forKey: Self.sidebarCollapsedKey)
-        isFloating = UserDefaults.standard.bool(forKey: Self.floatingKey)
     }
 
     // MARK: 生命周期
@@ -191,11 +189,6 @@ final class QuickNoteViewModel: ObservableObject {
         UserDefaults.standard.set(sidebarCollapsed, forKey: Self.sidebarCollapsedKey)
     }
 
-    func toggleFloating() {
-        isFloating.toggle()
-        UserDefaults.standard.set(isFloating, forKey: Self.floatingKey)
-    }
-
     // MARK: 光标位置
 
     func saveCursorPosition(_ location: Int) {
@@ -215,7 +208,6 @@ final class QuickNoteViewModel: ObservableObject {
     }
 
     private static let sidebarCollapsedKey = "quickNote.sidebarCollapsed"
-    private static let floatingKey = "quickNote.isFloating"
 
     // MARK: 操作
 
@@ -296,6 +288,7 @@ final class QuickNoteViewModel: ObservableObject {
                 MarkdownPreviewCache.shared.update(newText, shotID: shot.id)
             }
             lastSavedText = newText
+            reload()
         } catch {
             NSLog("[Index] 便签保存失败: \(error)")
         }

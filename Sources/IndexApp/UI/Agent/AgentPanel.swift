@@ -78,8 +78,9 @@ final class AgentPanel: NSPanel {
             let y = screen.frame.midY - size.height / 2
             setFrameOrigin(NSPoint(x: x, y: y))
         }
-        NSApp.activate(ignoringOtherApps: true)
-        makeKeyAndOrderFront(nil)
+        // 不能调用 NSApp.activate：台前调度会把图库等所有 Index 窗口一起带出来。
+        orderFrontRegardless()
+        makeKey()
         installMonitor()
         // 每次打开都是新对话
         NotificationCenter.default.post(name: .agentPanelWillShow, object: nil)

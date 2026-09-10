@@ -26,7 +26,7 @@ final class QuickNotePanel: NSPanel {
         )
         title = "便签"
         isFloatingPanel = false
-        level = self.viewModel.isFloating ? .floating : .normal
+        level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
@@ -36,13 +36,6 @@ final class QuickNotePanel: NSPanel {
         let hosting = NSHostingController(rootView: view)
         contentView = hosting.view
 
-        self.viewModel.$isFloating
-            .dropFirst()
-            .sink { [weak self] floating in
-                self?.applyFloating(floating)
-            }
-            .store(in: &cancellables)
-
         self.viewModel.$selectedShotID
             .dropFirst()
             .sink { [weak self] _ in
@@ -50,10 +43,6 @@ final class QuickNotePanel: NSPanel {
                 DispatchQueue.main.async { self?.restoreCursor() }
             }
             .store(in: &cancellables)
-    }
-
-    private func applyFloating(_ floating: Bool) {
-        level = floating ? .floating : .normal
     }
 
     // MARK: 光标位置记忆
@@ -93,7 +82,8 @@ final class QuickNotePanel: NSPanel {
                 }
             }
         }
-        NSApp.activate(ignoringOtherApps: true)
+        // 不能调用 NSApp.activate：台前调度会把图库等所有 Index 窗口一起带出来。
+        // orderFrontRegardless + makeKey 让面板拿键盘焦点而不激活整个 App。
         let targetFrame = frame
         let scale: CGFloat = 0.98
         let scaledWidth = targetFrame.width * scale
@@ -106,7 +96,8 @@ final class QuickNotePanel: NSPanel {
         )
         alphaValue = 0
         setFrame(scaledFrame, display: false)
-        makeKeyAndOrderFront(nil)
+        orderFrontRegardless()
+        makeKey()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             alphaValue = 1

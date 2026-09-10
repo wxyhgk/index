@@ -56,8 +56,9 @@ final class SearchPanel: NSPanel {
             let y = screen.frame.midY - size.height / 2
             setFrameOrigin(NSPoint(x: x, y: y))
         }
-        NSApp.activate(ignoringOtherApps: true)
-        makeKeyAndOrderFront(nil)
+        // 不能调用 NSApp.activate：台前调度会把图库等所有 Index 窗口一起带出来。
+        orderFrontRegardless()
+        makeKey()
         installMonitors()
     }
 
