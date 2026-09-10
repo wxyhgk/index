@@ -60,7 +60,7 @@ final class QuickNoteViewModel: ObservableObject {
 
     init(store: any ShotReading & ShotWriting & ShotObserving & ShotNoteStore = ShotStore.shared) {
         self.store = store
-        sidebarCollapsed = UserDefaults.standard.bool(forKey: Self.sidebarCollapsedKey)
+        sidebarCollapsed = UserDefaults.standard.object(forKey: Self.sidebarCollapsedKey) as? Bool ?? true
     }
 
     // MARK: 生命周期
@@ -253,6 +253,15 @@ final class QuickNoteViewModel: ObservableObject {
         }
         newText += syntax
         text = newText
+    }
+
+    func insertImage(name: String) {
+        var newText = text
+        if !newText.isEmpty && !newText.hasSuffix("\n") {
+            newText += "\n"
+        }
+        newText += "![[\(name)]]\n"
+        updateText(newText)
     }
 
     func toggleTodo(at index: Int) {

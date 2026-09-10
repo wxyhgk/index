@@ -19,21 +19,26 @@ final class QuickNotePanel: NSPanel {
     init(viewModel: QuickNoteViewModel? = nil) {
         self.viewModel = viewModel ?? QuickNoteViewModel()
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
-            styleMask: [.titled, .closable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        title = "便签"
-        isFloatingPanel = false
+        title = ""
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
-        setContentSize(NSSize(width: 720, height: 480))
+        isMovableByWindowBackground = true
+        hasShadow = true
+        setContentSize(NSSize(width: 560, height: 420))
 
-        let view = QuickNoteView(viewModel: self.viewModel)
-        let hosting = NSHostingController(rootView: view)
+        let hosting = NSHostingController(rootView: QuickNoteView(viewModel: self.viewModel))
         contentView = hosting.view
 
         self.viewModel.$selectedShotID
@@ -43,6 +48,26 @@ final class QuickNotePanel: NSPanel {
                 DispatchQueue.main.async { self?.restoreCursor() }
             }
             .store(in: &cancellables)
+    }
+
+    // MARK: 图片粘贴
+
+    private func pasteImage(name: String) {
+        let embed = "![[\(name)]]\n"
+        if let textView = Self.findTextView(in: contentView) {
+            let range = textView.selectedRange()
+            let nsString = textView.string as NSString
+            let prefix = nsString.substring(to: range.location)
+            let suffix = nsString.substring(from: range.location + range.length)
+            viewModel.updateText(prefix + embed + suffix)
+            // 恢复光标到插入点之后
+            DispatchQueue.main.async {
+                let newLoc = prefix.count + embed.count
+                textView.setSelectedRange(NSRange(location: min(newLoc, textView.string.count), length: 0))
+            }
+        } else {
+            viewModel.insertImage(name: name)
+        }
     }
 
     // MARK: 光标位置记忆
@@ -165,6 +190,11 @@ final class QuickNotePanel: NSPanel {
                     return nil
                 }
                 if event.keyCode == 9, event.modifierFlags.contains(.command) {
+                    // 剪贴板有图片时存文件 + 在光标位置插入 ![[filename]]
+                    if let name = QuickNoteImageStore.saveClipboardImage() {
+                        self.pasteImage(name: name)
+                        return nil
+                    }
                     if vm.pasteClipboardIfEmpty() { return nil }
                 }
                 if event.keyCode == 6, event.modifierFlags.contains(.command) {

@@ -15,7 +15,7 @@ struct QuickNoteView: View {
         HStack(spacing: 0) {
             if !viewModel.sidebarCollapsed {
                 sidebar
-                    .frame(width: 220)
+                    .frame(width: 200)
 
                 Divider()
             }
@@ -117,7 +117,7 @@ struct QuickNoteView: View {
                 }
             }
         }
-        .background(Color(nsColor: DS.windowBase))
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
     }
 
     private func sidebarRow(_ shot: Shot) -> some View {
@@ -236,6 +236,17 @@ struct QuickNoteView: View {
                     .lineLimit(1)
 
                 Spacer()
+
+                Button(action: { NSApp.keyWindow?.close() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 20, height: 20)
+                        .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("关闭 (Esc)")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -245,10 +256,13 @@ struct QuickNoteView: View {
             // 编辑器
             // 不能直接绑 $viewModel.text：SwiftUI 会绕过 updateText，
             // 800ms 防抖保存和 undo 压栈都不会触发。
-            MarkdownEditorSurface(text: Binding(
-                get: { viewModel.text },
-                set: { viewModel.updateText($0) }
-            ))
+            MarkdownEditorSurface(
+                text: Binding(
+                    get: { viewModel.text },
+                    set: { viewModel.updateText($0) }
+                ),
+                imageProvider: QuickNoteImageStore.Provider()
+            )
                 .padding(14)
 
             // 待办清单（解析 - [ ] / - [x]）
@@ -296,7 +310,6 @@ struct QuickNoteView: View {
                     .padding(.vertical, 4)
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
     }
 
     private func toolbarButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {

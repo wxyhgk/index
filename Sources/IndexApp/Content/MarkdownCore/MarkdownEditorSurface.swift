@@ -9,6 +9,7 @@ import MarkdownEngineLatex
 
 struct MarkdownEditorSurface: View {
     @Binding var text: String
+    var imageProvider: (any EmbeddedImageProvider)? = nil
 
     var body: some View {
         NativeTextViewWrapper(
@@ -16,6 +17,9 @@ struct MarkdownEditorSurface: View {
             configuration: {
                 var config = MarkdownEditorConfiguration.default
                 config.services.latex = SwiftMathBridge()
+                if let imageProvider {
+                    config.services.images = imageProvider
+                }
                 return config
             }()
         )
