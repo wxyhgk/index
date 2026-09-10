@@ -18,6 +18,7 @@ final class QuickNoteViewModel: ObservableObject {
     @Published var pinnedIDs: Set<Int64> = []
     @Published var sidebarCollapsed = true
     @Published var confirmDeleteID: Int64?
+    @Published var isFloating = false
 
     // MARK: 私有
 
@@ -28,6 +29,7 @@ final class QuickNoteViewModel: ObservableObject {
     private var undoStack: [String] = []
     private var redoStack: [String] = []
     private var lastPushTime = Date.distantPast
+    private var cursorPositions: [Int64: Int] = [:]
 
     // MARK: 计算属性
 
@@ -48,12 +50,19 @@ final class QuickNoteViewModel: ObservableObject {
         store.libraryDidChangePublisher
     }
 
+    /// 字数（不含空白）+ 行数。
+    var wordCount: String {
+        let words = text.split(whereSeparator: \.isWhitespace).count
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
+        return "\(words) 字 · \(lines) 行"
+    }
+
     // MARK: 初始化
 
     init(store: any ShotReading & ShotWriting & ShotObserving & ShotNoteStore = ShotStore.shared) {
         self.store = store
-        // 侧边栏展开状态持久化；默认展开（便签核心是快速找上一条）
         sidebarCollapsed = UserDefaults.standard.bool(forKey: Self.sidebarCollapsedKey)
+        isFloating = UserDefaults.standard.bool(forKey: Self.floatingKey)
     }
 
     // MARK: 生命周期
@@ -182,7 +191,31 @@ final class QuickNoteViewModel: ObservableObject {
         UserDefaults.standard.set(sidebarCollapsed, forKey: Self.sidebarCollapsedKey)
     }
 
+    func toggleFloating() {
+        isFloating.toggle()
+        UserDefaults.standard.set(isFloating, forKey: Self.floatingKey)
+    }
+
+    // MARK: 光标位置
+
+    func saveCursorPosition(_ location: Int) {
+        guard let id = selectedShotID else { return }
+        cursorPositions[id] = location
+    }
+
+    func cursorPosition(for shotID: Int64) -> Int? {
+        cursorPositions[shotID]
+    }
+
+    // MARK: 导出
+
+    func exportAsMarkdown() {
+        guard let shot = selectedShot else { return }
+        QuickNoteExporter.exportMarkdown(text, suggestedName: shot.primaryDisplayName)
+    }
+
     private static let sidebarCollapsedKey = "quickNote.sidebarCollapsed"
+    private static let floatingKey = "quickNote.isFloating"
 
     // MARK: 操作
 

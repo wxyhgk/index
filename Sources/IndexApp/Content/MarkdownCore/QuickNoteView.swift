@@ -198,6 +198,17 @@ struct QuickNoteView: View {
                 viewModel.confirmDeleteID = nil
             }
         }
+        .contextMenu {
+            Button("复制源码") { viewModel.copyShot(shot) }
+            Button("导出 .md") {
+                if let id = shot.id { viewModel.select(shotID: id) }
+                viewModel.exportAsMarkdown()
+            }
+            Divider()
+            Button(isPinned ? "取消置顶" : "置顶") { viewModel.togglePin(shot) }
+            Divider()
+            Button("删除", role: .destructive) { viewModel.deleteShot(shot.id ?? 0) }
+        }
     }
 
     // MARK: 右侧编辑器
@@ -225,6 +236,15 @@ struct QuickNoteView: View {
                     .lineLimit(1)
 
                 Spacer()
+
+                Button(action: { viewModel.toggleFloating() }) {
+                    Image(systemName: viewModel.isFloating ? "pin.fill" : "pin")
+                        .font(.system(size: 11, weight: .thin))
+                        .foregroundStyle(viewModel.isFloating ? .primary : .secondary)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help(viewModel.isFloating ? "取消浮动" : "浮动（钉住到最前）")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -263,9 +283,22 @@ struct QuickNoteView: View {
                 toolbarButton("photo", help: "图片 (![]())") { viewModel.insertSyntax("![描述]()") }
 
                 Spacer()
+
+                toolbarButton("square.and.arrow.up", help: "导出 .md") { viewModel.exportAsMarkdown() }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+
+            // 字数统计
+            if !viewModel.text.isEmpty {
+                Divider()
+                Text(viewModel.wordCount)
+                    .font(.system(size: 10, design: .rounded))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
+            }
         }
         .background(Color(nsColor: .textBackgroundColor))
     }

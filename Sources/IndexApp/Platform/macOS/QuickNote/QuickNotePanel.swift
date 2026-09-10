@@ -14,6 +14,7 @@ final class QuickNotePanel: NSPanel {
 
     private var localMonitor: Any?
     private var isClosing = false
+    private var cancellables = Set<AnyCancellable>()
 
     init(viewModel: QuickNoteViewModel? = nil) {
         self.viewModel = viewModel ?? QuickNoteViewModel()
@@ -25,7 +26,7 @@ final class QuickNotePanel: NSPanel {
         )
         title = "便签"
         isFloatingPanel = false
-        level = .normal
+        level = self.viewModel.isFloating ? .floating : .normal
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
@@ -34,6 +35,40 @@ final class QuickNotePanel: NSPanel {
         let view = QuickNoteView(viewModel: self.viewModel)
         let hosting = NSHostingController(rootView: view)
         contentView = hosting.view
+
+        self.viewModel.$isFloating
+            .dropFirst()
+            .sink { [weak self] floating in
+                self?.applyFloating(floating)
+            }
+            .store(in: &cancellables)
+
+        self.viewModel.$selectedShotID
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.saveCurrentCursor()
+                DispatchQueue.main.async { self?.restoreCursor() }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func applyFloating(_ floating: Bool) {
+        level = floating ? .floating : .normal
+    }
+
+    // MARK: 光标位置记忆
+
+    private func saveCurrentCursor() {
+        guard let textView = Self.findTextView(in: contentView) else { return }
+        viewModel.saveCursorPosition(textView.selectedRange().location)
+    }
+
+    private func restoreCursor() {
+        guard let textView = Self.findTextView(in: contentView),
+              let id = viewModel.selectedShotID,
+              let location = viewModel.cursorPosition(for: id) else { return }
+        let maxLoc = textView.string.count
+        textView.setSelectedRange(NSRange(location: min(location, maxLoc), length: 0))
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -168,6 +203,27 @@ final class QuickNotePanel: NSPanel {
         if let monitor = localMonitor {
             NSEvent.removeMonitor(monitor)
             localMonitor = nil
+        }
+    }
+}
+
+// MARK: - 导出
+
+@MainActor
+enum QuickNoteExporter {
+    @discardableResult
+    static func exportMarkdown(_ text: String, suggestedName: String) -> Bool {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName.hasSuffix(".md") ? suggestedName : "\(suggestedName).md"
+        panel.allowedContentTypes = [.init(filenameExtension: "md")!]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            NSLog("[Index] 便签导出失败: \(error)")
+            return false
         }
     }
 }
