@@ -54,6 +54,11 @@ final class ShotStore: ObservableObject {
     private let portableLibraryExporter: PortableLibraryExporter
     private let writer: any DatabaseWriter
 
+    /// 同步上下文：数据库连接 + 磁盘根目录（供 SyncEngine 使用）。
+    var syncContext: (database: any DatabaseWriter, rootDirectory: URL) {
+        (writer, rootDirectory)
+    }
+
     /// 当前 `shots` 对应的查询快照。它不是 UI 状态：只用于写入后的自动刷新、
     /// 翻页与无参数兼容入口，确保仓储缓存知道自己装的是什么数据。
     /// 写访问为 `+Query` 扩展（restartLibraryObservation / loadNextPage）放开。

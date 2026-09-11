@@ -63,6 +63,8 @@ struct SettingsView: View {
             SelectionAISettings(settings: AppSettings.shared)
         case .upload:
             UploadSettings(settings: AppSettings.shared)
+        case .sync:
+            SyncSettings(settings: AppSettings.shared)
         case .plugins:
             PluginSettingsView()
         case .storage:
@@ -76,7 +78,7 @@ struct SettingsView: View {
 // MARK: - Tab 定义
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, shortcuts, annotation, ai, upload, plugins, storage
+    case general, shortcuts, annotation, ai, upload, sync, plugins, storage
 
     var id: String { rawValue }
 
@@ -87,6 +89,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .annotation: return "标注"
         case .ai:         return "AI"
         case .upload:     return "上传"
+        case .sync:       return "同步"
         case .plugins:    return "插件"
         case .storage:    return "存储"
         }
@@ -99,6 +102,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .annotation: return "pencil.tip"
         case .ai:         return "sparkles"
         case .upload:     return "square.and.arrow.up"
+        case .sync:       return "externaldrive"
         case .plugins:    return "puzzlepiece.extension"
         case .storage:    return "internaldrive"
         }

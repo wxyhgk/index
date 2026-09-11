@@ -157,6 +157,23 @@ struct ClipboardHistoryPrefs: Equatable {
     )
 }
 
+/// WebDAV 云同步：服务器地址 + 认证 + 子目录。
+struct SyncPrefs: Equatable {
+    var enabled: Bool
+    var serverURL: String
+    var username: String
+    var password: String
+    var subPath: String
+
+    static let defaults = SyncPrefs(
+        enabled: false,
+        serverURL: "",
+        username: "",
+        password: "",
+        subPath: "index"
+    )
+}
+
 /// 插件管理：启停 + agent 配置。
 ///
 /// 启用的插件 id 列表（不在列表里的插件不激活）。

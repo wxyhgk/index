@@ -321,17 +321,23 @@ struct PortableLibraryExporter {
             guard let shotID = shot.id else {
                 throw PortableLibraryExportError.invalidRecordID(table: Shot.databaseTableName)
             }
-            guard Self.isValidSHA256(shot.sha256) else {
-                throw PortableLibraryExportError.invalidContentHash(shot.sha256)
+            let isMarkdown = shot.contentKind == "markdown"
+            // markdown 便签的 sha256 是 UUID（不是内容哈希），跳过校验
+            if !isMarkdown {
+                guard Self.isValidSHA256(shot.sha256) else {
+                    throw PortableLibraryExportError.invalidContentHash(shot.sha256)
+                }
             }
             let shotReference = Self.shotReference(shotID)
-            let originalRelativePath = "originals/\(shot.sha256).png"
+            let originalRelativePath = "originals/\(shot.originalFileName)"
             let originalURL = rootDirectory.appendingPathComponent(originalRelativePath)
-            guard fileManager.fileExists(atPath: originalURL.path) else {
-                throw PortableLibraryExportError.missingOriginal(originalURL.path)
-            }
-            if copiedOriginalHashes.insert(shot.sha256).inserted {
-                files.append(FileCopy(source: originalURL, relativePath: originalRelativePath))
+            if !isMarkdown {
+                guard fileManager.fileExists(atPath: originalURL.path) else {
+                    throw PortableLibraryExportError.missingOriginal(originalURL.path)
+                }
+                if copiedOriginalHashes.insert(shot.sha256).inserted {
+                    files.append(FileCopy(source: originalURL, relativePath: originalRelativePath))
+                }
             }
 
             let attributes = attributesByShot[shotID] ?? []
@@ -414,12 +420,18 @@ struct PortableLibraryExporter {
             }
 
             let bundleID = shot.appBundleID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let mediaType: String
+            switch shot.originalExtension?.lowercased() {
+            case "svg": mediaType = "image/svg+xml"
+            case "jpg", "jpeg": mediaType = "image/jpeg"
+            default: mediaType = "image/png"
+            }
             return PortableLibraryShot(
                 id: shotReference,
                 contentHash: shot.sha256,
                 original: PortableLibraryFile(
                     relativePath: originalRelativePath,
-                    mediaType: "image/png",
+                    mediaType: mediaType,
                     sha256: shot.sha256
                 ),
                 capturedAt: shot.capturedAt,

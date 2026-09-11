@@ -112,6 +112,12 @@ final class AppSettings: ObservableObject {
         static let uploadResponsePath = "uploadResponsePath"
         static let uploadLinkFormat = "uploadLinkFormat"
 
+        static let syncEnabled = "syncEnabled"
+        static let syncServerURL = "syncServerURL"
+        static let syncUsername = "syncUsername"
+        static let syncPassword = "syncPassword"
+        static let syncSubPath = "syncSubPath"
+
         static let captureShortcut = "captureShortcut"
         static let galleryShortcut = "galleryShortcut"
         static let delayedCaptureShortcut = "delayedCaptureShortcut"
@@ -211,6 +217,16 @@ final class AppSettings: ObservableObject {
             defaults.set(upload.uploadHeaders, forKey: Keys.uploadHeaders)
             defaults.set(upload.uploadResponsePath, forKey: Keys.uploadResponsePath)
             defaults.set(upload.uploadLinkFormat.rawValue, forKey: Keys.uploadLinkFormat)
+        }
+    }
+
+    @Published var sync: SyncPrefs {
+        didSet {
+            defaults.set(sync.enabled, forKey: Keys.syncEnabled)
+            defaults.set(sync.serverURL, forKey: Keys.syncServerURL)
+            defaults.set(sync.username, forKey: Keys.syncUsername)
+            defaults.set(sync.password, forKey: Keys.syncPassword)
+            defaults.set(sync.subPath, forKey: Keys.syncSubPath)
         }
     }
 
@@ -316,6 +332,12 @@ final class AppSettings: ObservableObject {
             Keys.uploadResponsePath: UploadPrefs.defaults.uploadResponsePath,
             Keys.uploadLinkFormat: UploadPrefs.defaults.uploadLinkFormat.rawValue,
 
+            Keys.syncEnabled: SyncPrefs.defaults.enabled,
+            Keys.syncServerURL: SyncPrefs.defaults.serverURL,
+            Keys.syncUsername: SyncPrefs.defaults.username,
+            Keys.syncPassword: SyncPrefs.defaults.password,
+            Keys.syncSubPath: SyncPrefs.defaults.subPath,
+
             Keys.clipboardHistoryEnabled: ClipboardHistoryPrefs.defaults.enabled,
             Keys.clipboardHistoryRetentionDays: ClipboardHistoryPrefs.defaults.retentionDays,
 
@@ -381,6 +403,13 @@ final class AppSettings: ObservableObject {
             uploadHeaders: defaults.string(forKey: Keys.uploadHeaders) ?? "",
             uploadResponsePath: defaults.string(forKey: Keys.uploadResponsePath) ?? "",
             uploadLinkFormat: defaults.string(forKey: Keys.uploadLinkFormat).flatMap(UploadLinkFormat.init(rawValue:)) ?? .raw
+        )
+        sync = SyncPrefs(
+            enabled: defaults.bool(forKey: Keys.syncEnabled),
+            serverURL: defaults.string(forKey: Keys.syncServerURL) ?? "",
+            username: defaults.string(forKey: Keys.syncUsername) ?? "",
+            password: defaults.string(forKey: Keys.syncPassword) ?? "",
+            subPath: defaults.string(forKey: Keys.syncSubPath) ?? "index"
         )
         shortcuts = ShortcutPrefs(
             captureShortcut: Self.load(Keys.captureShortcut, from: defaults) ?? .captureDefault,
