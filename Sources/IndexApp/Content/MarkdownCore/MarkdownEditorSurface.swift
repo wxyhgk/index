@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MarkdownEngine
 import MarkdownEngineLatex
 
@@ -24,5 +25,32 @@ struct MarkdownEditorSurface: View {
             }()
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(SmartQuotesOff())
+    }
+}
+
+// swift-markdown-engine 在 makeNSView 中硬编码 isAutomaticQuoteSubstitutionEnabled = true，
+// 导致输入英文直引号被替换为弯引号。此 helper 在 view 加入 window 后关闭该行为。
+private struct SmartQuotesOff: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        NSView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { [weak nsView] in
+            guard let nsView, let window = nsView.window,
+                  let contentView = window.contentView else { return }
+            if let tv = Self.findTextView(in: contentView) {
+                tv.isAutomaticQuoteSubstitutionEnabled = false
+            }
+        }
+    }
+
+    private static func findTextView(in view: NSView) -> NSTextView? {
+        for sub in view.subviews {
+            if let tv = sub as? NSTextView { return tv }
+            if let found = findTextView(in: sub) { return found }
+        }
+        return nil
     }
 }
