@@ -60,10 +60,10 @@ final class QuickNotePanel: NSPanel {
             let prefix = nsString.substring(to: range.location)
             let suffix = nsString.substring(from: range.location + range.length)
             viewModel.updateText(prefix + embed + suffix)
-            // 恢复光标到插入点之后
+            // 恢复光标到插入点之后（UTF-16 偏移）
             DispatchQueue.main.async {
-                let newLoc = prefix.count + embed.count
-                textView.setSelectedRange(NSRange(location: min(newLoc, textView.string.count), length: 0))
+                let newLoc = (prefix as NSString).length + (embed as NSString).length
+                textView.setSelectedRange(NSRange(location: min(newLoc, (textView.string as NSString).length), length: 0))
             }
         } else {
             viewModel.insertImage(name: name)
@@ -73,15 +73,16 @@ final class QuickNotePanel: NSPanel {
     // MARK: 光标位置记忆
 
     private func saveCurrentCursor() {
-        guard let textView = Self.findTextView(in: contentView) else { return }
-        viewModel.saveCursorPosition(textView.selectedRange().location)
+        guard let textView = Self.findTextView(in: contentView),
+              let oldID = viewModel.pendingCursorShotID else { return }
+        viewModel.saveCursorPosition(textView.selectedRange().location, for: oldID)
     }
 
     private func restoreCursor() {
         guard let textView = Self.findTextView(in: contentView),
               let id = viewModel.selectedShotID,
               let location = viewModel.cursorPosition(for: id) else { return }
-        let maxLoc = textView.string.count
+        let maxLoc = (textView.string as NSString).length
         textView.setSelectedRange(NSRange(location: min(location, maxLoc), length: 0))
     }
 
@@ -147,9 +148,11 @@ final class QuickNotePanel: NSPanel {
             self.alphaValue = 0
         }, completionHandler: { [weak self] in
             DispatchQueue.main.async {
-                self?.orderOut(nil)
-                self?.alphaValue = 1
-                self?.isClosing = false
+                // show() 可能已取消关闭（isClosing 被重置为 false），此时不 orderOut
+                guard let self, self.isClosing else { return }
+                self.orderOut(nil)
+                self.alphaValue = 1
+                self.isClosing = false
             }
         })
     }
@@ -173,7 +176,8 @@ final class QuickNotePanel: NSPanel {
             MainActor.assumeIsolated {
                 guard let self else { return event }
                 let vm = self.viewModel
-                if event.keyCode == 53, event.modifierFlags.isEmpty {
+                // Esc 只在面板是 key window 时拦截，避免图库等窗口按 Esc 误关便签
+                if event.keyCode == 53, event.modifierFlags.isEmpty, self.isKeyWindow {
                     self.close()
                     return nil
                 }
@@ -181,7 +185,7 @@ final class QuickNotePanel: NSPanel {
                     vm.persistNow()
                     return nil
                 }
-                if event.keyCode == 45, event.modifierFlags.contains(.command) {
+                if event.keyCode == 45, event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control) {
                     vm.newNote()
                     return nil
                 }
@@ -195,7 +199,7 @@ final class QuickNotePanel: NSPanel {
                         self.pasteImage(name: sha)
                         return nil
                     }
-                    if vm.pasteClipboardIfEmpty() { return nil }
+                    if vm.pasteClipboardText() { return nil }
                 }
                 if event.keyCode == 6, event.modifierFlags.contains(.command) {
                     if event.modifierFlags.contains(.shift) {
@@ -292,5 +296,10 @@ final class QuickNoteCoordinator {
 
     func close() {
         panel?.close()
+    }
+
+    /// App 退出时调用：flush 未落盘的便签文本。
+    func flush() {
+        panel?.viewModel.flushPendingSave()
     }
 }

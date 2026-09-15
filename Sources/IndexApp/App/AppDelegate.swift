@@ -181,6 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        QuickNoteCoordinator.shared.flush()
         BuiltinPluginHost.shared.shutdown()
         // Hook 事件（= Emacs before-quit-hook）：插件挂 appWillQuit 就能响应。
         Task {

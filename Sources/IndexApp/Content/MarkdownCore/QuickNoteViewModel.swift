@@ -29,6 +29,8 @@ final class QuickNoteViewModel: ObservableObject {
     private var redoStack: [String] = []
     private var lastPushTime = Date.distantPast
     private var cursorPositions: [Int64: Int] = [:]
+    /// 上一次选中的 shotID，供 Panel 在 selectedShotID 变化后保存旧便签的光标。
+    var pendingCursorShotID: Int64?
 
     // MARK: 计算属性
 
@@ -49,11 +51,22 @@ final class QuickNoteViewModel: ObservableObject {
         store.libraryDidChangePublisher
     }
 
-    /// 字数（不含空白）+ 行数。
+    /// 字数（中文按字符、英文按词）+ 行数。
     var wordCount: String {
-        let words = text.split(whereSeparator: \.isWhitespace).count
+        var count = 0
+        var inWord = false
+        for char in text {
+            if char.isWhitespace {
+                inWord = false
+            } else if char.isCJK {
+                count += 1
+                inWord = false
+            } else {
+                if !inWord { count += 1; inWord = true }
+            }
+        }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
-        return "\(words) 字 · \(lines) 行"
+        return "\(count) 字 · \(lines) 行"
     }
 
     // MARK: 初始化
@@ -72,8 +85,14 @@ final class QuickNoteViewModel: ObservableObject {
 
     /// 面板关闭前调用：保存未落盘的文本。
     func flushPendingSave() {
+        commitCurrentText()
+    }
+
+    /// 将当前 text 落盘（如果与 lastSavedText 不同）。
+    /// 用于切换便签、关闭面板等需要立即持久化的场景。
+    private func commitCurrentText() {
         saveTask?.cancel()
-        if text != lastSavedText, !text.isEmpty {
+        if text != lastSavedText {
             persist(text)
         }
     }
@@ -101,6 +120,7 @@ final class QuickNoteViewModel: ObservableObject {
     // MARK: 编辑器
 
     func resetEditor() {
+        pendingCursorShotID = selectedShotID
         selectedShotID = nil
         text = ""
         lastSavedText = ""
@@ -116,6 +136,7 @@ final class QuickNoteViewModel: ObservableObject {
             resetEditor()
             return
         }
+        pendingCursorShotID = selectedShotID
         selectedShotID = shot.id
         if let source = store.markdownSource(for: shot) {
             text = source
@@ -145,12 +166,24 @@ final class QuickNoteViewModel: ObservableObject {
         guard let previous = undoStack.popLast() else { return }
         redoStack.append(text)
         text = previous
+        scheduleSave()
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
         undoStack.append(text)
         text = next
+        scheduleSave()
+    }
+
+    /// 仅启动防抖保存（不压 undo 栈），供 undo/redo 等内部 text 变更使用。
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled, let self else { return }
+            self.persist(self.text)
+        }
     }
 
     func persistNow() {
@@ -162,11 +195,16 @@ final class QuickNoteViewModel: ObservableObject {
 
     func select(shotID: Int64) {
         guard let shot = shots.first(where: { $0.id == shotID }) else { return }
+        commitCurrentText()
+        pendingCursorShotID = selectedShotID
         selectedShotID = shot.id
         if let source = store.markdownSource(for: shot) {
             text = source
             lastSavedText = source
         }
+        undoStack.removeAll()
+        redoStack.removeAll()
+        lastPushTime = Date.distantPast
         saveTask?.cancel()
     }
 
@@ -191,9 +229,8 @@ final class QuickNoteViewModel: ObservableObject {
 
     // MARK: 光标位置
 
-    func saveCursorPosition(_ location: Int) {
-        guard let id = selectedShotID else { return }
-        cursorPositions[id] = location
+    func saveCursorPosition(_ location: Int, for shotID: Int64) {
+        cursorPositions[shotID] = location
     }
 
     func cursorPosition(for shotID: Int64) -> Int? {
@@ -240,9 +277,9 @@ final class QuickNoteViewModel: ObservableObject {
     }
 
     @discardableResult
-    func pasteClipboardIfEmpty() -> Bool {
-        guard text.isEmpty, let clipText = Clipboard.readText(), !clipText.isEmpty else { return false }
-        text = clipText
+    func pasteClipboardText() -> Bool {
+        guard let clipText = Clipboard.readText(), !clipText.isEmpty else { return false }
+        updateText(clipText)
         return true
     }
 
@@ -252,7 +289,7 @@ final class QuickNoteViewModel: ObservableObject {
             newText += "\n"
         }
         newText += syntax
-        text = newText
+        updateText(newText)
     }
 
     func insertImage(name: String) {
@@ -278,14 +315,17 @@ final class QuickNoteViewModel: ObservableObject {
             line = line.replacingOccurrences(of: "- [ ]", with: "- [x]")
         }
         lines[todo.lineIndex] = line
-        text = lines.joined(separator: "\n")
+        updateText(lines.joined(separator: "\n"))
     }
 
     // MARK: 持久化
 
     private func persist(_ newText: String) {
-        guard !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard newText != lastSavedText else { return }
+        // 新建便签时，空内容不创建 shot
+        if selectedShotID == nil {
+            guard !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        }
         do {
             if let shotID = selectedShotID {
                 try store.saveContent(for: shotID, kind: .markdown, payload: .markdown(newText), updateKind: false)
@@ -308,8 +348,20 @@ final class QuickNoteViewModel: ObservableObject {
     func shotTitle(for shot: Shot) -> String {
         if let source = store.markdownSource(for: shot), !source.isEmpty {
             let firstLine = source.split(separator: "\n").first.map(String.init) ?? ""
-            let cleaned = firstLine.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces)
-            if !cleaned.isEmpty { return String(cleaned.prefix(30)) }
+            // 只剥离行首连续的 #（markdown 标题标记）
+            let cleaned = firstLine.replacingOccurrences(
+                of: "^#+\\s*", with: "", options: .regularExpression
+            ).trimmingCharacters(in: .whitespaces)
+            if !cleaned.isEmpty {
+                // 识别 ![[name]] 图片引用
+                if cleaned.hasPrefix("![[") {
+                    if let end = cleaned.range(of: "]]")?.lowerBound {
+                        let start = cleaned.index(cleaned.startIndex, offsetBy: 3)
+                        return String(cleaned[start..<end].prefix(30))
+                    }
+                }
+                return String(cleaned.prefix(30))
+            }
         }
         return shot.windowTitle ?? "便签"
     }
@@ -359,4 +411,22 @@ struct TodoItem: Identifiable {
     let lineIndex: Int
     let text: String
     let done: Bool
+}
+
+// MARK: - Character 扩展
+
+private extension Character {
+    /// CJK 统一表意文字（含扩展 A/B + 兼容表意文字）
+    var isCJK: Bool {
+        for scalar in unicodeScalars {
+            let v = scalar.value
+            if (0x4E00...0x9FFF).contains(v)
+                || (0x3400...0x4DBF).contains(v)
+                || (0x20000...0x2A6DF).contains(v)
+                || (0xF900...0xFAFF).contains(v) {
+                return true
+            }
+        }
+        return false
+    }
 }
