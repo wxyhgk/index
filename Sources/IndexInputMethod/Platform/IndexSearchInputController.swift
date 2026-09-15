@@ -211,6 +211,9 @@ private final class IndexInputSearchCoordinator {
         modeIndicator.show(mode: nextMode, caretFrame: caretFrame(client: client))
     }
 
+    private var cachedPreedit: [(text: String, style: QingjianPreeditStyle)] = []
+    private var cachedPreeditCursor: Int = 0
+
     private func updateComposition(client: IMKTextInput?) {
         guard !composition.isEmpty else {
             cancelComposition(client: client)
@@ -218,6 +221,9 @@ private final class IndexInputSearchCoordinator {
         }
         pinyinCandidates = decoder.candidates(for: composition)
         candidatePagination.reset(itemCount: pinyinCandidates.count)
+        let marked = decoder.markedSegments()
+        cachedPreedit = marked.segments
+        cachedPreeditCursor = marked.cursor
         client?.setMarkedText(
             composition,
             selectionRange: NSRange(location: composition.utf16.count, length: 0),
@@ -229,7 +235,9 @@ private final class IndexInputSearchCoordinator {
             pinyinPanel.show(
                 candidates: pinyinCandidates,
                 pagination: candidatePagination,
-                caretFrame: caretFrame(client: client)
+                caretFrame: caretFrame(client: client),
+                preedit: cachedPreedit,
+                preeditCursor: cachedPreeditCursor
             )
         }
         scheduleCompositionSearch(client: client)
@@ -241,7 +249,9 @@ private final class IndexInputSearchCoordinator {
         pinyinPanel.show(
             candidates: pinyinCandidates,
             pagination: candidatePagination,
-            caretFrame: caretFrame(client: client)
+            caretFrame: caretFrame(client: client),
+            preedit: cachedPreedit,
+            preeditCursor: cachedPreeditCursor
         )
     }
 
@@ -251,7 +261,9 @@ private final class IndexInputSearchCoordinator {
         pinyinPanel.show(
             candidates: pinyinCandidates,
             pagination: candidatePagination,
-            caretFrame: caretFrame(client: client ?? activeClient)
+            caretFrame: caretFrame(client: client ?? activeClient),
+            preedit: cachedPreedit,
+            preeditCursor: cachedPreeditCursor
         )
     }
 

@@ -33,6 +33,13 @@ size_t qingjian_pinyin_commit(size_t index, uint16_t *output, size_t capacity);
 /// 取当前 marked text（拼音显示形式）。返回 UTF-16 字符数。
 size_t qingjian_pinyin_marked_text(uint16_t *output, size_t capacity);
 
+/// 取 marked segments 数量，光标位置写入 cursor_out（字符下标）。
+size_t qingjian_pinyin_marked_segments(size_t *cursor_out);
+
+/// 取第 index 段 marked segment 的文本和类型。
+/// kind: 0=Typed, 1=Rest, 2=Corrected。返回 UTF-16 字符数。
+size_t qingjian_pinyin_marked_segment(size_t index, uint16_t *output, size_t capacity, uint8_t *kind_out);
+
 /// 清空拼音缓冲区。
 void qingjian_pinyin_clear(void);
 

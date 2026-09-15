@@ -137,6 +137,51 @@ pub extern "C" fn qingjian_pinyin_marked_text(output: *mut u16, capacity: usize)
     0
 }
 
+/// 取 marked segments 数量，光标位置写入 cursor_out（字符下标）。
+#[no_mangle]
+pub extern "C" fn qingjian_pinyin_marked_segments(cursor_out: *mut usize) -> usize {
+    let guard = STATE.lock().unwrap();
+    if let Some(state) = guard.as_ref() {
+        if let Some(query) = &state.last_query {
+            let segments = query.marked_segments();
+            if !cursor_out.is_null() {
+                unsafe { *cursor_out = query.cursor }
+            }
+            return segments.len();
+        }
+    }
+    0
+}
+
+/// 取第 index 段 marked segment 的文本和类型。
+/// kind: 0=Typed, 1=Rest, 2=Corrected。返回 UTF-16 字符数。
+#[no_mangle]
+pub extern "C" fn qingjian_pinyin_marked_segment(
+    index: usize,
+    output: *mut u16,
+    capacity: usize,
+    kind_out: *mut u8,
+) -> usize {
+    let guard = STATE.lock().unwrap();
+    if let Some(state) = guard.as_ref() {
+        if let Some(query) = &state.last_query {
+            let segments = query.marked_segments();
+            if let Some(seg) = segments.get(index) {
+                let kind: u8 = match seg.kind {
+                    qingjian_core::engine::MarkedKind::Typed => 0,
+                    qingjian_core::engine::MarkedKind::Rest => 1,
+                    qingjian_core::engine::MarkedKind::Corrected => 2,
+                };
+                if !kind_out.is_null() {
+                    unsafe { *kind_out = kind }
+                }
+                return write_utf16(&seg.text, output, capacity);
+            }
+        }
+    }
+    0
+}
+
 /// 清空拼音缓冲区。
 #[no_mangle]
 pub extern "C" fn qingjian_pinyin_clear() {

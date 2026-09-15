@@ -64,6 +64,32 @@ final class QingjianPinyinDecoder {
         lastComposition = ""
     }
 
+    /// 取当前 marked segments（拼音行分段）和光标位置。
+    /// 供候选面板顶部拼音行使用。
+    func markedSegments() -> (segments: [(text: String, style: QingjianPreeditStyle)], cursor: Int) {
+        guard isAvailable else { return ([], 0) }
+        var cursor: size_t = 0
+        let count = qingjian_pinyin_marked_segments(&cursor)
+        var segments: [(text: String, style: QingjianPreeditStyle)] = []
+        for i in 0..<Int(count) {
+            var utf16 = [UInt16](repeating: 0, count: 128)
+            var kind: UInt8 = 0
+            let length = utf16.withUnsafeMutableBufferPointer { buffer in
+                qingjian_pinyin_marked_segment(i, buffer.baseAddress, buffer.count, &kind)
+            }
+            guard length > 0 else { continue }
+            let text = String(decoding: utf16.prefix(Int(length)), as: UTF16.self)
+            let style: QingjianPreeditStyle
+            switch kind {
+            case 1: style = .rest
+            case 2: style = .struck
+            default: style = .typed
+            }
+            segments.append((text, style))
+        }
+        return (segments, Int(cursor))
+    }
+
     private func candidate(at index: Int) -> String? {
         var utf16 = [UInt16](repeating: 0, count: 128)
         let length = utf16.withUnsafeMutableBufferPointer { buffer in

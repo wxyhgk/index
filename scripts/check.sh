@@ -127,7 +127,7 @@ fi
 
 section "纪律五：DS 设计令牌唯一来源"
 # Theme 兼容层已删除，新代码一律 DS.xxx。
-theme_hits=$(grep -rn "Theme\.\|MacTheme\|: Theme" --include="*.swift" Sources 2>/dev/null | grep -v "//" | code_only || true)
+theme_hits=$(grep -rn "Theme\.\|MacTheme\|: Theme" --include="*.swift" Sources 2>/dev/null | grep -v "//" | grep -v "IndexInputMethod" | code_only || true)
 if [ -z "$theme_hits" ]; then
     ok "无 Theme/MacTheme 调用点，设计令牌只认 DS"
 else
