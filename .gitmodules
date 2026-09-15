@@ -1,0 +1,3 @@
+[submodule "Vendor/qingjian"]
+	path = Vendor/qingjian
+	url = https://github.com/qingjian-team/qingjian.git

@@ -291,10 +291,9 @@ if ! grep -q 'name: "IndexInputMethod"' Package.swift \
     || ! grep -q 'INPUT_METHOD_APP_BUNDLE=' build.sh \
     || ! grep -q 'STAGED_INPUT_METHOD=' build.sh \
     || ! grep -q 'Resources/Index.icns' build.sh \
-    || ! grep -q 'Resources/IndexInputMethod/PinyinIME' build.sh \
+    || ! grep -q 'Resources/IndexInputMethod/dict.qj' build.sh \
     || ! grep -q 'Resources/IndexInputMethod/\*.lproj' build.sh \
-    || [ ! -f Resources/IndexInputMethod/PinyinIME/dict_pinyin.dat ] \
-    || [ ! -f Resources/IndexInputMethod/PinyinIME/NOTICE ] \
+    || [ ! -f Resources/IndexInputMethod/dict.qj ] \
     || [ ! -f Resources/IndexInputMethod/en.lproj/InfoPlist.strings ] \
     || [ ! -f Resources/IndexInputMethod/zh-Hans.lproj/InfoPlist.strings ]; then
     bad "输入法 target 必须由 build.sh 在旁路目录组装，不能另起替换脚本"

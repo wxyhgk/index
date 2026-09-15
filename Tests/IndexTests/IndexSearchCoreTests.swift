@@ -1,4 +1,4 @@
-import AOSPPinyinIME
+import QingjianPinyinIME
 import Foundation
 import GRDB
 import XCTest
@@ -178,41 +178,39 @@ final class IndexSearchCoreTests: XCTestCase {
         ))
     }
 
-    func testAOSPPinyinDecoderReturnsChineseCandidates() throws {
+    func testQingjianPinyinDecoderReturnsChineseCandidates() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let systemDictionary = repositoryRoot
-            .appendingPathComponent("Resources/IndexInputMethod/PinyinIME/dict_pinyin.dat")
-        let temporaryDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("index-pinyin-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
-        defer {
-            index_pinyin_close()
-            try? FileManager.default.removeItem(at: temporaryDirectory)
-        }
-        let userDictionary = temporaryDirectory.appendingPathComponent("user.dat")
-        let opened = systemDictionary.path.withCString { systemPath in
-            userDictionary.path.withCString { userPath in
-                index_pinyin_open(systemPath, userPath)
-            }
-        }
+        let dict = repositoryRoot
+            .appendingPathComponent("Resources/IndexInputMethod/dict.qj")
+        defer { qingjian_pinyin_close() }
+        let opened = dict.path.withCString { qingjian_pinyin_open($0) }
         XCTAssertTrue(opened)
-        let count = "nihao".withCString { index_pinyin_search($0, 5) }
+
+        // 逐键输入 "nihao"
+        for char in "nihao" {
+            qingjian_pinyin_push(UInt16(char.asciiValue ?? 0))
+        }
+        let count = qingjian_pinyin_query()
         XCTAssertGreaterThan(count, 0)
 
         let candidates: [String] = (0..<min(Int(count), 12)).compactMap { index in
             var utf16 = [UInt16](repeating: 0, count: 64)
             let length = utf16.withUnsafeMutableBufferPointer { buffer in
-                index_pinyin_copy_candidate(index, buffer.baseAddress, buffer.count)
+                qingjian_pinyin_copy_candidate(index, buffer.baseAddress, buffer.count)
             }
             return length > 0 ? String(decoding: utf16.prefix(Int(length)), as: UTF16.self) : nil
         }
         XCTAssertTrue(candidates.contains("你好"), "nihao candidates: \(candidates)")
 
-        index_pinyin_reset()
-        let expandedCount = "shi".withCString { index_pinyin_search($0, 3) }
+        // 清空后输入 "shi"，常见单音节应有多个候选
+        qingjian_pinyin_clear()
+        for char in "shi" {
+            qingjian_pinyin_push(UInt16(char.asciiValue ?? 0))
+        }
+        let expandedCount = qingjian_pinyin_query()
         XCTAssertGreaterThan(expandedCount, 9, "常见单音节应能提供第二页候选")
     }
 

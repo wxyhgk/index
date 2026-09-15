@@ -78,7 +78,7 @@ if [[ "$BUILD_INPUT_METHOD" == "1" ]]; then
     cp Resources/IndexInputMethod-Info.plist "$STAGED_INPUT_METHOD/Contents/Info.plist"
     cp Resources/Index.icns "$STAGED_INPUT_METHOD/Contents/Resources/Index.icns"
     cp -R Resources/IndexInputMethod/*.lproj "$STAGED_INPUT_METHOD/Contents/Resources/"
-    cp -R Resources/IndexInputMethod/PinyinIME "$STAGED_INPUT_METHOD/Contents/Resources/"
+    cp Resources/IndexInputMethod/dict.qj "$STAGED_INPUT_METHOD/Contents/Resources/"
     printf 'APPL????' > "$STAGED_INPUT_METHOD/Contents/PkgInfo"
 
     # 输入法 Info 模板不拥有第二份版本真相；每次组装都从主 App 的 Info.plist 注入。

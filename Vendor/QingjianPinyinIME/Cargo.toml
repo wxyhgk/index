@@ -1,0 +1,17 @@
+[package]
+name = "qingjian-pinyin-ffi"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "qingjian_ffi"
+crate-type = ["staticlib"]
+
+[dependencies]
+qingjian-core = { path = "../qingjian/crates/qingjian-core" }
+qingjian-dictionary = { path = "../qingjian/crates/qingjian-dictionary" }
+
+[profile.release]
+lto = true
+strip = true

@@ -49,7 +49,7 @@ private final class IndexInputSearchCoordinator {
     }
 
     private var buffer = InputQueryBuffer()
-    private let decoder = AOSPPinyinDecoder()
+    private let decoder = QingjianPinyinDecoder()
     private let pinyinPanel = PinyinCandidatePanelController()
     private let modeIndicator = InputLanguageModeIndicatorController()
     private var shiftSwitch = ShiftLanguageSwitchState()

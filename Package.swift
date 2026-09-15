@@ -17,11 +17,14 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AOSPPinyinIME",
-            path: "Vendor/AOSPPinyinIME",
+            name: "QingjianPinyinIME",
+            path: "Vendor/QingjianPinyinIME",
             publicHeadersPath: "include",
-            cxxSettings: [
+            cSettings: [
                 .headerSearchPath("include")
+            ],
+            linkerSettings: [
+                .unsafeFlags(["-LVendor/QingjianPinyinIME/lib", "-lqingjian_ffi"])
             ]
         ),
         .target(
@@ -36,7 +39,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "IndexInputMethod",
-            dependencies: ["IndexSearchCore", "AOSPPinyinIME"],
+            dependencies: ["IndexSearchCore", "QingjianPinyinIME"],
             path: "Sources/IndexInputMethod",
             swiftSettings: [
                 .swiftLanguageMode(.v5)
@@ -77,7 +80,7 @@ let package = Package(
             dependencies: [
                 "IndexApp",
                 "IndexSearchCore",
-                "AOSPPinyinIME",
+                "QingjianPinyinIME",
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Tests/IndexTests",
