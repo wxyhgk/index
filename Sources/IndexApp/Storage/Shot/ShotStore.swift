@@ -544,23 +544,28 @@ final class ShotStore: ObservableObject {
         var results: [Shot] = []
 
         // FTS 部分：多个 token 用 OR 连接（任一命中即返回）
+        // FTS5 MATCH 不支持参数绑定，必须内联（token 转义 " 为 ""）
         if !ftsTokens.isEmpty {
-            let ftsMatch = ftsTokens.map { "\"\($0)\"" }.joined(separator: " OR ")
-            if let ftsResults = try? writer.read({ db in
-                try Shot.fetchAll(
-                    db,
-                    sql: """
-                        SELECT s.* FROM shot s
-                        INNER JOIN shotFts ON shotFts.rowid = s.id
-                        WHERE s.contentKind = 'markdown'
-                          AND shotFts MATCH ?
-                        ORDER BY COALESCE(s.updatedAt, s.capturedAt) DESC
-                        LIMIT ?
-                        """,
-                    arguments: [ftsMatch, limit]
-                )
-            }) {
+            let ftsMatch = ftsTokens
+                .map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }
+                .joined(separator: " OR ")
+            do {
+                let ftsResults = try writer.read { db in
+                    try Shot.fetchAll(
+                        db,
+                        sql: """
+                            SELECT s.* FROM shot s
+                            INNER JOIN shotFts ON shotFts.rowid = s.id
+                            WHERE s.contentKind = 'markdown'
+                              AND shotFts MATCH '\(ftsMatch)'
+                            ORDER BY COALESCE(s.updatedAt, s.capturedAt) DESC
+                            LIMIT \(limit)
+                            """
+                    )
+                }
                 results.append(contentsOf: ftsResults)
+            } catch {
+                NSLog("[Index] 便签 FTS 查询失败 (match: \(ftsMatch)): \(error)")
             }
         }
 
