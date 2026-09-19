@@ -536,10 +536,17 @@ final class ShotStore: ObservableObject {
                 )
             }) ?? []
         }
-        // trigram tokenizer 要求 ≥3 字符；短查询回退 LIKE
-        if query.count >= 3 {
-            let ftsPattern = "\"\(query)\""
-            if let results = try? writer.read({ db in
+        // 多词拆分：按空格拆成 tokens，≥3 字符走 FTS OR，<3 字符走 LIKE OR
+        let tokens = query.split(separator: " ").map(String.init).filter { !$0.isEmpty }
+        let ftsTokens = tokens.filter { $0.count >= 3 }
+        let likeTokens = tokens.filter { $0.count < 3 }
+
+        var results: [Shot] = []
+
+        // FTS 部分：多个 token 用 OR 连接（任一命中即返回）
+        if !ftsTokens.isEmpty {
+            let ftsMatch = ftsTokens.map { "\"\($0)\"" }.joined(separator: " OR ")
+            if let ftsResults = try? writer.read({ db in
                 try Shot.fetchAll(
                     db,
                     sql: """
@@ -550,21 +557,54 @@ final class ShotStore: ObservableObject {
                         ORDER BY COALESCE(s.updatedAt, s.capturedAt) DESC
                         LIMIT ?
                         """,
-                    arguments: [ftsPattern, limit]
+                    arguments: [ftsMatch, limit]
                 )
-            }), !results.isEmpty {
-                return results
+            }) {
+                results.append(contentsOf: ftsResults)
             }
         }
-        // 短查询或 FTS 无结果：LIKE 兜底
-        let pattern = "%\(query)%"
-        return (try? writer.read { db in
-            try Shot.fetchAll(
-                db,
-                sql: "SELECT * FROM shot WHERE contentKind = 'markdown' AND (windowTitle LIKE ? OR markdownSource LIKE ?) ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
-                arguments: [pattern, pattern, limit]
-            )
-        }) ?? []
+
+        // LIKE 部分：短 token 用 OR 连接
+        if !likeTokens.isEmpty {
+            var likeClause = ""
+            var likeArgs: [Any] = []
+            for token in likeTokens {
+                let pattern = "%\(token)%"
+                if !likeClause.isEmpty { likeClause += " OR " }
+                likeClause += "(windowTitle LIKE ? OR markdownSource LIKE ?)"
+                likeArgs.append(pattern)
+                likeArgs.append(pattern)
+            }
+            if let likeResults = try? writer.read({ db in
+                try Shot.fetchAll(
+                    db,
+                    sql: "SELECT * FROM shot WHERE contentKind = 'markdown' AND \(likeClause) ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
+                    arguments: StatementArguments(likeArgs + [limit])!
+                )
+            }) {
+                results.append(contentsOf: likeResults)
+            }
+        }
+
+        // 无 FTS/LIKE 结果时回退整串 LIKE（兼容单 token 无空格的情况）
+        if results.isEmpty {
+            let pattern = "%\(query)%"
+            results = (try? writer.read { db in
+                try Shot.fetchAll(
+                    db,
+                    sql: "SELECT * FROM shot WHERE contentKind = 'markdown' AND (windowTitle LIKE ? OR markdownSource LIKE ?) ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
+                    arguments: [pattern, pattern, limit]
+                )
+            }) ?? []
+        }
+
+        // 去重（按 id），保持时间倒序
+        var seen = Set<Int64>()
+        let unique = results.filter { shot in
+            guard let id = shot.id else { return true }
+            return seen.insert(id).inserted
+        }
+        return Array(unique.prefix(limit))
     }
 
     /// 收口三步查询：content → contentID → markdownContent。
