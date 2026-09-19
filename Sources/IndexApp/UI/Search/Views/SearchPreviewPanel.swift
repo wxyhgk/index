@@ -1,13 +1,15 @@
 import SwiftUI
 
-// MARK: - 搜索预览面板（右侧，苹果黑白风）
+// MARK: - 搜索预览面板（右侧）
 //
-// 三层：内容区 → 元信息行（图标引导）→ 操作行（图标按钮）。
-// 所有图标 thin 字重，纯灰度。
+// 三层：内容区 → 元信息行 → 操作行。
+// 视觉语言与主 App 统一：medium 字重、纯色底、DS.Motion 动效。
 
 struct SearchPreviewPanel: View {
     @ObservedObject var viewModel: SearchPanelViewModel
     @State private var justCopied = false
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,14 +45,14 @@ struct SearchPreviewPanel: View {
                 }
                 .overlay(alignment: .bottomTrailing) {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: DS.font10, weight: .thin))
+                        .font(.system(size: DS.font10, weight: .medium))
                         .foregroundStyle(.tertiary)
                         .padding(DS.s2)
                 }
         } else if let text = viewModel.previewText {
             ScrollView {
                 Text(text)
-                    .font(.system(size: DS.font12, weight: .light, design: .monospaced))
+                    .font(.system(size: DS.font12, weight: .regular, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(DS.s3)
@@ -61,11 +63,11 @@ struct SearchPreviewPanel: View {
                 Image(systemName: "photo.on.rectangle.angled")
                     .font(.system(
                         size: SearchPanelMetrics.previewPlaceholderIconSize,
-                        weight: .ultraLight
+                        weight: .medium
                     ))
                     .foregroundStyle(.quaternary)
                 Text("预览")
-                    .font(.system(size: DS.font11, weight: .light))
+                    .font(.system(size: DS.font11, weight: .regular))
                     .foregroundStyle(.tertiary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -73,7 +75,7 @@ struct SearchPreviewPanel: View {
         }
     }
 
-    // MARK: 元信息行（图标引导）
+    // MARK: 元信息行
 
     @ViewBuilder
     private var metaLine: some View {
@@ -85,9 +87,9 @@ struct SearchPreviewPanel: View {
                 if let app = sourceApp(for: entry) {
                     HStack(spacing: SearchPanelMetrics.metadataSpacing) {
                         Image(systemName: "app.dashed")
-                            .font(.system(size: DS.font9, weight: .thin))
+                            .font(.system(size: DS.font9, weight: .medium))
                         Text(app)
-                            .font(.system(size: DS.font10, weight: .light))
+                            .font(.system(size: DS.font10, weight: .regular))
                     }
                     .foregroundStyle(.quaternary)
                     .lineLimit(1)
@@ -104,9 +106,9 @@ struct SearchPreviewPanel: View {
         if !meta.isEmpty {
             HStack(spacing: SearchPanelMetrics.metadataSpacing) {
                 Image(systemName: metaIcon(for: entry))
-                    .font(.system(size: DS.font9, weight: .thin))
+                    .font(.system(size: DS.font9, weight: .medium))
                 Text(meta)
-                    .font(.system(size: DS.font10, weight: .light))
+                    .font(.system(size: DS.font10, weight: .regular))
             }
             .foregroundStyle(.quaternary)
             .lineLimit(1)
@@ -139,7 +141,7 @@ struct SearchPreviewPanel: View {
                 viewModel.copySelected()
                 justCopied = true
                 Task {
-                    try? await Task.sleep(for: SearchPanelMetrics.copyFeedbackDelay)
+                    try? await Task.sleep(for: DS.copyFeedbackDelay)
                     justCopied = false
                 }
             }
@@ -163,9 +165,9 @@ struct SearchPreviewPanel: View {
             if let entry = viewModel.selectedEntry {
                 HStack(spacing: SearchPanelMetrics.metadataSpacing) {
                     Image(systemName: "clock")
-                        .font(.system(size: DS.font9, weight: .thin))
+                        .font(.system(size: DS.font9, weight: .medium))
                     Text(entry.timestamp, format: .dateTime.hour().minute())
-                        .font(.system(size: DS.font10, weight: .light))
+                        .font(.system(size: DS.font10, weight: .regular))
                         .monospacedDigit()
                 }
                 .foregroundStyle(.quaternary)
@@ -173,10 +175,10 @@ struct SearchPreviewPanel: View {
         }
         .padding(.horizontal, DS.s3)
         .padding(.vertical, DS.s2)
-        .background(.bar)
+        .background(DS.panelFill(.overlay))
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(.separator)
+                .fill(DS.hairlineFill(scheme))
                 .frame(height: SearchPanelMetrics.hairlineWidth)
         }
     }
@@ -191,7 +193,7 @@ struct SearchPreviewPanel: View {
     }
 }
 
-// MARK: - 极简操作按钮（hover 才出背景）
+// MARK: - 操作按钮（hover 出背景，与主 App ShellIconButtonStyle 同语言）
 
 private struct ActionButton: View {
     let icon: String
@@ -199,12 +201,14 @@ private struct ActionButton: View {
     let help: String
     let action: () -> Void
 
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: DS.font13, weight: .thin))
+                .font(.system(size: DS.font13, weight: .medium))
                 .foregroundStyle(tint ?? .secondary)
                 .frame(
                     width: SearchPanelMetrics.actionButtonSide,
@@ -213,12 +217,13 @@ private struct ActionButton: View {
                 .background {
                     if hovering {
                         RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                            .fill(SearchPanelMetrics.controlHoverFill)
+                            .fill(DS.shellHoverFill(scheme))
                     }
                 }
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(help)
+        .animation(DS.Motion.micro(reduced: reduceMotion), value: hovering)
     }
 }

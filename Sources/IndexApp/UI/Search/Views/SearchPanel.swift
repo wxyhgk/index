@@ -36,7 +36,7 @@ final class SearchPanel: NSPanel {
         let root = SearchPanelView(viewModel: viewModel)
         let hosting = NSHostingController(rootView: root)
         hosting.view.wantsLayer = true
-        hosting.view.layer?.cornerRadius = DS.radiusLarge
+        hosting.view.layer?.cornerRadius = DS.radiusPanel
         hosting.view.layer?.masksToBounds = true
         contentView = hosting.view
     }

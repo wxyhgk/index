@@ -1,28 +1,19 @@
 import SwiftUI
 
-// MARK: - Option+Space 全局搜索面板（苹果黑白风）
+// MARK: - Option+Space 全局搜索面板
 //
-// 设计原则：
-//   · 图标驱动：SF Symbols ultraLight，能用图标就不用文字
-//   · 纯灰度：primary / secondary / tertiary / quaternary，无彩色
-//   · 极简：大量留白，圆角 12，毛玻璃
-//   · 弹出动画：缩放 0.96→1 + 透明度
-//
-// 文件布局：
-//   · SearchPanelView          本文件：骨架 + 搜索框 + 空态
-//   · SearchResultRow          单行结果
-//   · SearchPreviewPanel       右侧预览 + 操作
+// 视觉语言与主 App 统一：纯色面板、accent 选中、medium 字重、DS.Motion 动效。
 
 struct SearchPanelView: View {
     @ObservedObject var viewModel: SearchPanelViewModel
     @FocusState private var searchFocused: Bool
     @State private var appeared = false
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
             listSection
-            Divider()
-                .frame(height: SearchPanelMetrics.dividerHeight)
             SearchPreviewPanel(viewModel: viewModel)
                 .frame(width: SearchPanelMetrics.previewWidth)
         }
@@ -30,24 +21,23 @@ struct SearchPanelView: View {
             width: SearchPanelMetrics.panelSize.width,
             height: SearchPanelMetrics.panelSize.height
         )
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous))
+        .background(DS.panelFill(.overlay))
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusPanel, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.radiusPanel, style: .continuous)
                 .strokeBorder(
-                    SearchPanelMetrics.panelBorder,
+                    DS.panelStroke(scheme, level: .overlay),
                     lineWidth: SearchPanelMetrics.hairlineWidth
                 )
         }
         .scaleEffect(appeared ? 1 : SearchPanelMetrics.initialScale)
         .opacity(appeared ? 1 : 0)
         .onAppear {
-            searchFocused = true
-            withAnimation(.spring(
-                response: SearchPanelMetrics.appearanceResponse,
-                dampingFraction: SearchPanelMetrics.appearanceDamping
-            )) {
+            withAnimation(DS.Motion.standard(reduced: reduceMotion)) {
                 appeared = true
+            }
+            DispatchQueue.main.async {
+                searchFocused = true
             }
         }
     }
@@ -61,16 +51,16 @@ struct SearchPanelView: View {
         }
     }
 
-    // MARK: 搜索框
+    // MARK: 搜索框（胶囊容器，与主 App GallerySearchField 同语言）
 
     private var searchBar: some View {
-        HStack(spacing: DS.s3) {
+        HStack(spacing: DS.s2) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: DS.font18, weight: .ultraLight))
+                .font(.system(size: DS.font13, weight: .medium))
                 .foregroundStyle(.secondary)
             TextField("", text: $viewModel.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: DS.font20, weight: .light))
+                .font(.system(size: DS.font15, weight: .regular))
                 .focused($searchFocused)
                 .onChange(of: viewModel.query) { _, _ in
                     viewModel.searchChanged()
@@ -79,17 +69,23 @@ struct SearchPanelView: View {
                 Button {
                     viewModel.clear()
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: DS.font12, weight: .light))
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: DS.font12))
                         .foregroundStyle(.tertiary)
-                        .frame(
-                            width: SearchPanelMetrics.clearButtonSide,
-                            height: SearchPanelMetrics.clearButtonSide
-                        )
-                        .background(SearchPanelMetrics.controlHoverFill, in: Circle())
                 }
                 .buttonStyle(.plain)
             }
+        }
+        .padding(.horizontal, DS.s3)
+        .frame(height: 34)
+        .background(
+            Capsule().fill(DS.capsuleFill(scheme))
+        )
+        .overlay {
+            Capsule().strokeBorder(
+                searchFocused ? DS.accentStrokeFocus : DS.capsuleStroke(scheme),
+                lineWidth: searchFocused ? 1.5 : 1
+            )
         }
         .padding(.horizontal, DS.s4)
         .padding(.top, DS.s4)
@@ -109,9 +105,9 @@ struct SearchPanelView: View {
                 emptyHint
             } else {
                 ContentUnavailableView(
-                    "",
+                    "无结果",
                     systemImage: "magnifyingglass",
-                    description: Text("无结果")
+                    description: Text("换个关键词试试")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -130,7 +126,7 @@ struct SearchPanelView: View {
                             .id(index)
                         }
                     }
-                    .padding(.horizontal, DS.s2)
+                    .padding(.horizontal, DS.s3)
                     .padding(.vertical, DS.s1)
                 }
                 .onChange(of: viewModel.selectedIndex) { _, newIndex in
@@ -145,10 +141,10 @@ struct SearchPanelView: View {
     private var emptyHint: some View {
         VStack(spacing: DS.s3) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: DS.font24, weight: .ultraLight))
+                .font(.system(size: DS.font20, weight: .medium))
                 .foregroundStyle(.quaternary)
             Text("搜索截图和剪贴板")
-                .font(.system(size: DS.font13, weight: .light))
+                .font(.system(size: DS.font13, weight: .regular))
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -119,7 +119,7 @@ final class SearchPanelViewModel: ObservableObject {
                 let title: String
                 switch clip.kind {
                 case .text:
-                    title = clip.text?.prefix(60).description ?? "文本"
+                    title = clip.title ?? clip.text?.prefix(60).description ?? "文本"
                 case .image:
                     title = clip.title ?? "图片"
                 case .file:
