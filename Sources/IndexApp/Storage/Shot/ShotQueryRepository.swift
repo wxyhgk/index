@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import IndexSearchCore
 
 /// 图库 Shot 列表、筛选、分页和清理候选的查询仓库。
 ///
@@ -285,7 +286,9 @@ struct ShotQueryRepository {
             arguments["collectionID"] = collectionID
         }
 
-        if query.isEmpty {
+        let searchQuery = SearchQuery(query)
+
+        if searchQuery.isEmpty {
             return ListStatement(sql: """
                 SELECT \(selection) FROM shot
                 WHERE 1 = 1 \(filterClause)
@@ -295,13 +298,26 @@ struct ShotQueryRepository {
                 """, arguments: StatementArguments(arguments))
         }
 
-        // trigram 不索引少于 3 个字符的词；短查询保持 LIKE 子串语义。
-        if query.count < 3 {
-            let escaped = query
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "%", with: "\\%")
-                .replacingOccurrences(of: "_", with: "\\_")
-            arguments["like"] = "%\(escaped)%"
+        // 有 ≥3 字符 token → FTS 内联（多词 OR，任一命中即返回）
+        if searchQuery.hasFTSTokens, let ftsExpr = searchQuery.ftsExpressionSQL {
+            return ListStatement(sql: """
+                SELECT \(selection) FROM shot
+                WHERE shot.id IN (
+                    SELECT shotFts.rowid FROM shotFts WHERE shotFts MATCH '\(ftsExpr)'
+                    UNION
+                    SELECT shotAttribute.shotID FROM shotAttribute
+                    JOIN attributeFts ON attributeFts.rowid = shotAttribute.id
+                    WHERE attributeFts MATCH '\(ftsExpr)'
+                ) \(filterClause)
+                \(cursorClause)
+                ORDER BY shot.capturedAt DESC, shot.id DESC
+                LIMIT \(limit)
+                """, arguments: StatementArguments(arguments))
+        }
+
+        // 短查询（全 <3 字符）→ LIKE 子串
+        if let likePattern = searchQuery.likePattern {
+            arguments["like"] = likePattern
             return ListStatement(sql: """
                 SELECT \(selection) FROM shot
                 WHERE (
@@ -321,17 +337,10 @@ struct ShotQueryRepository {
                 """, arguments: StatementArguments(arguments))
         }
 
-        let escaped = query.replacingOccurrences(of: "\"", with: "\"\"")
-        arguments["pattern"] = "\"\(escaped)\""
+        // 兜底（理论上不可达）
         return ListStatement(sql: """
             SELECT \(selection) FROM shot
-            WHERE shot.id IN (
-                SELECT shotFts.rowid FROM shotFts WHERE shotFts MATCH :pattern
-                UNION
-                SELECT shotAttribute.shotID FROM shotAttribute
-                JOIN attributeFts ON attributeFts.rowid = shotAttribute.id
-                WHERE attributeFts MATCH :pattern
-            ) \(filterClause)
+            WHERE 1 = 1 \(filterClause)
             \(cursorClause)
             ORDER BY shot.capturedAt DESC, shot.id DESC
             LIMIT \(limit)

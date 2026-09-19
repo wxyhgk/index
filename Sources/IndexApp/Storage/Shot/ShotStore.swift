@@ -3,6 +3,7 @@ import CoreGraphics
 import CryptoKit
 import GRDB
 import Combine
+import IndexSearchCore
 
 /// 文件 + 数据库的统一入口。
 ///
@@ -527,7 +528,8 @@ final class ShotStore: ObservableObject {
 
     /// 查询所有 Markdown 便签（contentKind = 'markdown'），按编辑时间倒序。
     func markdownShots(query: String?, limit: Int) -> [Shot] {
-        guard let query, !query.isEmpty else {
+        let searchQuery = SearchQuery(query ?? "")
+        guard !searchQuery.isEmpty else {
             return (try? writer.read { db in
                 try Shot.fetchAll(
                     db,
@@ -536,19 +538,11 @@ final class ShotStore: ObservableObject {
                 )
             }) ?? []
         }
-        // 多词拆分：按空格拆成 tokens，≥3 字符走 FTS OR，<3 字符走 LIKE OR
-        let tokens = query.split(separator: " ").map(String.init).filter { !$0.isEmpty }
-        let ftsTokens = tokens.filter { $0.count >= 3 }
-        let likeTokens = tokens.filter { $0.count < 3 }
 
         var results: [Shot] = []
 
-        // FTS 部分：多个 token 用 OR 连接（任一命中即返回）
-        // FTS5 MATCH 不支持参数绑定，必须内联（token 转义 " 为 ""）
-        if !ftsTokens.isEmpty {
-            let ftsMatch = ftsTokens
-                .map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }
-                .joined(separator: " OR ")
+        // FTS 部分（≥3 字符 token，内联多词 OR）
+        if searchQuery.hasFTSTokens, let ftsExpr = searchQuery.ftsExpressionSQL {
             do {
                 let ftsResults = try writer.read { db in
                     try Shot.fetchAll(
@@ -557,7 +551,7 @@ final class ShotStore: ObservableObject {
                             SELECT s.* FROM shot s
                             INNER JOIN shotFts ON shotFts.rowid = s.id
                             WHERE s.contentKind = 'markdown'
-                              AND shotFts MATCH '\(ftsMatch)'
+                              AND shotFts MATCH '\(ftsExpr)'
                             ORDER BY COALESCE(s.updatedAt, s.capturedAt) DESC
                             LIMIT \(limit)
                             """
@@ -565,18 +559,20 @@ final class ShotStore: ObservableObject {
                 }
                 results.append(contentsOf: ftsResults)
             } catch {
-                NSLog("[Index] 便签 FTS 查询失败 (match: \(ftsMatch)): \(error)")
+                NSLog("[Index] 便签 FTS 查询失败 (match: \(ftsExpr)): \(error)")
             }
         }
 
-        // LIKE 部分：短 token 用 OR 连接
-        if !likeTokens.isEmpty {
+        // LIKE 部分（<3 字符 token，per-token OR）
+        if !searchQuery.likeTokens.isEmpty {
+            let patterns = searchQuery.tokenLikePatterns
             var likeClause = ""
-            var likeArgs: [Any] = []
-            for token in likeTokens {
-                let pattern = "%\(token)%"
+            for _ in patterns {
                 if !likeClause.isEmpty { likeClause += " OR " }
-                likeClause += "(windowTitle LIKE ? OR markdownSource LIKE ?)"
+                likeClause += "(windowTitle LIKE ? ESCAPE '\\' OR markdownSource LIKE ? ESCAPE '\\')"
+            }
+            var likeArgs: [Any] = []
+            for pattern in patterns {
                 likeArgs.append(pattern)
                 likeArgs.append(pattern)
             }
@@ -591,14 +587,13 @@ final class ShotStore: ObservableObject {
             }
         }
 
-        // 无 FTS/LIKE 结果时回退整串 LIKE（兼容单 token 无空格的情况）
-        if results.isEmpty {
-            let pattern = "%\(query)%"
+        // 无结果时回退整串 LIKE
+        if results.isEmpty, let likePattern = searchQuery.likePattern {
             results = (try? writer.read { db in
                 try Shot.fetchAll(
                     db,
-                    sql: "SELECT * FROM shot WHERE contentKind = 'markdown' AND (windowTitle LIKE ? OR markdownSource LIKE ?) ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
-                    arguments: [pattern, pattern, limit]
+                    sql: "SELECT * FROM shot WHERE contentKind = 'markdown' AND (windowTitle LIKE ? ESCAPE '\\' OR markdownSource LIKE ? ESCAPE '\\') ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
+                    arguments: [likePattern, likePattern, limit]
                 )
             }) ?? []
         }

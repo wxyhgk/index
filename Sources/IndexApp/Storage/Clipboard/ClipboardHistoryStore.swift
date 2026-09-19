@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import IndexSearchCore
 
 // ============================================================
 // MARK: - 剪贴板历史
@@ -158,14 +159,14 @@ final class ClipboardHistoryStore: @unchecked Sendable {
         try page(limit: limit, query: query, before: nil)
     }
 
-    /// 稳定游标分页。三字符以上走 trigram FTS；短查询保持 LIKE 子串语义。
+    /// 稳定游标分页。有 ≥3 字符 token 走 trigram FTS（多词 OR）；短查询保持 LIKE 子串语义。
     func page(
         limit: Int,
         query: String? = nil,
         before cursor: PageCursor? = nil
     ) throws -> [ClipboardHistoryItem] {
-        try writer.read { db in
-            let trimmed = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let searchQuery = SearchQuery(query ?? "")
+        return try writer.read { db in
             var predicates: [String] = []
             var arguments: [any DatabaseValueConvertible] = []
             if let cursor {
@@ -174,24 +175,23 @@ final class ClipboardHistoryStore: @unchecked Sendable {
                 arguments.append(cursor.id)
             }
             let fromClause: String
-            if trimmed.count >= 3, try db.tableExists("clipboardHistoryFts") {
+            if searchQuery.hasFTSTokens, try db.tableExists("clipboardHistoryFts"),
+               let ftsExpr = searchQuery.ftsExpressionSQL {
                 fromClause = """
                     clipboardHistory h
                     JOIN clipboardHistoryFts ON clipboardHistoryFts.rowid = h.id
                     """
-                predicates.append("clipboardHistoryFts MATCH ?")
-                arguments.append(Self.quotedFTSQuery(trimmed))
+                predicates.append("clipboardHistoryFts MATCH '\(ftsExpr)'")
+            } else if !searchQuery.isEmpty, let likePattern = searchQuery.likePattern {
+                fromClause = "clipboardHistory h"
+                predicates.append("""
+                    (h.title LIKE ? ESCAPE '\\'
+                     OR h.summary LIKE ? ESCAPE '\\'
+                     OR h.text LIKE ? ESCAPE '\\')
+                    """)
+                arguments.append(contentsOf: [likePattern, likePattern, likePattern])
             } else {
                 fromClause = "clipboardHistory h"
-                if !trimmed.isEmpty {
-                    predicates.append("""
-                        (h.title LIKE ? ESCAPE '\\'
-                         OR h.summary LIKE ? ESCAPE '\\'
-                         OR h.text LIKE ? ESCAPE '\\')
-                        """)
-                    let pattern = "%\(Self.escapedLIKE(trimmed))%"
-                    arguments.append(contentsOf: [pattern, pattern, pattern])
-                }
             }
             arguments.append(max(1, limit))
             let whereClause = predicates.isEmpty
@@ -204,17 +204,6 @@ final class ClipboardHistoryStore: @unchecked Sendable {
                 LIMIT ?
                 """, arguments: StatementArguments(arguments))
         }
-    }
-
-    private static func quotedFTSQuery(_ value: String) -> String {
-        "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
-    }
-
-    private static func escapedLIKE(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "%", with: "\\%")
-            .replacingOccurrences(of: "_", with: "\\_")
     }
 
     /// 收藏的条目（收藏 tab 的剪贴板 section 用），按时间倒序。

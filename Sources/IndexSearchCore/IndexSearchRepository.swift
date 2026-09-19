@@ -42,27 +42,31 @@ public final class IndexSearchRepository: @unchecked Sendable {
     }
 
     public func search(_ rawQuery: String, limit: Int = 6) throws -> [IndexSearchResult] {
-        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty, limit > 0 else { return [] }
-        let tokens = Self.tokens(in: query)
+        let searchQuery = SearchQuery(rawQuery)
+        guard !searchQuery.isEmpty, limit > 0 else { return [] }
+        let tokens = Array(searchQuery.tokens.suffix(6))
         guard !tokens.isEmpty else { return [] }
 
         let candidates = try database.read { db in
-            var values = try shotCandidates(db, query: query, tokens: tokens)
-            values.append(contentsOf: try clipboardCandidates(db, query: query, tokens: tokens))
+            var values = try shotCandidates(db, query: searchQuery, tokens: tokens)
+            values.append(contentsOf: try clipboardCandidates(db, query: searchQuery, tokens: tokens))
             return values
         }
 
         return candidates
             .map { candidate in
-                let score = Self.score(candidate: candidate, query: query, tokens: tokens)
+                let score = SearchQuery.score(
+                    title: candidate.title,
+                    text: candidate.searchableText,
+                    query: searchQuery.trimmed
+                )
                 return IndexSearchResult(
                     id: "\(candidate.namespace)-\(candidate.id)",
                     recordID: candidate.id,
                     kind: candidate.kind,
                     title: candidate.title,
                     subtitle: candidate.subtitle,
-                    snippet: Self.snippet(in: candidate.searchableText, tokens: tokens),
+                    snippet: SearchQuery.snippet(candidate.searchableText, query: searchQuery.trimmed, maxChars: 120, context: 28),
                     assetURL: candidate.assetURL,
                     capturedAt: candidate.capturedAt,
                     score: score
@@ -78,7 +82,7 @@ public final class IndexSearchRepository: @unchecked Sendable {
 
     private func shotCandidates(
         _ db: Database,
-        query: String,
+        query: SearchQuery,
         tokens: [String]
     ) throws -> [Candidate] {
         guard try db.tableExists("shot") else { return [] }
@@ -87,23 +91,21 @@ public final class IndexSearchRepository: @unchecked Sendable {
         let hasStructuredContent = try db.tableExists("shotContent")
             && db.tableExists("contentMarkdown")
             && db.tableExists("contentCode")
-        let indexedTokens = tokens.filter { $0.count >= 3 }
         var argumentValues: [String: (any DatabaseValueConvertible)?] = [:]
         var whereClause: String
 
-        if hasFTS, !indexedTokens.isEmpty {
-            argumentValues["pattern"] = indexedTokens.map(Self.quotedFTSToken).joined(separator: " OR ")
+        if hasFTS, query.hasFTSTokens, let ftsExpr = query.ftsExpressionSQL {
             whereClause = """
                 shot.id IN (
-                    SELECT shotFts.rowid FROM shotFts WHERE shotFts MATCH :pattern
+                    SELECT shotFts.rowid FROM shotFts WHERE shotFts MATCH '\(ftsExpr)'
                     UNION
                     SELECT shotAttribute.shotID FROM shotAttribute
                     JOIN attributeFts ON attributeFts.rowid = shotAttribute.id
-                    WHERE attributeFts MATCH :pattern
+                    WHERE attributeFts MATCH '\(ftsExpr)'
                 )
                 """
-        } else {
-            argumentValues["like"] = "%\(Self.escapedLIKE(query))%"
+        } else if let likePattern = query.likePattern {
+            argumentValues["like"] = likePattern
             whereClause = """
                 shot.customTitle LIKE :like ESCAPE '\\'
                 OR shot.appName LIKE :like ESCAPE '\\'
@@ -111,10 +113,12 @@ public final class IndexSearchRepository: @unchecked Sendable {
                 OR shot.sourceURL LIKE :like ESCAPE '\\'
                 OR shot.ocrText LIKE :like ESCAPE '\\'
                 """
+        } else {
+            whereClause = "1 = 0"
         }
 
-        if hasStructuredContent {
-            argumentValues["structuredLike"] = "%\(Self.escapedLIKE(query))%"
+        if hasStructuredContent, let structuredLike = query.likePattern {
+            argumentValues["structuredLike"] = structuredLike
             whereClause = """
                 (\(whereClause))
                 OR contentMarkdown.source LIKE :structuredLike ESCAPE '\\'
@@ -186,11 +190,12 @@ public final class IndexSearchRepository: @unchecked Sendable {
 
     private func clipboardCandidates(
         _ db: Database,
-        query: String,
+        query: SearchQuery,
         tokens: [String]
     ) throws -> [Candidate] {
         guard try db.tableExists("clipboardHistory") else { return [] }
-        let predicates = tokens.indices.map { index -> String in
+        let patterns = query.tokenLikePatterns
+        let predicates = patterns.indices.map { index -> String in
             """
             (title LIKE :clip\(index) ESCAPE '\\'
              OR summary LIKE :clip\(index) ESCAPE '\\'
@@ -198,8 +203,8 @@ public final class IndexSearchRepository: @unchecked Sendable {
             """
         }
         var argumentValues: [String: (any DatabaseValueConvertible)?] = [:]
-        for (index, token) in tokens.enumerated() {
-            argumentValues["clip\(index)"] = "%\(Self.escapedLIKE(token))%"
+        for (index, pattern) in patterns.enumerated() {
+            argumentValues["clip\(index)"] = pattern
         }
         let rows = try Row.fetchAll(db, sql: """
             SELECT id, kind, title, summary, text, assetPath, sourceApp, capturedAt
@@ -242,58 +247,6 @@ public final class IndexSearchRepository: @unchecked Sendable {
         }
     }
 
-    private static func score(candidate: Candidate, query: String, tokens: [String]) -> Int {
-        let haystack = candidate.searchableText.lowercased()
-        let title = candidate.title.lowercased()
-        let normalizedQuery = query.lowercased()
-        var value = haystack.contains(normalizedQuery) ? 120 : 0
-        for token in tokens where haystack.contains(token) {
-            value += 30
-            if title.contains(token) { value += 18 }
-        }
-        switch candidate.kind {
-        case .clipboardText, .markdown, .code: value += 5
-        default: break
-        }
-        return value
-    }
-
-    private static func snippet(in text: String, tokens: [String]) -> String {
-        let compact = text
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !compact.isEmpty else { return "无文字摘要" }
-        let lowercased = compact.lowercased()
-        let firstRange = tokens.compactMap { lowercased.range(of: $0) }.min { lhs, rhs in
-            lhs.lowerBound < rhs.lowerBound
-        }
-        guard let firstRange else { return String(compact.prefix(120)) }
-        let hit = lowercased.distance(from: lowercased.startIndex, to: firstRange.lowerBound)
-        let startOffset = max(0, hit - 28)
-        let start = compact.index(compact.startIndex, offsetBy: min(startOffset, compact.count))
-        let suffix = compact[start...]
-        return (startOffset > 0 ? "…" : "") + String(suffix.prefix(120))
-    }
-
-    private static func tokens(in query: String) -> [String] {
-        let raw = query
-            .lowercased()
-            .split(whereSeparator: { $0.isWhitespace })
-            .map(String.init)
-            .filter { !$0.isEmpty }
-        return Array(raw.suffix(6))
-    }
-
-    private static func quotedFTSToken(_ value: String) -> String {
-        "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
-    }
-
-    private static func escapedLIKE(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "%", with: "\\%")
-            .replacingOccurrences(of: "_", with: "\\_")
-    }
 
     private static func firstNonempty(_ values: String?...) -> String? {
         values.lazy.compactMap { value -> String? in
