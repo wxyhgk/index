@@ -49,6 +49,14 @@ struct QuickNoteView: View {
                     TextField("搜索", text: $viewModel.searchQuery)
                         .font(.system(size: 12, design: .rounded))
                         .textFieldStyle(.plain)
+                    if !viewModel.searchQuery.isEmpty {
+                        Button(action: { viewModel.searchQuery = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
@@ -73,41 +81,62 @@ struct QuickNoteView: View {
             // 列表
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        // 置顶
-                        let pinned = viewModel.shots.filter { viewModel.isPinned($0) }
-                        if !pinned.isEmpty {
-                            Text("置顶")
-                                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 10)
-                                .padding(.top, 8)
-                                .padding(.bottom, 2)
-
-                            ForEach(pinned) { shot in
-                                sidebarRow(shot)
-                            }
-
-                            Divider().padding(.horizontal, 10).padding(.vertical, 4)
+                    if viewModel.shots.isEmpty && !viewModel.searchQuery.isEmpty {
+                        // 无搜索结果
+                        VStack(spacing: 4) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 18, weight: .thin))
+                                .foregroundStyle(.tertiary)
+                            Text("没有匹配的便签")
+                                .font(.system(size: 11, design: .rounded))
+                                .foregroundStyle(.tertiary)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 30)
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 1) {
+                            // 搜索时平铺（不按天分组），显示 snippet
+                            if !viewModel.searchQuery.isEmpty {
+                                ForEach(viewModel.shots) { shot in
+                                    sidebarRow(shot)
+                                }
+                            } else {
+                                // 置顶
+                                let pinned = viewModel.shots.filter { viewModel.isPinned($0) }
+                                if !pinned.isEmpty {
+                                    Text("置顶")
+                                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 10)
+                                        .padding(.top, 8)
+                                        .padding(.bottom, 2)
 
-                        // 按天分组（排除已置顶的）
-                        let unpinned = viewModel.shots.filter { !viewModel.isPinned($0) }
-                        let grouped = QuickNoteViewModel.groupByDay(unpinned)
-                        ForEach(grouped, id: \.date) { group in
-                            Text(QuickNoteViewModel.dayLabel(for: group.date))
-                                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 10)
-                                .padding(.top, 8)
-                                .padding(.bottom, 2)
+                                    ForEach(pinned) { shot in
+                                        sidebarRow(shot)
+                                    }
 
-                            ForEach(group.shots) { shot in
-                                sidebarRow(shot)
+                                    Divider().padding(.horizontal, 10).padding(.vertical, 4)
+                                }
+
+                                // 按天分组（排除已置顶的）
+                                let unpinned = viewModel.shots.filter { !viewModel.isPinned($0) }
+                                let grouped = QuickNoteViewModel.groupByDay(unpinned)
+                                ForEach(grouped, id: \.date) { group in
+                                    Text(QuickNoteViewModel.dayLabel(for: group.date))
+                                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 10)
+                                        .padding(.top, 8)
+                                        .padding(.bottom, 2)
+
+                                    ForEach(group.shots) { shot in
+                                        sidebarRow(shot)
+                                    }
+                                }
                             }
                         }
+                        .padding(.bottom, 8)
                     }
-                    .padding(.bottom, 8)
                 }
                 .onChange(of: viewModel.selectedShotID) { _, newID in
                     guard !viewModel.sidebarCollapsed, let newID else { return }
@@ -125,55 +154,67 @@ struct QuickNoteView: View {
         let isHovered = hoveredShotID == shot.id
         let isConfirmDelete = viewModel.confirmDeleteID == shot.id
         let isPinned = viewModel.isPinned(shot)
-        return HStack(spacing: 6) {
-            // 图钉（置顶时始终显示，hover 时也可操作）
-            if isPinned || isHovered {
-                Button(action: { viewModel.togglePin(shot) }) {
-                    Image(systemName: isPinned ? "pin.fill" : "pin")
-                        .font(.system(size: 8, weight: .thin))
-                        .foregroundStyle(isPinned ? .primary : .tertiary)
-                        .frame(width: 12, height: 12)
+        let isSearching = !viewModel.searchQuery.isEmpty
+        let snippet = isSearching ? viewModel.snippets[shot.id ?? 0] : nil
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                // 图钉（置顶时始终显示，hover 时也可操作）
+                if isPinned || isHovered {
+                    Button(action: { viewModel.togglePin(shot) }) {
+                        Image(systemName: isPinned ? "pin.fill" : "pin")
+                            .font(.system(size: 8, weight: .thin))
+                            .foregroundStyle(isPinned ? .primary : .tertiary)
+                            .frame(width: 12, height: 12)
+                    }
+                    .buttonStyle(.plain)
+                    .help(isPinned ? "取消置顶" : "置顶")
                 }
-                .buttonStyle(.plain)
-                .help(isPinned ? "取消置顶" : "置顶")
-            }
 
-            Text(viewModel.shotTitle(for: shot))
-                .font(.system(size: 12, design: .rounded))
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                Text(viewModel.shotTitle(for: shot))
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-            Spacer()
+                Spacer()
 
-            if isHovered {
-                Button(action: {
-                    if isConfirmDelete {
-                        viewModel.deleteShot(shot.id ?? 0)
-                    } else {
-                        viewModel.confirmDeleteID = shot.id
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .seconds(2))
-                            if viewModel.confirmDeleteID == shot.id {
-                                viewModel.confirmDeleteID = nil
+                if isHovered {
+                    Button(action: {
+                        if isConfirmDelete {
+                            viewModel.deleteShot(shot.id ?? 0)
+                        } else {
+                            viewModel.confirmDeleteID = shot.id
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .seconds(2))
+                                if viewModel.confirmDeleteID == shot.id {
+                                    viewModel.confirmDeleteID = nil
+                                }
                             }
                         }
+                    }) {
+                        Image(systemName: isConfirmDelete ? "trash.fill" : "xmark")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(isConfirmDelete ? .red : .secondary)
+                            .frame(width: 16, height: 16)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(Circle())
                     }
-                }) {
-                    Image(systemName: isConfirmDelete ? "trash.fill" : "xmark")
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(isConfirmDelete ? .red : .secondary)
-                        .frame(width: 16, height: 16)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .clipShape(Circle())
+                    .buttonStyle(.plain)
+                    .help(isConfirmDelete ? "再点一次确认删除" : "删除")
+                    .transition(.opacity)
+                } else if !isSearching {
+                    Text(viewModel.timeLabel(shot.capturedAt))
+                        .font(.system(size: 9, design: .rounded))
+                        .foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.plain)
-                .help(isConfirmDelete ? "再点一次确认删除" : "删除")
-                .transition(.opacity)
-            } else {
-                Text(viewModel.timeLabel(shot.capturedAt))
-                    .font(.system(size: 9, design: .rounded))
+            }
+            // 搜索时显示匹配上下文
+            if let snippet {
+                Text(snippet)
+                    .font(.system(size: 10, design: .rounded))
                     .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
             }
         }
         .padding(.horizontal, 10)

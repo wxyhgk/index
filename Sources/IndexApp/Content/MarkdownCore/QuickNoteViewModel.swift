@@ -18,6 +18,8 @@ final class QuickNoteViewModel: ObservableObject {
     @Published var pinnedIDs: Set<Int64> = []
     @Published var sidebarCollapsed = true
     @Published var confirmDeleteID: Int64?
+    /// 搜索时每条便签的匹配上下文（shotID → snippet）
+    @Published var snippets: [Int64: String] = [:]
 
     // MARK: 私有
 
@@ -102,6 +104,43 @@ final class QuickNoteViewModel: ObservableObject {
     func reload() {
         let query = searchQuery.trimmingCharacters(in: .whitespaces)
         shots = store.markdownShots(query: query.isEmpty ? nil : query, limit: 50)
+        // 搜索时生成 snippet（匹配上下文）
+        if !query.isEmpty {
+            snippets = shots.reduce(into: [:]) { dict, shot in
+                guard let id = shot.id else { return }
+                if let source = store.markdownSource(for: shot) {
+                    dict[id] = Self.makeSnippet(source, query: query)
+                }
+            }
+        } else {
+            snippets = [:]
+        }
+    }
+
+    /// 从 markdown 源码中截取包含 query 的一行作为 snippet。
+    static func makeSnippet(_ source: String, query: String) -> String {
+        let lines = source.components(separatedBy: "\n")
+        let lowerQuery = query.lowercased()
+        // 找第一个包含 query 的行
+        for (i, line) in lines.enumerated() {
+            if line.lowercased().contains(lowerQuery) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                // 如果行太长，截取 query 周围的上下文
+                if trimmed.count > 60 {
+                    if let range = trimmed.range(of: query, options: .caseInsensitive) {
+                        let start = trimmed.index(range.lowerBound, offsetBy: max(0, 20 - trimmed.distance(from: trimmed.startIndex, to: range.lowerBound)))
+                        let end = trimmed.index(range.upperBound, offsetBy: min(30, trimmed.distance(from: range.upperBound, to: trimmed.endIndex)))
+                        let snippet = String(trimmed[start..<end])
+                        return (start > trimmed.startIndex ? "…" : "") + snippet + (end < trimmed.endIndex ? "…" : "")
+                    }
+                    return String(trimmed.prefix(60)) + "…"
+                }
+                return trimmed
+            }
+        }
+        // 没找到匹配行，返回第一行
+        let firstLine = lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return firstLine.count > 40 ? String(firstLine.prefix(40)) + "…" : firstLine
     }
 
     func reloadPinned() {
@@ -338,6 +377,12 @@ final class QuickNoteViewModel: ObservableObject {
             }
             lastSavedText = newText
             reload()
+            // 搜索态下新建便签可能不匹配搜索词，确保它在列表里
+            if let id = selectedShotID, !shots.contains(where: { $0.id == id }) {
+                if let shot = store.markdownShots(query: nil, limit: 1).first(where: { $0.id == id }) {
+                    shots.insert(shot, at: 0)
+                }
+            }
         } catch {
             NSLog("[Index] 便签保存失败: \(error)")
         }

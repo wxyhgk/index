@@ -527,25 +527,44 @@ final class ShotStore: ObservableObject {
 
     /// 查询所有 Markdown 便签（contentKind = 'markdown'），按编辑时间倒序。
     func markdownShots(query: String?, limit: Int) -> [Shot] {
-        do {
-            return try writer.read { db in
-                if let query, !query.isEmpty {
-                    let pattern = "%\(query)%"
-                    return try Shot.fetchAll(
-                        db,
-                        sql: "SELECT * FROM shot WHERE contentKind = 'markdown' AND (windowTitle LIKE ? OR markdownSource LIKE ?) ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
-                        arguments: [pattern, pattern, limit]
-                    )
-                }
-                return try Shot.fetchAll(
+        guard let query, !query.isEmpty else {
+            return (try? writer.read { db in
+                try Shot.fetchAll(
                     db,
                     sql: "SELECT * FROM shot WHERE contentKind = 'markdown' ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
                     arguments: [limit]
                 )
-            }
-        } catch {
-            return []
+            }) ?? []
         }
+        // trigram tokenizer 要求 ≥3 字符；短查询回退 LIKE
+        if query.count >= 3 {
+            let ftsPattern = "\"\(query)\""
+            if let results = try? writer.read({ db in
+                try Shot.fetchAll(
+                    db,
+                    sql: """
+                        SELECT s.* FROM shot s
+                        INNER JOIN shotFts ON shotFts.rowid = s.id
+                        WHERE s.contentKind = 'markdown'
+                          AND shotFts MATCH ?
+                        ORDER BY COALESCE(s.updatedAt, s.capturedAt) DESC
+                        LIMIT ?
+                        """,
+                    arguments: [ftsPattern, limit]
+                )
+            }), !results.isEmpty {
+                return results
+            }
+        }
+        // 短查询或 FTS 无结果：LIKE 兜底
+        let pattern = "%\(query)%"
+        return (try? writer.read { db in
+            try Shot.fetchAll(
+                db,
+                sql: "SELECT * FROM shot WHERE contentKind = 'markdown' AND (windowTitle LIKE ? OR markdownSource LIKE ?) ORDER BY COALESCE(updatedAt, capturedAt) DESC LIMIT ?",
+                arguments: [pattern, pattern, limit]
+            )
+        }) ?? []
     }
 
     /// 收口三步查询：content → contentID → markdownContent。
