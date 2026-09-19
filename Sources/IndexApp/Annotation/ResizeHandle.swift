@@ -170,13 +170,23 @@ extension Layer {
             height = fontSize
         } else {
             let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
-            let line = CTLineCreateWithAttributedString(
-                NSAttributedString(string: text, attributes: [.font: font])
-            )
+            let lines = text.components(separatedBy: "\n")
+            var maxLineWidth: CGFloat = 0
             var ascent: CGFloat = 0
             var descent: CGFloat = 0
-            width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
-            height = ascent + descent
+            for line in lines {
+                let ctLine = CTLineCreateWithAttributedString(
+                    NSAttributedString(string: line, attributes: [.font: font])
+                )
+                var a: CGFloat = 0
+                var d: CGFloat = 0
+                let w = CGFloat(CTLineGetTypographicBounds(ctLine, &a, &d, nil))
+                maxLineWidth = max(maxLineWidth, w)
+                ascent = max(ascent, a)
+                descent = max(descent, d)
+            }
+            width = maxLineWidth
+            height = CGFloat(lines.count) * fontSize * 1.3
         }
         return CGRect(x: rect.x, y: rect.y, width: width, height: height)
     }

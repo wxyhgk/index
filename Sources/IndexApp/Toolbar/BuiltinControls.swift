@@ -143,10 +143,10 @@ struct ColorControl: ToolbarControl {
     var group: ToolbarGroup { .style }
     var order: Int { index }
 
-    /// 只有**声明了颜色轴**的工具才显示色块。马赛克 / 聚光灯 / 裁剪的渲染
-    /// 根本不读 `layer.color` —— 从前它们照样摆一排点了没反应的色块。
+    /// 颜色控件始终显示（固定双栏），即使当前工具不声明颜色轴。
+    /// 对于不吃颜色的工具（马赛克/聚光灯/裁剪），点了不影响渲染。
     func isVisible(_ context: ToolbarContext) -> Bool {
-        context.annotation.styleAxes.contains(.color)
+        true
     }
     func isSelected(_ context: ToolbarContext) -> Bool {
         context.annotation.styleIndex(for: .color) == index
@@ -167,9 +167,54 @@ struct ColorControl: ToolbarControl {
     }
 
     func activate(_ context: ToolbarContext) {
-        context.annotation.setStyleIndex(index, for: .color)
-        // 有选中图层时顺带改它的颜色 —— 「点中再点色」是最直觉的改色方式。
-        context.annotation.applyColorToSelection()
+        context.annotation.selectPaletteColor(index)
+    }
+}
+
+/// 取色器（吸管）：点击进入取色模式，鼠标点画布采样像素设为当前颜色。
+struct ColorPickerControl: ToolbarControl {
+    static let controlID = "colorPicker"
+
+    var id: String { Self.controlID }
+    var scopes: Set<ActionScope> { [.capture, .pinned] }
+    var group: ToolbarGroup { .style }
+    /// 排在调色板色块之后（order 900）。
+    var order: Int { 900 }
+
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.isPickingColor || context.annotation.customColor != nil
+    }
+    func accessibilityLabel(_ context: ToolbarContext) -> String {
+        if let custom = context.annotation.customColor {
+            return "取色（\(custom.hexString)）"
+        }
+        return "取色"
+    }
+    func width(_ context: ToolbarContext) -> CGFloat { ToolbarStyle.swatchWidth }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        // 有自定义颜色时画色块，否则画吸管图标
+        if let custom = context.annotation.customColor {
+            NSColor(srgbRed: custom.r, green: custom.g, blue: custom.b, alpha: 1).setFill()
+            let dot = NSRect(x: frame.midX - DS.toolDotSize / 2, y: frame.midY - DS.toolDotSize / 2, width: DS.toolDotSize, height: DS.toolDotSize)
+            NSBezierPath(ovalIn: dot).fill()
+            NSColor.black.withAlphaComponent(0.35).setStroke()
+            let ring = NSBezierPath(ovalIn: dot)
+            ring.lineWidth = DS.hairline
+            ring.stroke()
+        } else {
+            ToolbarStyle.drawCenteredSymbol("eyedropper", in: frame)
+        }
+    }
+
+    func activate(_ context: ToolbarContext) {
+        if context.annotation.isPickingColor {
+            // 再点一次退出取色
+            context.annotation.isPickingColor = false
+        } else {
+            context.annotation.beginColorPicking()
+        }
     }
 }
 
@@ -187,27 +232,31 @@ struct ToolParamControl: ToolbarControl {
     var group: ToolbarGroup { .style }
     var order: Int { axis.order + index }
 
+    /// 每根轴只显示当前档位一个控件（PixPin 式数值显示）。
     func isVisible(_ context: ToolbarContext) -> Bool {
-        context.annotation.styleAxes.contains(axis)
+        guard context.annotation.styleAxes.contains(axis) else { return false }
+        return context.annotation.styleIndex(for: axis) == index
     }
     func isSelected(_ context: ToolbarContext) -> Bool {
         context.annotation.styleIndex(for: axis) == index
     }
     func accessibilityLabel(_ context: ToolbarContext) -> String {
-        "\(axis.descriptor.title) \(index + 1)"
+        let steps = axis.steps
+        guard steps.indices.contains(index) else { return axis.title }
+        return "\(axis.title) \(Int(steps[index]))"
     }
-    func width(_ context: ToolbarContext) -> CGFloat { 24 }
+    func width(_ context: ToolbarContext) -> CGFloat { 28 }
 
-    /// 每根轴用自己的视觉语言表达「三档」，光看图标就知道在调什么：
-    /// 粗细 = 圆点由小到大；字号 = 字母 A 由小到大；透明度 = 同色不同浓淡；
-    /// 颗粒 = 方格由密到疏；压暗 = 灰度由浅到深。
-    /// 绘制由 `ToolStyleAxisDescriptor` 统一声明，新增轴无需再改这里。
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
         axis.descriptor.toolbarDraw?(frame, index)
     }
 
+    /// 点击 = 步进 +1（到顶回到底），滚轮 ±1 档。
     func activate(_ context: ToolbarContext) {
-        context.annotation.setStyleIndex(index, for: axis)
+        let steps = axis.steps
+        let cur = context.annotation.styleIndex(for: axis)
+        let next = (cur + 1) % steps.count
+        context.annotation.setStyleIndex(next, for: axis)
         context.annotation.applyStyleToSelection(axis)
     }
 }
@@ -415,7 +464,7 @@ struct ActionControl: ToolbarControl {
         descriptor: ToolbarActionDescriptor,
         order: Int,
         scope: ActionScope,
-        showsTitle: Bool = true
+        showsTitle: Bool = false
     ) {
         self.descriptor = descriptor
         self.order = order
@@ -573,6 +622,7 @@ extension ToolbarRegistry {
         registry.register(ShapeVariantControl(tool: .rect))
         registry.register(ShapeVariantControl(tool: .ellipse))
         AnnotationState.palette.indices.forEach { registry.register(ColorControl(index: $0)) }
+        registry.register(ColorPickerControl())
         // 数值轴 × 三档全部注册；哪些真正出现在条上由当前工具的描述符决定
         // （`ToolParamControl.isVisible` → `ToolRegistry.descriptor(for:).axes`）。
         // 档位数与轴清单均由 `ToolStyleAxisDescriptor` 统一声明。

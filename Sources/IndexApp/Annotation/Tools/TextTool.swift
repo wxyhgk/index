@@ -6,15 +6,18 @@ import CoreText
 ///
 /// `rect` 只存锚点（w/h 恒为 0），实际范围由 `Layer.handleBounds` 按当前字号
 /// 现量出来 —— 字体参数必须与这里的绘制一致，否则控制点会飘在文字外。
+///
+/// 支持多行（Shift+Return 插入 \n）和描边（fillStroke，浅色底上白色文字可见）。
 struct TextTool: AnnotationToolDescriptor {
     let tool = AnnotationTool.text
-    // 吃字号，不吃线宽 —— 旧版本这两者共用一个下标，
-    // 调矩形边框粗细会顺手改掉文字大小。
     let axes: [ToolStyleAxis] = [.color, .fontSize]
     let defaultStyle = ToolStyle()
     let input = ToolInput.click
     let shortcut: (keyCode: UInt16, label: String)? = (KeyCode.t, "T")
     let isPinnedToBar = true
+
+    /// 描边宽 = 字号 × 0.08（与字号联动，视觉上始终协调）。
+    private static let strokeRatio: CGFloat = 0.08
 
     func makeLayer(_ context: ToolLayerContext) -> Layer {
         var layer = baseLayer(context)
@@ -45,19 +48,30 @@ struct TextTool: AnnotationToolDescriptor {
         guard !layer.text.isEmpty else { return }
 
         let font = NSFont.systemFont(ofSize: layer.fontSize, weight: .semibold)
-        let attributed = NSAttributedString(string: layer.text, attributes: [
-            .font: font,
-            .foregroundColor: NSColor(cgColor: layer.color.cg) ?? .systemRed
-        ])
-        let line = CTLineCreateWithAttributedString(attributed)
+        let color = NSColor(cgColor: layer.color.cg) ?? .systemRed
+        let lines = layer.text.components(separatedBy: "\n")
+        let lineSpacing = layer.fontSize * 1.3
 
         ctx.saveGState()
-        // 上下文当前是翻转的（左上原点），文字需要再翻一次才不会上下颠倒。
         ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        var ascent: CGFloat = 0
-        CTLineGetTypographicBounds(line, &ascent, nil, nil)
-        ctx.textPosition = CGPoint(x: layer.rect.x, y: layer.rect.y + ascent)
-        CTLineDraw(line, ctx)
+        ctx.setLineWidth(layer.fontSize * Self.strokeRatio)
+        ctx.setStrokeColor(color.withAlphaComponent(0.8).cgColor)
+        ctx.setTextDrawingMode(.fillStroke)
+
+        var y = layer.rect.y
+        for line in lines {
+            let attributed = NSAttributedString(string: line, attributes: [
+                .font: font,
+                .foregroundColor: color
+            ])
+            let ctLine = CTLineCreateWithAttributedString(attributed)
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            CTLineGetTypographicBounds(ctLine, &ascent, &descent, nil)
+            ctx.textPosition = CGPoint(x: layer.rect.x, y: y + ascent)
+            CTLineDraw(ctLine, ctx)
+            y += lineSpacing
+        }
         ctx.restoreGState()
     }
 }

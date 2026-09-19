@@ -158,6 +158,12 @@ struct Layer: Codable, Identifiable, Equatable {
     var blockScale: Double?
     /// 聚光灯区域外的压暗程度（0…1）。nil = 旧图层，用 0.55。
     var dim: Double?
+    /// 箭头头大小倍率（相对线宽的倍率）。nil = 旧图层，用默认 3.0。
+    var headScale: Double?
+    /// 形状填充模式（0=描边, 1=填充, 2=描边+填充）。nil = 旧图层，纯描边。
+    var fillMode: Int?
+    /// 测量单位（0=px, 1=pt）。nil = 旧图层，px。
+    var unit: Int?
 }
 
 // MARK: - 截图记录（原图不可变）

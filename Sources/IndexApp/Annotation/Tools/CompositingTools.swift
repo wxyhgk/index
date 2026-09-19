@@ -37,36 +37,29 @@ struct SpotlightTool: AnnotationToolDescriptor {
     // 裸 S 选聚光灯；⌘S 在两处键盘路由里都先判修饰键，保存不受影响。
     let shortcut: (keyCode: UInt16, label: String)? = (KeyCode.s, "S")
 
-    /// 所有聚光灯合成一张遮罩，画在其余矢量层之下 —— 否则标注本身也会被压暗。
+    /// 所有聚光灯合成遮罩，画在其余矢量层之下 —— 否则标注本身也会被压暗。
     let drawsMerged = true
 
-    /// 整个可绘制区域铺一层半透明黑，再把每个聚光灯矩形挖亮。
-    /// 用透明图层 + destinationOut 挖洞，而不是 even-odd —— 两个聚光灯重叠时
-    /// even-odd 会把交集重新填黑，挖洞则不管怎么叠都是亮的。
+    /// 每个聚光灯独立压暗：各自铺一层半透明黑再挖自己的亮区。
+    /// 重叠区域自然叠加（更暗），选中某层改 dim 只影响那层。
     func drawMerged(_ layers: [Layer], in ctx: CGContext) {
-        // 上下文此刻已是图层坐标系；裁剪盒就是「当前可见的画布范围」：
-        // 离屏导出时是整张图，覆盖层预览时是选区。
         let canvas = ctx.boundingBoxOfClipPath
         guard !canvas.isEmpty else { return }
 
-        // 压暗程度是**画布级**属性而非单层属性（只有一次整体填充），
-        // 多个聚光灯时以最后画的那个为准 —— 「我刚调的那个说了算」最好预期。
-        // 旧图层没有 dim 字段（nil）→ 0.55 → 与从前一致。
-        let dim = layers.last?.dim ?? 0.55
-
-        ctx.saveGState()
-        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        ctx.setFillColor(CGColor(gray: 0, alpha: dim))
-        ctx.fill(canvas)
-        ctx.setBlendMode(.destinationOut)
-        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
         for layer in layers {
+            let dim = layer.dim ?? 0.55
             let rect = layer.rect.cg
-            if rect.width >= 1, rect.height >= 1 {
-                ctx.fill(rect)
-            }
+            guard rect.width >= 1, rect.height >= 1 else { continue }
+
+            ctx.saveGState()
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            ctx.setFillColor(CGColor(gray: 0, alpha: dim))
+            ctx.fill(canvas)
+            ctx.setBlendMode(.destinationOut)
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.fill(rect)
+            ctx.endTransparencyLayer()
+            ctx.restoreGState()
         }
-        ctx.endTransparencyLayer()
-        ctx.restoreGState()
     }
 }

@@ -122,7 +122,11 @@ extension OverlayView {
         }
         switch event.keyCode {
         case KeyCode.returnKey, KeyCode.keypadEnter:
-            annotation.endTextEditing()
+            if event.modifierFlags.contains(.shift) {
+                annotation.insertText("\n")
+            } else {
+                annotation.endTextEditing()
+            }
         case KeyCode.delete:
             annotation.deleteBackward()
         default:

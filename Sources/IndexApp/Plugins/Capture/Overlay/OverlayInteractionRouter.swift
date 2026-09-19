@@ -46,6 +46,8 @@ protocol OverlayGestureHost: AnyObject {
     func syncLiveTextOverlayFrame()
     func prepareLiveTextAnalysis()
     func frozenPixels(_ rect: CGRect) -> CGImage?
+    /// 采样全局坐标处的像素颜色（取色器用）。
+    func sampleColor(atGlobal point: CGPoint) -> LColor?
     /// 点是否落在系统选字层的可交互文字上（鼠标模式）。
     func hasLiveTextInteractiveItem(atViewLocal local: CGPoint) -> Bool
 }

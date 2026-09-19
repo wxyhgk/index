@@ -132,6 +132,24 @@ final class PinImageView: NSView {
         annotation.strokeScale = Double(1 / max(displayScale, 0.0001))
     }
 
+    /// 采样视图坐标处的底图像素颜色（取色器用）。
+    private func sampleColor(atViewLocal point: CGPoint) -> LColor? {
+        let canvas = canvasPoint(point)
+        let x = Int(canvas.x.rounded())
+        let y = Int(canvas.y.rounded())
+        guard x >= 0, y >= 0, x < base.width, y < base.height else { return nil }
+        guard let dot = base.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)) else { return nil }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        guard let ctx = CGContext(
+            data: &pixel, width: 1, height: 1,
+            bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.draw(dot, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return LColor(r: Double(pixel[0]) / 255, g: Double(pixel[1]) / 255, b: Double(pixel[2]) / 255, a: 1)
+    }
+
     // MARK: - 工具条
 
     /// 工具条窗口画什么、控件被点时读什么状态，都取自这里 ——
@@ -294,6 +312,15 @@ final class PinImageView: NSView {
         defer { onToolbarInvalidated?() }
 
         let point = convert(event.locationInWindow, from: nil)
+
+        // 取色模式：点击采样底图像素设为当前颜色。
+        if annotation.isPickingColor {
+            if let color = sampleColor(atViewLocal: point) {
+                annotation.endColorPicking(color)
+            }
+            needsDisplay = true
+            return
+        }
 
         // 选字模式：命中文字交系统层（拖=选字），空白处落回拖窗口（PixPin 行为）。
         if isLiveTextActive, let overlay = liveTextOverlay {

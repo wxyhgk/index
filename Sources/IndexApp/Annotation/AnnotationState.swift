@@ -178,16 +178,24 @@ final class AnnotationState: ObservableObject {
 
     func styleIndex(for axis: ToolStyleAxis) -> Int { currentStyle.index(for: axis) }
 
-    /// 滚轮步进宽度（PixPin：右侧调节 + 滚轮改粗细）。上滚变粗、下滚变细。
+    /// 滚轮步进（PixPin：滚轮改粗细/字号）。上滚变大、下滚变小。
+    /// 优先步进 width 轴；当前工具没有 width 时步进 fontSize。
     @discardableResult
     func stepWidth(by delta: Int) -> Bool {
-        guard styleAxes.contains(.width) else { return false }
-        let steps = ToolStyleAxisDescriptor.descriptor(for: .width).steps
-        let cur = styleIndex(for: .width)
+        let axis: ToolStyleAxis
+        if styleAxes.contains(.width) {
+            axis = .width
+        } else if styleAxes.contains(.fontSize) {
+            axis = .fontSize
+        } else {
+            return false
+        }
+        let steps = axis.steps
+        let cur = styleIndex(for: axis)
         let next = min(max(cur + delta, 0), steps.count - 1)
         guard next != cur else { return false }
-        let changed = setStyleIndex(next, for: .width)
-        if changed { applyStyleToSelection(.width) }
+        let changed = setStyleIndex(next, for: axis)
+        if changed { applyStyleToSelection(axis) }
         return changed
     }
 
@@ -206,8 +214,39 @@ final class AnnotationState: ObservableObject {
     }
 
     var color: LColor {
+        if let custom = customColor { return custom }
         let index = currentStyle.colorIndex
         return Self.palette.indices.contains(index) ? Self.palette[index] : Self.palette[0]
+    }
+
+    /// 取色器采样的自定义颜色。非 nil 时优先于调色板。
+    var customColor: LColor? = nil { willSet { publishChange() } }
+    /// 取色模式：鼠标点画布采样像素。
+    var isPickingColor: Bool = false { willSet { publishChange() } }
+
+    func beginColorPicking() {
+        isPickingColor = true
+    }
+
+    /// 取色完成：设 customColor，应用到选中图层，退出取色模式。
+    func endColorPicking(_ color: LColor) {
+        isPickingColor = false
+        customColor = color
+        // 应用到选中图层
+        if let selectedID, let index = layers.firstIndex(id: selectedID) {
+            let before = layers[index]
+            layers[index].color = color
+            if before != layers[index] {
+                history.record(.style(id: selectedID, before: before, after: layers[index]))
+            }
+        }
+    }
+
+    /// 点调色板色块：清除 customColor，设 colorIndex。
+    func selectPaletteColor(_ index: Int) {
+        customColor = nil
+        setStyleIndex(index, for: .color)
+        applyColorToSelection()
     }
     var lineWidth: Double { currentStyle.value(for: .width) * strokeScale }
     var fontSize: Double { currentStyle.value(for: .fontSize) * strokeScale }
@@ -327,6 +366,8 @@ final class AnnotationState: ObservableObject {
         }
         layers.append(layer)
         history.record(.add(layer, preview: pixelatePreviews[layer.id]))
+        // PixPin 行为：画完自动选中，工具保持激活，可以直接拖动/缩放刚画的。
+        selectedID = layer.id
         return true
     }
 
@@ -345,6 +386,8 @@ final class AnnotationState: ObservableObject {
         resizeOriginal = nil
         resizeStartPoint = nil
         resizeFromPreview = nil
+        customColor = nil
+        isPickingColor = false
         layers.removeAll()
         pixelatePreviews.removeAll()
         history.reset()
@@ -493,6 +536,11 @@ final class AnnotationState: ObservableObject {
         guard applied else { return false }
         if before != layers[index] {
             history.record(.style(id: selectedID, before: before, after: layers[index]))
+            // 马赛克改颗粒后旧预览贴片不再匹配，清掉让渲染器画占位块。
+            // 导出时 `applyPixelate` 会用新 blockScale 重算，结果正确。
+            if layers[index].kind == .pixelate {
+                pixelatePreviews[selectedID] = nil
+            }
         }
         return true
     }

@@ -370,6 +370,10 @@ final class OverlayView: NSView {
         ))
     }
 
+    func sampleColor(atGlobal point: CGPoint) -> LColor? {
+        model.snapshot.sample(aroundGlobal: point)?.color
+    }
+
     /// 右键逐级退出：选中的文字 → 图层选中 → 文字输入 → 鼠标模式退回中性 →
     /// 画笔退回中性 → 选区 → 整个截图流程。Esc 与它刻意不同：Esc 一次
     /// 取消整次截图，右键才承担“退回上一层”的精细操作。

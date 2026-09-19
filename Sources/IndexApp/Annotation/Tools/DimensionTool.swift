@@ -7,7 +7,7 @@ import CoreText
 /// 覆盖层画布是点、导出是像素，只有生成时算好才能保证预览和成品显示同一个数。
 struct DimensionTool: AnnotationToolDescriptor {
     let tool = AnnotationTool.dimension
-    let axes: [ToolStyleAxis] = [.color, .width]
+    let axes: [ToolStyleAxis] = [.color, .width, .unit]
     let defaultStyle = ToolStyle()
     let shortcut: (keyCode: UInt16, label: String)? = (KeyCode.m, "M")
 
@@ -44,15 +44,28 @@ struct DimensionTool: AnnotationToolDescriptor {
         }
         layer.rect = LRect(rect)
 
-        let w = Int((rect.width * pixelScale).rounded())
-        let h = Int((rect.height * pixelScale).rounded())
+        let unit = layer.unit ?? 0
+        let unitStr = unit == 1 ? "pt" : "px"
+        let wPx = rect.width * pixelScale
+        let hPx = rect.height * pixelScale
+        let wStr = unit == 1 ? formatDecimal(wPx) : String(Int(wPx.rounded()))
+        let hStr = unit == 1 ? formatDecimal(hPx) : String(Int(hPx.rounded()))
         if rect.height == 0 {
-            layer.text = "\(w) px"
+            layer.text = "\(wStr) \(unitStr)"
         } else if rect.width == 0 {
-            layer.text = "\(h) px"
+            layer.text = "\(hStr) \(unitStr)"
         } else {
-            layer.text = "\(w) × \(h) px"
+            layer.text = "\(wStr) × \(hStr) \(unitStr)"
         }
+    }
+
+    /// pt 模式保留一位小数，整数则不显示小数点。
+    private static func formatDecimal(_ value: Double) -> String {
+        let rounded = (value * 10).rounded() / 10
+        if rounded == rounded.rounded() {
+            return String(Int(rounded))
+        }
+        return String(format: "%.1f", rounded)
     }
 
     // MARK: - 绘制

@@ -52,9 +52,13 @@ struct CounterTool: AnnotationToolDescriptor {
 
         guard !layer.text.isEmpty else { return }
         let font = NSFont.systemFont(ofSize: rect.height * 0.52, weight: .bold)
+        // 底色亮用黑字、底色暗用白字，避免白色圆+白字同色看不见。
+        let nsColor = NSColor(cgColor: layer.color.cg) ?? .white
+        let luminance = 0.299 * nsColor.redComponent + 0.587 * nsColor.greenComponent + 0.114 * nsColor.blueComponent
+        let textColor = luminance > 0.5 ? NSColor.black : NSColor.white
         let attributed = NSAttributedString(string: layer.text, attributes: [
             .font: font,
-            .foregroundColor: NSColor.white
+            .foregroundColor: textColor
         ])
         let line = CTLineCreateWithAttributedString(attributed)
         var ascent: CGFloat = 0

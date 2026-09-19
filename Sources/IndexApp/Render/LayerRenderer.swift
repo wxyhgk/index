@@ -700,7 +700,7 @@ enum LayerRenderer {
     static func pixelated(_ image: CGImage, blockScale: Double = 1) -> CGImage? {
         let width = CGFloat(image.width)
         let height = CGFloat(image.height)
-        let blockSize = max(6, min(width, height) / 12 * blockScale)
+        let blockSize = max(6, 12 * blockScale)
 
         guard let filter = CIFilter(name: "CIPixellate") else { return nil }
         filter.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
@@ -736,7 +736,8 @@ enum LayerRenderer {
             )
 
             // blockScale 是相对默认颗粒的倍率；旧图层没有这个字段（nil）→ 1.0 → 与从前一致。
-            let scale = max(6, min(r.width, r.height) / 12 * (layer.blockScale ?? 1))
+            // 块大小用固定基准（12px × 倍率），不随矩形尺寸缩放 —— 用户预期「档位 = 固定块大小」。
+            let scale = max(6, 12 * (layer.blockScale ?? 1))
             guard let filter = CIFilter(name: "CIPixellate") else { continue }
             filter.setValue(current, forKey: kCIInputImageKey)
             filter.setValue(scale, forKey: kCIInputScaleKey)

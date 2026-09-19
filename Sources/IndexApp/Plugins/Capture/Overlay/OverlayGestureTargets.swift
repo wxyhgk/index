@@ -265,6 +265,15 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
         let global = host.geometry.global(fromViewLocal: local)
         let selection = host.model.confirmedRect
 
+        // 取色模式：点击采样像素设为当前颜色，消费事件。
+        if host.annotation.isPickingColor {
+            if let color = host.sampleColor(atGlobal: global) {
+                host.annotation.endColorPicking(color)
+            }
+            host.redraw()
+            return true
+        }
+
         // 手上有标注工具时，选区内的拖拽是画标注，不是调整选区。
         // 例外：命中选区边缘控制点时放行给 OverlaySelectionTarget 做 resize ——
         // 控制点的 9pt 命中范围大部分在选区外，不拦的话 restoreLastTool 恢复
@@ -274,7 +283,24 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
                 return false
             }
             if let selection, selection.contains(global) {
-                host.annotation.beginDraw(at: host.geometry.annotationPoint(fromViewLocal: local))
+                let canvas = host.geometry.annotationPoint(fromViewLocal: local)
+                // PixPin 行为：先检测选中图层的控制点（resize），
+                // 再检测图层命中（move），最后才画新标注。
+                if let handle = host.annotation.resizeHandle(at: canvas) {
+                    host.annotation.endTextEditing()
+                    host.annotation.beginResize(handle: handle, at: canvas)
+                    host.becameActive()
+                    host.redraw()
+                    return true
+                }
+                if let id = host.annotation.layer(at: canvas) {
+                    host.annotation.endTextEditing()
+                    host.annotation.beginMove(id: id, at: canvas)
+                    host.becameActive()
+                    host.redraw()
+                    return true
+                }
+                host.annotation.beginDraw(at: canvas)
                 host.redraw()
                 return true
             }
@@ -340,6 +366,10 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
 
     func cursor(local: CGPoint, host: OverlayGestureHost) -> OverlayCursorDecision? {
         guard host.model.phase == .confirmed else { return nil }
+        // 取色模式：十字光标
+        if host.annotation.isPickingColor {
+            return .set(.crosshair)
+        }
         // 鼠标模式下文字上的光标（I-beam）由系统选字层自己管，这里不抢。
         if host.annotation.pointerEngaged,
            host.hasLiveTextInteractiveItem(atViewLocal: local) {

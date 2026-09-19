@@ -28,6 +28,12 @@ enum ToolStyleAxis: String, Codable, CaseIterable {
     case blockSize
     /// 聚光灯区域外的压暗程度。
     case dim
+    /// 箭头头大小（相对线宽的倍率）。
+    case headSize
+    /// 形状填充模式（0=描边, 1=填充, 2=描边+填充）。
+    case fillMode
+    /// 测量单位（0=px, 1=pt）。
+    case unit
 
     /// 轴的元数据由 `ToolStyleAxisDescriptor` 统一声明。
     var descriptor: ToolStyleAxisDescriptor {
@@ -97,19 +103,24 @@ struct ToolStyleAxisDescriptor {
             axis: .width,
             order: 100,
             title: "粗细",
-            steps: [2, 4, 8],
-            defaultIndex: 1,
+            steps: [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24],
+            defaultIndex: 3,
             codingKey: "widthIndex",
             keyPath: \ToolStyle.widthIndex,
             toolbarDraw: { frame, index in
-                let steps: [Double] = [2, 4, 8]
+                let steps: [Double] = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24]
                 guard steps.indices.contains(index) else { return }
-                let radius = CGFloat(steps[index]) / 2 + 1.5
-                NSColor.white.setFill()
-                NSBezierPath(ovalIn: NSRect(
-                    x: frame.midX - radius, y: frame.midY - radius,
-                    width: radius * 2, height: radius * 2
-                )).fill()
+                let value = steps[index]
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
+                    .foregroundColor: NSColor.white
+                ]
+                let text = "\(Int(value))" as NSString
+                let bounds = text.size(withAttributes: attrs)
+                text.draw(
+                    at: NSPoint(x: frame.midX - bounds.width / 2, y: frame.midY - bounds.height / 2),
+                    withAttributes: attrs
+                )
             },
             applyToLayer: { layer, style, strokeScale in
                 layer.lineWidth = style.value(for: .width) * strokeScale
@@ -121,17 +132,19 @@ struct ToolStyleAxisDescriptor {
             axis: .fontSize,
             order: 200,
             title: "字号",
-            steps: [16, 24, 40],
-            defaultIndex: 1,
+            steps: [12, 16, 20, 24, 28, 32, 36, 40, 48, 56],
+            defaultIndex: 3,
             codingKey: "fontSizeIndex",
             keyPath: \ToolStyle.fontSizeIndex,
             toolbarDraw: { frame, index in
-                let size = 9 + CGFloat(index) * 3
+                let steps: [Double] = [12, 16, 20, 24, 28, 32, 36, 40, 48, 56]
+                guard steps.indices.contains(index) else { return }
+                let value = steps[index]
                 let attrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: size, weight: .semibold),
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
                     .foregroundColor: NSColor.white
                 ]
-                let text = "A" as NSString
+                let text = "\(Int(value))" as NSString
                 let bounds = text.size(withAttributes: attrs)
                 text.draw(
                     at: NSPoint(x: frame.midX - bounds.width / 2, y: frame.midY - bounds.height / 2),
@@ -192,7 +205,10 @@ struct ToolStyleAxisDescriptor {
                     }
                 }
             },
-            applyToLayer: { _, _, _ in false },
+            applyToLayer: { layer, style, _ in
+                layer.blockScale = style.value(for: .blockSize)
+                return true
+            },
             bakeToLayer: { layer, style in
                 layer.blockScale = style.value(for: .blockSize)
             }
@@ -224,6 +240,105 @@ struct ToolStyleAxisDescriptor {
                 layer.dim = style.value(for: .dim)
             }
         ),
+        ToolStyleAxisDescriptor(
+            axis: .headSize,
+            order: 600,
+            title: "箭头头",
+            steps: [2.0, 3.0, 4.5],
+            defaultIndex: 1,
+            codingKey: "headSizeIndex",
+            keyPath: \ToolStyle.headSizeIndex,
+            toolbarDraw: { frame, index in
+                let scales: [Double] = [2.0, 3.0, 4.5]
+                guard scales.indices.contains(index) else { return }
+                let s = scales[index]
+                let len = CGFloat(s) * 3 + 6
+                let spread = CGFloat.pi / 7
+                let cx = frame.midX
+                let cy = frame.midY
+                NSColor.white.setFill()
+                let path = NSBezierPath()
+                path.move(to: NSPoint(x: cx + len / 2, y: cy))
+                path.line(to: NSPoint(x: cx - len / 2 + 4, y: cy - sin(spread) * len / 2))
+                path.line(to: NSPoint(x: cx - len / 2 + 4, y: cy + sin(spread) * len / 2))
+                path.close()
+                path.fill()
+            },
+            applyToLayer: { layer, style, _ in
+                layer.headScale = style.value(for: .headSize)
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.headScale = style.value(for: .headSize)
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .fillMode,
+            order: 700,
+            title: "填充",
+            steps: [0, 1, 2],
+            defaultIndex: 0,
+            codingKey: "fillModeIndex",
+            keyPath: \ToolStyle.fillModeIndex,
+            toolbarDraw: { frame, index in
+                let modes: [Double] = [0, 1, 2]
+                guard modes.indices.contains(index) else { return }
+                let mode = Int(modes[index])
+                let rect = NSRect(x: frame.midX - 6, y: frame.midY - 6, width: 12, height: 12)
+                NSColor.white.setStroke()
+                let path = NSBezierPath(rect: rect)
+                path.lineWidth = 1.5
+                path.stroke()
+                if mode >= 1 {
+                    NSColor.white.withAlphaComponent(0.5).setFill()
+                    NSBezierPath(rect: rect.insetBy(dx: 2, dy: 2)).fill()
+                }
+                if mode == 2 {
+                    NSColor.white.setStroke()
+                    let inner = NSBezierPath(rect: rect.insetBy(dx: 2, dy: 2))
+                    inner.lineWidth = 1
+                    inner.stroke()
+                }
+            },
+            applyToLayer: { layer, style, _ in
+                layer.fillMode = Int(style.value(for: .fillMode))
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.fillMode = Int(style.value(for: .fillMode))
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .unit,
+            order: 800,
+            title: "单位",
+            steps: [0, 1],
+            defaultIndex: 0,
+            codingKey: "unitIndex",
+            keyPath: \ToolStyle.unitIndex,
+            toolbarDraw: { frame, index in
+                let labels = ["px", "pt"]
+                guard labels.indices.contains(index) else { return }
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 8, weight: .medium),
+                    .foregroundColor: NSColor.white
+                ]
+                let text = labels[index] as NSString
+                let bounds = text.size(withAttributes: attrs)
+                text.draw(
+                    at: NSPoint(x: frame.midX - bounds.width / 2, y: frame.midY - bounds.height / 2),
+                    withAttributes: attrs
+                )
+            },
+            applyToLayer: { layer, style, _ in
+                guard layer.kind == .dimension else { return false }
+                layer.unit = Int(style.value(for: .unit))
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.unit = Int(style.value(for: .unit))
+            }
+        ),
     ]
 
     static func descriptor(for axis: ToolStyleAxis) -> ToolStyleAxisDescriptor {
@@ -243,6 +358,9 @@ struct ToolStyle: Codable, Equatable {
     var opacityIndex: Int = 1
     var blockSizeIndex: Int = 1
     var dimIndex: Int = 1
+    var headSizeIndex: Int = 1
+    var fillModeIndex: Int = 0
+    var unitIndex: Int = 0
 
     init(colorIndex: Int = 0, widthIndex: Int = 1, fontSizeIndex: Int = 1) {
         self.colorIndex = colorIndex
