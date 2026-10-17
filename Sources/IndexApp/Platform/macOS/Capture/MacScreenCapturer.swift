@@ -13,8 +13,10 @@ final class MacScreenCapturer: ScreenCapturing {
     private var topologyGeneration: UInt64 = 0
     private var cachedDisplayContent: (generation: UInt64, content: SCShareableContent)?
     private var screenParametersObserver: NSObjectProtocol?
+    private var lastKnownDisplays: [DisplayInfo] = []
 
     private init() {
+        lastKnownDisplays = currentDisplays()
         screenParametersObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -47,6 +49,28 @@ final class MacScreenCapturer: ScreenCapturing {
     /// 单次完成门：故障会话里有界报错，健康会话里单屏约 0.1 秒。
     func captureDisplays() async throws -> [DisplaySnapshot] {
         guard isPermissionGranted else { throw CaptureError.noPermission }
+        let displays = currentDisplays()
+        guard !displays.isEmpty else { throw CaptureError.noDisplays }
+
+        // 快路径：常驻流已就绪 → O(1) 取最新帧（对标 PixPin captureTo，不向 replayd 发请求）。
+        // 任一块屏缺帧 / 尺寸不符 / 拓扑变化 → 回退慢路径。
+        if ScreenFrameStreamer.shared.isRunning,
+           let snapshots = ScreenFrameStreamer.shared.snapshots(for: displays),
+           DisplayTopology.matches(displays, currentDisplays())
+        {
+            let imageSummary = snapshots.map { snapshot in
+                "\(snapshot.display.name)=\(snapshot.image.width)x\(snapshot.image.height)@\(String(format: "%.2f", snapshot.imageScale))x"
+            }.joined(separator: ", ")
+            NSLog("[Index] 多屏冻结完成(常驻流) count=%d images=%@", snapshots.count, imageSummary)
+            return snapshots
+        }
+
+        // 慢路径（兜底）：流未就绪（启动中 / 崩溃重建中）→ SCScreenshotManager 单帧
+        return try await captureDisplaysViaScreenshotManager()
+    }
+
+    /// 慢路径：逐屏 SCScreenshotManager.captureImage（首次 / 流未就绪时的兜底）。
+    private func captureDisplaysViaScreenshotManager() async throws -> [DisplaySnapshot] {
         let session = try MacScreenCaptureBroker.shared.beginSession()
         var completedSuccessfully = false
         defer {
@@ -175,9 +199,19 @@ final class MacScreenCapturer: ScreenCapturing {
     }
 
     private func displayTopologyDidChange() {
+        let current = currentDisplays()
+        guard !DisplayTopology.matches(lastKnownDisplays, current) else { return }
+        lastKnownDisplays = current
         topologyGeneration &+= 1
         cachedDisplayContent = nil
         NSLog("[Index] 显示器拓扑变化 generation=%llu", topologyGeneration)
+        // 常驻流也要跟着拓扑重建（displayID / frame / scale 变了，旧流的尺寸与坐标失效）。
+        // 流未启动时不触发 rebuild，避免意外启动。
+        Task { @MainActor in
+            if ScreenFrameStreamer.shared.isRunning {
+                await ScreenFrameStreamer.shared.rebuild()
+            }
+        }
     }
 
     private func displayContent(

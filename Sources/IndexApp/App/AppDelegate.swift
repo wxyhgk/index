@@ -136,6 +136,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupHotKeys()
 
+        // 常驻帧流（对标 PixPin 启动即 init）：已授权时建 per-display SCStream，
+        // 截图走 O(1) 取帧快路径。overlay 背景用冻结帧（不订阅实时流，
+        // 对标 PixPin ScreenShotBgLayer 一次性捕获）。
+        Task { @MainActor in
+            await ScreenFrameStreamer.shared.start()
+        }
+
         AttributeBackfill.runIfNeeded(styleStore: settings, store: shotStore)   // 给老截图补缺失的派生属性，后台串行，不影响启动
         StorageJanitor.runIfNeeded(settings: settings, store: shotStore)      // 清理过期且无价值（未收藏、未标注）的旧截图
         ShelfController.cleanupDragFiles()   // 上次会话拖出的临时 PNG，此刻才能安全删
@@ -183,6 +190,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         QuickNoteCoordinator.shared.flush()
         BuiltinPluginHost.shared.shutdown()
+        // 停掉常驻帧流，释放 SCStream 资源。
+        Task { @MainActor in
+            await ScreenFrameStreamer.shared.stop()
+        }
         // Hook 事件（= Emacs before-quit-hook）：插件挂 appWillQuit 就能响应。
         Task {
             await HookRegistry.shared.fire(
@@ -467,13 +478,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentCoordinator.shared.toggle()
     }
 
-    /// 按设置启停剪贴板监听 + 清理过期条目。
+    /// 按设置启停剪贴板监听 + 清理过期条目 + AI 每日整理。
     private func applyClipboardHistorySettings() {
         if settings.clipboardHistoryEnabled {
             ClipboardHistoryStore.shared.prune(olderThanDays: settings.clipboardHistoryRetentionDays)
             ClipboardHistoryCoordinator.shared.start()
+            if settings.clipboardAIEnabled {
+                ClipboardAIOrganizer.shared.start(hour: settings.clipboardAIHour)
+            } else {
+                ClipboardAIOrganizer.shared.stop()
+            }
         } else {
             ClipboardHistoryCoordinator.shared.stop()
+            ClipboardAIOrganizer.shared.stop()
         }
     }
 
