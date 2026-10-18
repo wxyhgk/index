@@ -12,6 +12,12 @@ import VisionKit
 final class OverlayView: NSView {
 
     var onFinish: ((SelectionResult?) -> Void)?
+    /// 活动屏的选区状态变化：coordinator 用它把全局选区广播到其它屏。
+    var onSelectionChanged: (() -> Void)?
+    /// 跨屏输出：由 coordinator 汇总所有屏的截图与标注后构造结果。
+    var buildCrossDisplayResult: ((String) -> SelectionResult?)?
+    /// 选区刚确认：coordinator 可把工具栏切到指针所在屏。
+    var onSelectionEnded: (() -> Void)?
     var onBecameActive: ((OverlayView) -> Void)?
 
     /// 简单模式：选区一确认（松手 / 单击窗口）立刻 emit，不停留在 confirmed 阶段，
@@ -246,6 +252,13 @@ final class OverlayView: NSView {
     }
 
     func redraw() {
+        syncToolbarToolTips()
+        chrome.needsDisplay = true
+        onSelectionChanged?()
+    }
+
+    /// 被其它屏的选区状态驱动时只重绘，不再回写，避免广播回环。
+    func redrawFromSharedSelection() {
         syncToolbarToolTips()
         chrome.needsDisplay = true
     }
@@ -492,6 +505,7 @@ final class OverlayView: NSView {
         }
         // 刚松手时指针就在选区内：绿点应立刻出现，不用等下一次 mouseMoved。
         pointerInsideSelection = true
+        onSelectionEnded?()
         annotation.pointerEngaged = false
         syncLiveTextOverlay()
         prepareLiveTextAnalysis()
@@ -653,6 +667,12 @@ final class OverlayView: NSView {
             performAutoMosaic()
             return
         }
+        // 跨屏选区：从所有相交的冻结画面拼接，而不是只裁活动屏。
+        if let buildCrossDisplayResult,
+           let result = buildCrossDisplayResult(actionID) {
+            onFinish?(result)
+            return
+        }
         guard
             model.phase == .confirmed,
             let region = model.confirmedRect,
@@ -680,11 +700,15 @@ final class OverlayView: NSView {
     /// 自动马赛克：Vision API 检测选区内文字区域，批量添加 pixelate 图层。
     func performAutoMosaic() {
         guard model.phase == .confirmed, let region = model.confirmedRect else { return }
-        guard let image = model.makeCroppedImage() else { return }
+        // 自动马赛克只处理活动屏：跨屏时把范围收敛到本屏交集。
+        let activeRegion = model.snapshot.frame.intersection(region)
+        guard !activeRegion.isEmpty,
+              let image = model.snapshot.crop(globalRect: activeRegion)
+        else { return }
         let scale = model.snapshot.scale
         let displayFrame = model.snapshot.frame
-        let offsetX = region.minX - displayFrame.minX
-        let offsetY = displayFrame.maxY - region.maxY
+        let offsetX = activeRegion.minX - displayFrame.minX
+        let offsetY = displayFrame.maxY - activeRegion.maxY
         let startRegion = region
 
         Task { @MainActor [weak self] in
@@ -704,6 +728,20 @@ final class OverlayView: NSView {
             })
             self.redraw()
         }
+    }
+
+
+    /// 把本屏的标注导出到「整个跨屏选区」的像素坐标系。
+    func exportAnnotationLayers(for region: CGRect, scale: CGFloat) -> Layers<ImageSpace> {
+        let intersection = model.snapshot.frame.intersection(region)
+        guard !intersection.isEmpty else { return Layers<ImageSpace>() }
+        let layers = annotation.exportLayers(
+            selection: geometry.annotationRect(fromGlobal: intersection),
+            scale: scale
+        )
+        let dx = (intersection.minX - region.minX) * scale
+        let dy = (region.maxY - intersection.maxY) * scale
+        return layers.offsetBy(dx: dx, dy: dy)
     }
 
     /// ⌥+单击的整窗捕获出口。`image` 放冻结画面上窗口可见部分的裁剪 ——

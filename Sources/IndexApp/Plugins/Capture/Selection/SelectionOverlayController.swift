@@ -16,6 +16,10 @@ final class SelectionOverlayController {
 
     private var windows: [OverlayWindow] = []
     private var views: [OverlayView] = []
+    /// 最近一次交互所在的屏。跨屏选区的状态从它广播到其余屏。
+    private weak var activeView: OverlayView?
+    /// 本次捕获的冻结画面，跨屏输出时用于拼接。
+    private var snapshots: [DisplaySnapshot] = []
     private var completion: ((SelectionResult?) -> Void)?
     private let selectionAIExecutorFactory: @MainActor () -> SelectionAIExecutor
     /// 覆盖层视图的设置切片（放大镜 / 回车语义 / 标注样式）。注入式。
@@ -72,16 +76,26 @@ final class SelectionOverlayController {
         }
 
         self.completion = completion
+        self.snapshots = snapshots
 
         let primaryID = NSScreen.main.flatMap(Geometry.displayID(of:))
         // 同一次多屏覆盖层共享严格单飞门：即使焦点在屏之间切换，也不能并发
         // 向同一 Provider 扇出两个选区请求。
         let selectionAIExecutor = selectionAIExecutorFactory()
+        // A 的坐标模型：所有屏共用同一个虚拟桌面包围盒；每屏 model 仍保留
+        // 自己的 display frame 用于绘制与局部坐标换算。
+        let selectionBounds = snapshots
+            .map(\.display.frame)
+            .reduce(CGRect.null) { $0.union($1) }
 
         for snapshot in snapshots {
             guard let screen = screensByID[snapshot.display.id] else { continue }
 
-            let model = SelectionModel(snapshot: snapshot, windows: windowList)
+            let model = SelectionModel(
+                snapshot: snapshot,
+                windows: windowList,
+                selectionBounds: selectionBounds
+            )
             let view = OverlayView(
                 model: model,
                 isPrimaryScreen: snapshot.display.id == primaryID,
@@ -91,10 +105,39 @@ final class SelectionOverlayController {
                 selectionAIExecution: OverlaySelectionAIExecution(executor: selectionAIExecutor)
             )
             view.finishOnConfirm = finishOnConfirm
+            view.buildCrossDisplayResult = { [weak self, weak view] actionID in
+                guard let self, let view else { return nil }
+                return self.buildCrossDisplayResult(from: view, actionID: actionID)
+            }
             view.onFinish = { [weak self] result in self?.finish(result) }
+            view.onSelectionEnded = { [weak self, weak view] in
+                guard let self, let view else { return }
+                // 只有跨屏选区才需要把工具栏切到指针所在屏；单屏保持原行为。
+                guard let region = view.model.confirmedRect,
+                      self.snapshots.filter({ $0.display.frame.intersects(region) }).count > 1
+                else { return }
+                let mouse = NSEvent.mouseLocation
+                let target = self.views.first {
+                    $0.window?.frame.intersects(region) == true
+                        && $0.window?.frame.contains(mouse) == true
+                } ?? view
+                guard target !== self.activeView else { return }
+                // 目标屏可能是非活动屏；先把刚确认的选区同步过去，再交棒。
+                target.model.adoptSelection(from: view.model)
+                self.activeView = target
+                self.views.forEach { $0.setInactive($0 !== target) }
+                self.broadcastSelection(from: target, force: true)
+            }
+            view.onSelectionChanged = { [weak self, weak view] in
+                guard let self, let view else { return }
+                self.broadcastSelection(from: view)
+            }
             view.onBecameActive = { [weak self] owner in
-                // 一次只允许一块屏处于活动状态。
-                self?.views.forEach { $0.setInactive($0 !== owner) }
+                guard let self else { return }
+                // 一次只允许一块屏处于活动状态；其它屏保留同一份选区用于绘制。
+                self.activeView = owner
+                self.views.forEach { $0.setInactive($0 !== owner) }
+                self.broadcastSelection(from: owner, force: true)
             }
 
             let window = OverlayWindow(screen: screen)
@@ -108,10 +151,85 @@ final class SelectionOverlayController {
         let mouse = NSEvent.mouseLocation
         let preferred = windows.first { $0.frame.contains(mouse) } ?? windows.first
         preferred?.makeKeyAndOrderFront(nil)
+        if let index = windows.firstIndex(where: { $0 === preferred }) {
+            activeView = views[index]
+            views.forEach { $0.setInactive($0 !== views[index]) }
+        }
 
         NSApp.activate(ignoringOtherApps: true)
         NSCursor.crosshair.push()
         return true
+    }
+
+    /// 跨屏输出：拼接所有相交的冻结画面，并把每块屏的标注按各自裁剪偏移合并。
+    private func buildCrossDisplayResult(
+        from view: OverlayView,
+        actionID: String
+    ) -> SelectionResult? {
+        guard view.model.phase == .confirmed,
+              let region = view.model.confirmedRect
+        else { return nil }
+
+        let intersecting = snapshots.filter { $0.display.frame.intersects(region) }
+        guard intersecting.count > 1 else { return nil }
+
+        NSLog(
+            "[Index] 跨屏截图 region=%@ displays=%@",
+            NSStringFromRect(region),
+            intersecting.map { $0.display.name }.joined(separator: ", ")
+        )
+        let scale = view.model.snapshot.scale
+        let activeIntersection = view.model.snapshot.frame.intersection(region)
+
+        // 录屏 / 长截图只支持单屏：把 region 收敛到活动屏，避免把跨屏矩形
+        // 交给只认识单 display 的录制器。
+        if actionID == ActionID.record
+            || actionID == ActionID.scrollCapture
+            || actionID == ActionID.gifCapture {
+            guard let image = view.model.snapshot.crop(globalRect: activeIntersection) else {
+                return nil
+            }
+            return SelectionResult(
+                region: activeIntersection,
+                display: view.model.snapshot.display,
+                window: nil,
+                actionID: actionID,
+                image: image,
+                layers: Layers<ImageSpace>(),
+                windowCaptureRequest: nil
+            )
+        }
+
+        guard let image = MultiDisplayComposer.stitch(
+            region: region,
+            snapshots: intersecting,
+            outputScale: scale
+        ) else { return nil }
+
+        let layers = Layers<ImageSpace>(
+            views.flatMap { $0.exportAnnotationLayers(for: region, scale: scale).elements }
+        )
+
+        return SelectionResult(
+            region: region,
+            display: view.model.snapshot.display,
+            window: nil,
+            actionID: actionID,
+            image: image,
+            layers: layers,
+            windowCaptureRequest: nil
+        )
+    }
+
+    /// 活动屏每次重绘后，把全局选区同步给其它屏；其它屏只重绘，不回写。
+    private func broadcastSelection(from source: OverlayView, force: Bool = false) {
+        guard let activeView, source === activeView else { return }
+        for view in views where view !== source {
+            let changed = view.model.adoptSelection(from: source.model)
+            if changed || force {
+                view.redrawFromSharedSelection()
+            }
+        }
     }
 
     private func finish(_ result: SelectionResult?) {

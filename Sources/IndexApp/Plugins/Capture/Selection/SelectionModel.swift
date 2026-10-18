@@ -87,11 +87,21 @@ final class SelectionModel {
     /// 多边形顶点命中/吸附半径（点）。
     static let polygonHitRadius: CGFloat = 10
 
-    init(snapshot: DisplaySnapshot, windows: [WindowInfo]) {
+    /// 选区可以跨屏：夹紧用 `selectionBounds`（所有屏幕的并集包围盒），
+    /// 绘制/局部坐标换算仍用本屏的 `bounds`（`snapshot.frame`）。
+    private let selectionBounds: CGRect
+
+    init(
+        snapshot: DisplaySnapshot,
+        windows: [WindowInfo],
+        selectionBounds: CGRect? = nil
+    ) {
         self.snapshot = snapshot
         self.windows = windows
+        self.selectionBounds = selectionBounds ?? snapshot.frame
     }
 
+    /// 本屏在 AppKit 全局坐标里的 frame。渲染/坐标换算用。
     var bounds: CGRect { snapshot.frame }
 
     // MARK: - 派生状态
@@ -103,7 +113,7 @@ final class SelectionModel {
             y: min(a.y, b.y),
             width: abs(b.x - a.x),
             height: abs(b.y - a.y)
-        ).intersection(bounds)
+        ).intersection(selectionBounds)
     }
 
     /// 当前应该高亮的矩形（AppKit 全局坐标）。
@@ -112,13 +122,13 @@ final class SelectionModel {
         if isPolygonMode {
             if let pts = polygon?.points, pts.count >= 2 {
                 let bbox = pts.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
-                if !bbox.isEmpty { return bbox.intersection(bounds) }
+                if !bbox.isEmpty { return bbox.intersection(selectionBounds) }
             }
             return bounds
         }
         if let draggingRect { return draggingRect }
         guard !isInactive, phase == .idle else { return nil }
-        return hoveredWindow?.frame.intersection(bounds)
+        return hoveredWindow?.frame.intersection(selectionBounds)
     }
 
     /// 高亮的是「悬停到的窗口」而非用户画出来的选区 —— 用来区分蓝框和白框。
@@ -240,7 +250,24 @@ final class SelectionModel {
     func setInactive(_ value: Bool) -> Bool {
         guard isInactive != value else { return false }
         isInactive = value
-        if value { reset() }
+        return true
+    }
+
+    /// 把活动屏的选区状态同步到其它屏。跨屏选区在每屏各有一份模型，
+    /// 但坐标与阶段必须完全一致；活动屏每次重绘后广播一次。
+    @discardableResult
+    func adoptSelection(from other: SelectionModel) -> Bool {
+        guard other !== self else { return false }
+        phase = other.phase
+        confirmedRect = other.confirmedRect
+        confirmedPolygon = other.confirmedPolygon
+        polygon = other.polygon
+        guides = other.guides
+        dragOrigin = other.dragOrigin
+        dragCurrent = other.dragCurrent
+        cornerRadius = other.cornerRadius
+        adjustingCorner = other.adjustingCorner
+        adjustingPolygonVertex = other.adjustingPolygonVertex
         return true
     }
 
@@ -301,7 +328,7 @@ final class SelectionModel {
                 phase = .idle
                 return false
             }
-            confirmedRect = window.frame.intersection(bounds)
+            confirmedRect = window.frame.intersection(selectionBounds)
             confirmedWindow = window
         } else if let rect = draggingRect, rect.width >= minimumSize, rect.height >= minimumSize {
             confirmedRect = rect
@@ -426,11 +453,11 @@ final class SelectionModel {
         if moving {
             // 整体移动时只平移，不因为撞到边缘而变形。
             var moved = rect
-            moved.origin.x = min(max(bounds.minX, moved.minX), bounds.maxX - moved.width)
-            moved.origin.y = min(max(bounds.minY, moved.minY), bounds.maxY - moved.height)
+            moved.origin.x = min(max(selectionBounds.minX, moved.minX), selectionBounds.maxX - moved.width)
+            moved.origin.y = min(max(selectionBounds.minY, moved.minY), selectionBounds.maxY - moved.height)
             return moved
         }
-        return rect.intersection(bounds)
+        return rect.intersection(selectionBounds)
     }
 
     /// R 键复用上次选区：从 idle 直接恢复到指定区域（含圆角半径）。
@@ -440,7 +467,7 @@ final class SelectionModel {
         // 所以这里必须单独排除：否则 R（复用上次区域）会在画多边形的途中
         // 塞进一个矩形选区，留下「多边形 + 已确认矩形」的混合状态。
         guard phase == .idle, polygon == nil else { return false }
-        let clamped = rect.intersection(bounds)
+        let clamped = rect.intersection(selectionBounds)
         guard clamped.width >= minimumSize, clamped.height >= minimumSize else { return false }
         confirmedRect = clamped
         confirmedWindow = nil
@@ -537,7 +564,7 @@ final class SelectionModel {
         guard let points = polygon?.points, points.count >= 3 else { return false }
         let bbox = points.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
         guard bbox.width >= minimumSize, bbox.height >= minimumSize else { return false }
-        confirmedRect = bbox.intersection(bounds)
+        confirmedRect = bbox.intersection(selectionBounds)
         confirmedPolygon = points
         polygon = nil
         confirmedWindow = nil
@@ -585,7 +612,7 @@ final class SelectionModel {
         )
         confirmedPolygon = polygon
         let bbox = polygon.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
-        confirmedRect = bbox.intersection(bounds)
+        confirmedRect = bbox.intersection(selectionBounds)
     }
 
     /// 结束多边形顶点拖拽。

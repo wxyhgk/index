@@ -239,20 +239,21 @@ enum OverlayRenderer {
         drawPolygonHandles(model: model, ctx: ctx)
 
         // 窗口吸附参考线（红色细线贯穿全屏）。
-        drawGuides(model.guides, in: bounds, model: model)
-
-        drawSizeLabel(
-            for: globalRect,
-            near: local,
-            ownerName: isWindowHint ? model.hoveredWindow?.ownerName : nil,
-            isFullWindow: isFullWindow,
-            scale: model.snapshot.scale,
-            in: bounds
-        )
+        if !model.isInactive {
+            drawGuides(model.guides, in: bounds, model: model)
+            drawSizeLabel(
+                for: globalRect,
+                near: local,
+                ownerName: isWindowHint ? model.hoveredWindow?.ownerName : nil,
+                isFullWindow: isFullWindow,
+                scale: model.snapshot.scale,
+                in: bounds
+            )
+        }
 
         // 有标注工具在手时隐藏控制点，避免和画布上的操作混淆。
         // 中性态和鼠标模式都显示 —— 两种状态下拖空白处仍是调整选区。
-        if model.showsHandles && annotation.tool == nil && !selectionAIIsActive {
+        if model.showsHandles && annotation.tool == nil && !selectionAIIsActive && !model.isInactive {
             drawHandles(in: local, alpha: handleAlpha, hovered: hoveredHandle)
             drawCornerControls(
                 in: local,
@@ -264,7 +265,7 @@ enum OverlayRenderer {
             )
         }
 
-        if model.phase == .confirmed {
+        if model.phase == .confirmed && !model.isInactive {
             // 工具条半透明：鼠标不在工具条上时降低 opacity（PixPin Mouse Penetration 效果）。
             ctx.saveGState()
             ctx.setAlpha(state.toolbarOpacity)
