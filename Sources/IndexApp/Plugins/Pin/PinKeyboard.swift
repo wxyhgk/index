@@ -21,6 +21,14 @@ extension PinImageView {
                 annotation.endTextEditing()
             case KeyCode.delete:
                 annotation.deleteBackward()
+            case KeyCode.left:
+                annotation.moveCursor(false)
+            case KeyCode.right:
+                annotation.moveCursor(true)
+            case KeyCode.up:
+                annotation.moveCursorLine(false)
+            case KeyCode.down:
+                annotation.moveCursorLine(true)
             default:
                 if let inputContext = inputContext, inputContext.handleEvent(event) {
                     needsDisplay = true
@@ -108,6 +116,10 @@ extension PinImageView {
             onTogglePassthrough?()
         case KeyCode.s where cmd:
             onAction?(ActionID.save)
+        case KeyCode.rightBracket where cmd:
+            if annotation.moveLayerForward() { commitAnnotationChange() }
+        case KeyCode.leftBracket where cmd:
+            if annotation.moveLayerBackward() { commitAnnotationChange() }
         default:
             super.keyDown(with: event)
         }

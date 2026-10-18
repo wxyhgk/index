@@ -54,4 +54,14 @@ enum ActionID {
     /// 截图工具条上常驻：点一下直接进录屏 / 长截图，不再经状态栏菜单
     static let record = "record"
     static let scrollCapture = "scroll-capture"
+    /// 所有活跃钉图紧凑排列（消除重叠、居中）。
+    static let compactArrange = "compact-arrange"
+    /// 自动马赛克：Vision OCR 检测文字区域，批量添加 pixelate 图层。
+    static let autoMosaic = "auto-mosaic"
+    /// 扫码：Core Image CIDetector 检测选区内二维码，内容复制到剪贴板。
+    static let qrScan = "qr-scan"
+    /// 水印：在截图右下角叠加半透明文字后复制到剪贴板。
+    static let watermark = "watermark"
+    /// GIF 录制：框选 → 3 秒自动录制 → 转 GIF。
+    static let gifCapture = "gif-capture"
 }

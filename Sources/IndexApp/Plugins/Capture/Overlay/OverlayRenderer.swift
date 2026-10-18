@@ -17,6 +17,7 @@ struct OverlayRenderState {
     let annotation: AnnotationState
     let slots: [ToolbarSlot]
     let toolbarContext: ToolbarContext
+    let toolbarOpacity: CGFloat
     let hoveredControlID: String?
     let pressedControlID: String?
     let focusedControlID: String?
@@ -31,9 +32,83 @@ struct OverlayRenderState {
     let confirmHint: String?
     let fullWindowHint: Bool
     let magnifier: (sample: PixelSample, cursor: CGPoint)?
+    /// 控制点淡入动画进度（0 = 不可见，1 = 完全可见）。
+    let handleAlpha: CGFloat
+    /// 当前 hover 的 resize handle（hover 放大反馈）。nil = 无。
+    let hoveredHandle: SelectionModel.Handle?
+    /// 当前 hover 的圆角控制点（hover 放大反馈）。nil = 无。
+    let hoveredCorner: SelectionModel.Corner?
 }
 
 enum OverlayRenderer {
+
+    // MARK: - 多边形渲染
+
+    @MainActor
+    private static func drawPolygonVertexDots(
+        model: SelectionModel, ctx: CGContext
+    ) {
+        guard let points = model.polygon?.points, !points.isEmpty else { return }
+        let snapToFirst = model.polygon?.snapToFirst == true
+        ctx.saveGState()
+        for (i, point) in points.enumerated() {
+            let lp = toLocal(CGRect(origin: point, size: .zero), in: model).origin
+            if i == 0 && snapToFirst {
+                let dot = CGRect(x: lp.x - 6, y: lp.y - 6, width: 12, height: 12)
+                ctx.setFillColor(NSColor.systemGreen.cgColor)
+                ctx.fillEllipse(in: dot)
+                ctx.setStrokeColor(NSColor.white.cgColor)
+                ctx.setLineWidth(2)
+                ctx.strokeEllipse(in: dot)
+            } else {
+                let dot = CGRect(x: lp.x - 4, y: lp.y - 4, width: 8, height: 8)
+                ctx.setFillColor(NSColor.white.cgColor)
+                ctx.fillEllipse(in: dot)
+                ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.5).cgColor)
+                ctx.setLineWidth(1)
+                ctx.strokeEllipse(in: dot)
+            }
+        }
+        ctx.restoreGState()
+    }
+
+    @MainActor
+    private static func drawPolygonPreviewLine(
+        model: SelectionModel, ctx: CGContext
+    ) {
+        guard model.isPolygonMode,
+              let start = model.polygonPreviewStart,
+              let preview = model.polygon?.previewPoint else { return }
+        let startLocal = toLocal(CGRect(origin: start, size: .zero), in: model).origin
+        let previewLocal = toLocal(CGRect(origin: preview, size: .zero), in: model).origin
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.7).cgColor)
+        ctx.setLineWidth(1.5)
+        ctx.setLineDash(phase: 0, lengths: [4, 3])
+        ctx.move(to: startLocal)
+        ctx.addLine(to: previewLocal)
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
+    @MainActor
+    private static func drawPolygonHandles(
+        model: SelectionModel, ctx: CGContext
+    ) {
+        guard model.showsPolygonVertices, let polygon = model.confirmedPolygon else { return }
+        let adjustingIndex = model.adjustingPolygonVertex
+        ctx.saveGState()
+        for (i, point) in polygon.enumerated() {
+            let lp = toLocal(CGRect(origin: point, size: .zero), in: model).origin
+            let outerR: CGFloat = adjustingIndex == i ? 10 : 7
+            let innerR: CGFloat = 4
+            ctx.setFillColor(NSColor.white.withAlphaComponent(0.3).cgColor)
+            ctx.fillEllipse(in: CGRect(x: lp.x - outerR, y: lp.y - outerR, width: outerR * 2, height: outerR * 2))
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fillEllipse(in: CGRect(x: lp.x - innerR, y: lp.y - innerR, width: innerR * 2, height: innerR * 2))
+        }
+        ctx.restoreGState()
+    }
 
     @MainActor
     static func draw(
@@ -59,19 +134,41 @@ enum OverlayRenderer {
         let confirmHint = state.confirmHint
         let fullWindowHint = state.fullWindowHint
         let magnifier = state.magnifier
+        let handleAlpha = state.handleAlpha
+        let hoveredHandle = state.hoveredHandle
+        let hoveredCorner = state.hoveredCorner
         // 冻结画面本身由 CALayer 承载，这里**绝不重画位图** ——
         // 拖拽时每帧重采样一张 4K 位图会直接把主线程压垮。
-        // 压暗用「整屏 + 选区」的 even-odd 路径一次填充，纯平色，几乎零成本。
-        let dimPath = NSBezierPath(rect: bounds)
+        // 压暗：全屏填充 + clip 挖掉选区内部。
+        // 不用 NSBezierPath evenOdd（多子路径下 fill 行为不可靠）。
         let globalRect = model.activeRect.flatMap { $0.isEmpty ? nil : $0 }
         let local = globalRect.map { toLocal($0, in: model) }
+        let dimPolygon = model.polygon?.points ?? model.confirmedPolygon
 
-        if let local {
-            dimPath.appendRect(local)
-            dimPath.windingRule = .evenOdd
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.42).cgColor)
+        if let dimPolygon, dimPolygon.count >= 2 {
+            ctx.fill(CGRect(origin: .zero, size: bounds.size))
+            ctx.saveGState()
+            let cgPath = CGMutablePath()
+            for (i, point) in dimPolygon.enumerated() {
+                let lp = toLocal(CGRect(origin: point, size: .zero), in: model).origin
+                if i == 0 { cgPath.move(to: lp) } else { cgPath.addLine(to: lp) }
+            }
+            if !model.isPolygonMode, dimPolygon.count >= 3 { cgPath.closeSubpath() }
+            ctx.addPath(cgPath)
+            ctx.clip()
+            ctx.clear(CGRect(origin: .zero, size: bounds.size))
+            ctx.restoreGState()
+        } else if let local, !model.isPolygonMode {
+            ctx.fill(CGRect(origin: .zero, size: bounds.size))
+            ctx.saveGState()
+            ctx.addRect(local)
+            ctx.clip()
+            ctx.clear(CGRect(origin: .zero, size: bounds.size))
+            ctx.restoreGState()
+        } else {
+            ctx.fill(CGRect(origin: .zero, size: bounds.size))
         }
-        NSColor.black.withAlphaComponent(0.42).setFill()
-        dimPath.fill()
 
         guard let globalRect, let local else {
             if isPrimaryScreen && !model.isInactive {
@@ -86,7 +183,7 @@ enum OverlayRenderer {
         }
 
         // 标注画在选区内，用的是和最终导出**同一份**绘制代码，所见即所得。
-        drawAnnotations(annotation, clippedTo: local, in: bounds, ctx: ctx)
+        drawAnnotations(annotation, clippedTo: local, in: bounds, baseImage: model.snapshot.image, canvasSize: bounds.size, ctx: ctx)
 
         if let selectionAIRect {
             drawSelectionAI(in: selectionAIRect, ctx: ctx)
@@ -95,10 +192,51 @@ enum OverlayRenderer {
         let isWindowHint = model.isWindowHint
         // 悬停窗口时按住 ⌥ = 整窗捕获（不含遮挡）：紫框区分于普通的蓝框窗口选择。
         let isFullWindow = isWindowHint && fullWindowHint
+        let isDragging = model.phase == .dragging
         let frameColor: NSColor = isFullWindow ? .systemPurple : (isWindowHint ? .systemBlue : .white)
+        let lineWidth: CGFloat = isWindowHint ? 3 : 1.5
+
+        // 用户画的选区：圆角 + 外发光（亮色背景上可辨）；悬停窗口提示保持直角。
+        let frame = isWindowHint
+            ? local.insetBy(dx: -0.75, dy: -0.75)
+            : local.insetBy(dx: -0.5, dy: -0.5)
+        let frameCornerRadius: CGFloat = isWindowHint ? 0 : model.cornerRadius
+        let polygon = model.polygon?.points ?? model.confirmedPolygon
+        let framePath: CGPath
+        if let polygon {
+            let path = CGMutablePath()
+            for (i, point) in polygon.enumerated() {
+                let lp = toLocal(CGRect(origin: point, size: .zero), in: model).origin
+                if i == 0 { path.move(to: lp) } else { path.addLine(to: lp) }
+            }
+            if !model.isPolygonMode, polygon.count >= 3 { path.closeSubpath() }
+            framePath = path
+        } else {
+            framePath = frameCornerRadius > 0
+                ? CGPath(roundedRect: frame, cornerWidth: frameCornerRadius, cornerHeight: frameCornerRadius, transform: nil)
+                : CGPath(rect: frame, transform: nil)
+        }
+
+        ctx.saveGState()
+        if !isWindowHint {
+            ctx.setShadow(offset: .zero, blur: 4, color: NSColor.black.withAlphaComponent(0.45).cgColor)
+        }
+        // 拖拽中虚线（区分"正在画"和"已确认"），松手后切实线。
+        if isDragging {
+            ctx.setLineDash(phase: 0, lengths: [6, 4])
+        }
+        ctx.addPath(framePath)
         ctx.setStrokeColor(frameColor.cgColor)
-        ctx.setLineWidth(isWindowHint ? 3 : 1.5)
-        ctx.stroke(local.insetBy(dx: -0.75, dy: -0.75))
+        ctx.setLineWidth(lineWidth)
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        drawPolygonVertexDots(model: model, ctx: ctx)
+        drawPolygonPreviewLine(model: model, ctx: ctx)
+        drawPolygonHandles(model: model, ctx: ctx)
+
+        // 窗口吸附参考线（红色细线贯穿全屏）。
+        drawGuides(model.guides, in: bounds, model: model)
 
         drawSizeLabel(
             for: globalRect,
@@ -112,10 +250,14 @@ enum OverlayRenderer {
         // 有标注工具在手时隐藏控制点，避免和画布上的操作混淆。
         // 中性态和鼠标模式都显示 —— 两种状态下拖空白处仍是调整选区。
         if model.showsHandles && annotation.tool == nil && !selectionAIIsActive {
-            drawHandles(in: local)
+            drawHandles(in: local, alpha: handleAlpha, hovered: hoveredHandle)
+            drawCornerControls(in: local, radius: model.cornerRadius, alpha: handleAlpha, hovered: hoveredCorner)
         }
 
         if model.phase == .confirmed {
+            // 工具条半透明：鼠标不在工具条上时降低 opacity（PixPin Mouse Penetration 效果）。
+            ctx.saveGState()
+            ctx.setAlpha(state.toolbarOpacity)
             // 用宿主传来的 context 绘制 —— 「选字」等控件的选中态取自宿主状态，
             // 这里若自己拼一个 context 就永远画不出高亮。
             ToolbarRenderer.draw(
@@ -125,6 +267,7 @@ enum OverlayRenderer {
                 focused: focusedControlID,
                 context: toolbarContext
             )
+            ctx.restoreGState()
             // plain 模式没有工具条，用一行提示告诉用户怎么确认。
             if let confirmHint {
                 drawConfirmHint(confirmHint, near: local, in: bounds)
@@ -163,6 +306,8 @@ enum OverlayRenderer {
         _ annotation: AnnotationState,
         clippedTo selection: CGRect,
         in bounds: CGRect,
+        baseImage: CGImage? = nil,
+        canvasSize: CGSize = .zero,
         ctx: CGContext
     ) {
         let layers = annotation.displayLayers
@@ -176,11 +321,18 @@ enum OverlayRenderer {
         AnnotationRenderer.draw(
             layers,
             pixelatePreviews: annotation.pixelatePreviews,
+            baseImage: baseImage,
+            canvasSize: canvasSize,
             in: ctx
         )
         AnnotationRenderer.drawSelectionHint(
             selectedID: annotation.selectedID,
             layers: layers,
+            strokeScale: CGFloat(annotation.strokeScale),
+            in: ctx
+        )
+        AnnotationRenderer.drawAlignmentGuides(
+            annotation.alignmentGuides,
             strokeScale: CGFloat(annotation.strokeScale),
             in: ctx
         )
@@ -291,9 +443,14 @@ enum OverlayRenderer {
         )
     }
 
-    /// 8 个调整控制点。选区太小时只画四角，否则会糊成一团。
-    private static func drawHandles(in local: CGRect) {
-        let size: CGFloat = 7
+    /// 8 个调整控制点。圆点 + 外圈（比方块更精致）；选区太小时只画四角。
+    /// alpha 控制淡入进度（0 = 不可见，1 = 完全可见）；hovered 控制点放大。
+    private static func drawHandles(in local: CGRect, alpha: CGFloat, hovered: SelectionModel.Handle?) {
+        guard alpha > 0 else { return }
+        let dotSize: CGFloat = 4
+        let ringSize: CGFloat = 9
+        let hoveredDotSize: CGFloat = 5.5
+        let hoveredRingSize: CGFloat = 12
         let cornersOnly = local.width < 40 || local.height < 40
 
         let handles: [SelectionModel.Handle] = cornersOnly
@@ -302,18 +459,141 @@ enum OverlayRenderer {
 
         for handle in handles {
             let center = handle.point(in: local)
-            let box = NSRect(
-                x: center.x - size / 2,
-                y: center.y - size / 2,
-                width: size,
-                height: size
+            let isHovered = (handle == hovered)
+            let dot = isHovered ? hoveredDotSize : dotSize
+            let ring = isHovered ? hoveredRingSize : ringSize
+            // 外圈（半透明环，hover 时更亮）
+            let ringRect = CGRect(
+                x: center.x - ring / 2,
+                y: center.y - ring / 2,
+                width: ring,
+                height: ring
             )
-            let path = NSBezierPath(roundedRect: box, xRadius: 1.5, yRadius: 1.5)
-            NSColor.white.setFill()
-            path.fill()
-            NSColor.black.withAlphaComponent(0.45).setStroke()
-            path.lineWidth = DS.hairline
-            path.stroke()
+            NSColor.white.withAlphaComponent((isHovered ? 0.4 : 0.25) * alpha).setFill()
+            NSBezierPath(ovalIn: ringRect).fill()
+            // 实心圆点 + 细描边（压暗画面上清晰）
+            let dotRect = CGRect(
+                x: center.x - dot / 2,
+                y: center.y - dot / 2,
+                width: dot,
+                height: dot
+            )
+            let dotPath = NSBezierPath(ovalIn: dotRect)
+            NSColor.white.withAlphaComponent(alpha).setFill()
+            dotPath.fill()
+            NSColor.black.withAlphaComponent(0.35 * alpha).setStroke()
+            dotPath.lineWidth = 0.5
+            dotPath.stroke()
         }
+    }
+
+    /// 圆角控制点：双层同心圆（PixPin 风格：16pt 外圈 + 8pt 内层）+ 1/4 弧线。
+    /// 弧线始终显示（radius=0 时画最小 8pt 弧线提示可拖拽）。
+    private static func drawCornerControls(
+        in local: CGRect,
+        radius: CGFloat,
+        alpha: CGFloat,
+        hovered: SelectionModel.Corner?
+    ) {
+        guard alpha > 0 else { return }
+        let offset = max(radius + 8, 16)
+        let dotSize: CGFloat = 8
+        let ringSize: CGFloat = 16
+        let hoverDotSize: CGFloat = 10
+        let hoverRingSize: CGFloat = 20
+
+        for corner in SelectionModel.Corner.allCases {
+            let center: CGPoint
+            switch corner {
+            case .topLeft:     center = CGPoint(x: local.minX - offset, y: local.minY - offset)
+            case .topRight:    center = CGPoint(x: local.maxX + offset, y: local.minY - offset)
+            case .bottomLeft:  center = CGPoint(x: local.minX - offset, y: local.maxY + offset)
+            case .bottomRight: center = CGPoint(x: local.maxX + offset, y: local.maxY + offset)
+            }
+
+            let isHovered = (corner == hovered)
+            let dot = isHovered ? hoverDotSize : dotSize
+            let ring = isHovered ? hoverRingSize : ringSize
+
+            // 1/4 弧线（始终显示；radius=0 时最小 8pt 提示方向，最大 30pt 限制）
+            let arcRadius = max(min(radius, 30), 8)
+            let arcCenter: CGPoint
+            let startAngle: CGFloat
+            let endAngle: CGFloat
+            switch corner {
+            case .topLeft:
+                arcCenter = CGPoint(x: local.minX, y: local.minY)
+                startAngle = 90
+                endAngle = 180
+            case .topRight:
+                arcCenter = CGPoint(x: local.maxX, y: local.minY)
+                startAngle = 0
+                endAngle = 90
+            case .bottomLeft:
+                arcCenter = CGPoint(x: local.minX, y: local.maxY)
+                startAngle = 180
+                endAngle = 270
+            case .bottomRight:
+                arcCenter = CGPoint(x: local.maxX, y: local.maxY)
+                startAngle = 270
+                endAngle = 360
+            }
+            let arcPath = NSBezierPath()
+            arcPath.appendArc(
+                withCenter: arcCenter,
+                radius: arcRadius,
+                startAngle: startAngle,
+                endAngle: endAngle,
+                clockwise: false
+            )
+            NSColor.white.withAlphaComponent((isHovered ? 0.6 : 0.45) * alpha).setStroke()
+            arcPath.lineWidth = isHovered ? 1.5 : 1
+            arcPath.stroke()
+
+            // 外圈 ring（半透明白色，hover 时更亮）
+            let ringRect = CGRect(
+                x: center.x - ring / 2,
+                y: center.y - ring / 2,
+                width: ring,
+                height: ring
+            )
+            NSColor.white.withAlphaComponent((isHovered ? 0.4 : 0.25) * alpha).setFill()
+            NSBezierPath(ovalIn: ringRect).fill()
+
+            // 实心圆点 + 细描边
+            let dotRect = CGRect(
+                x: center.x - dot / 2,
+                y: center.y - dot / 2,
+                width: dot,
+                height: dot
+            )
+            let dotPath = NSBezierPath(ovalIn: dotRect)
+            NSColor.white.withAlphaComponent(alpha).setFill()
+            dotPath.fill()
+            NSColor.black.withAlphaComponent(0.35 * alpha).setStroke()
+            dotPath.lineWidth = 0.5
+            dotPath.stroke()
+        }
+    }
+
+    /// 窗口吸附参考线：红色细线贯穿全屏（和标注对齐线同款视觉）。
+    @MainActor
+    private static func drawGuides(_ guides: [SelectionModel.SelectionGuide], in bounds: CGRect, model: SelectionModel) {
+        guard !guides.isEmpty else { return }
+        NSColor.systemRed.withAlphaComponent(0.8).setStroke()
+        let path = NSBezierPath()
+        path.lineWidth = 1
+        for guide in guides {
+            if guide.isHorizontal {
+                let y = guide.position - model.bounds.origin.y
+                path.move(to: NSPoint(x: 0, y: y))
+                path.line(to: NSPoint(x: bounds.width, y: y))
+            } else {
+                let x = guide.position - model.bounds.origin.x
+                path.move(to: NSPoint(x: x, y: 0))
+                path.line(to: NSPoint(x: x, y: bounds.height))
+            }
+        }
+        path.stroke()
     }
 }

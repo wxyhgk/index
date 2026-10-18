@@ -333,7 +333,21 @@ final class PinImageView: NSView {
 
         if annotation.tool != nil {
             syncStrokeScale()
-            annotation.beginDraw(at: canvasPoint(point))
+            let canvas = canvasPoint(point)
+            // 文字工具下点击已有文字图层 → 进入编辑态 + 光标定位（PixPin 行为）
+            if annotation.tool == .text,
+               let id = annotation.layer(at: canvas),
+               let existing = annotation.layers.elements.first(where: { $0.id == id }),
+               existing.kind == .text {
+                annotation.editingTextID = id
+                annotation.editingTextOriginal = existing
+                annotation.selectedID = id
+                annotation.setCursorAtCanvasPoint(canvas)
+                needsDisplay = true
+                onAnnotationsChanged?()
+                return
+            }
+            annotation.beginDraw(at: canvas)
             // 序号是点击即成层的工具：不进入拖拽也不进入文字编辑态，
             // mouseUp 不会走 endDraw，所以在这里就落库。
             if !annotation.isDrawing && !annotation.isEditingText {
@@ -377,8 +391,9 @@ final class PinImageView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        let shift = event.modifierFlags.contains(.shift)
         if annotation.isDrawing {
-            if annotation.updateDraw(to: canvasPoint(point)) { needsDisplay = true }
+            if annotation.updateDraw(to: canvasPoint(point), shiftPressed: shift) { needsDisplay = true }
         } else if annotation.isMoving {
             if annotation.updateMove(to: canvasPoint(point)) { needsDisplay = true }
         } else if annotation.isResizing {
@@ -409,17 +424,16 @@ final class PinImageView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // PixPin：选中框选工具时滚轮直接改粗细（右侧调节区），否则保持缩放
+        // PixPin：拿着任何有 width 或 fontSize 轴的工具，滚轮只改粗细/字号，
+        // 到边界也不 fall through 到缩放（避免"打架"）。
         if !event.modifierFlags.contains(.command),
-           annotation.styleAxes.contains(.width),
-           (annotation.tool == .rect || annotation.tool == .ellipse) {
-            let delta = event.scrollingDeltaY
-            if delta != 0, annotation.stepWidth(by: delta > 0 ? 1 : -1) {
-                needsDisplay = true
-                onAnnotationsChanged?()
-                onToolbarInvalidated?()
-                return
-            }
+           annotation.styleAxes.contains(.width) || annotation.styleAxes.contains(.fontSize) {
+            guard event.scrollingDeltaY != 0 else { return }
+            annotation.stepWidth(by: event.scrollingDeltaY > 0 ? 1 : -1)
+            needsDisplay = true
+            onAnnotationsChanged?()
+            onToolbarInvalidated?()
+            return
         }
         if event.modifierFlags.contains(.command) {
             onOpacityStep?(event.scrollingDeltaY > 0 ? 0.05 : -0.05)
@@ -582,11 +596,18 @@ final class PinImageView: NSView {
         AnnotationRenderer.draw(
             layers,
             pixelatePreviews: annotation.pixelatePreviews,
+            baseImage: canvasImage,
+            canvasSize: CGSize(width: base.width, height: base.height),
             in: ctx
         )
         AnnotationRenderer.drawSelectionHint(
             selectedID: annotation.selectedID,
             layers: layers,
+            strokeScale: 1 / max(scale, 0.0001),
+            in: ctx
+        )
+        AnnotationRenderer.drawAlignmentGuides(
+            annotation.alignmentGuides,
             strokeScale: 1 / max(scale, 0.0001),
             in: ctx
         )

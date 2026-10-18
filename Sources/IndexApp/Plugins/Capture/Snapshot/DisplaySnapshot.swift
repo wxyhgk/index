@@ -83,6 +83,76 @@ struct DisplaySnapshot {
         return Self.detached(sub)
     }
 
+    /// 多边形裁剪：按顶点路径 clip，多边形外区域透明。
+    /// 顶点为 AppKit 全局坐标（左下原点，点），≥ 3 个。
+    /// 当前未调用（`makeCroppedImage` 走 bbox 矩形裁剪），保留供恢复多边形 alpha 裁剪用。
+    func crop(polygon: [CGPoint]) -> CGImage? {
+        guard polygon.count >= 3 else { return nil }
+        let bbox = polygon.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
+        guard bbox.width > 0, bbox.height > 0 else { return nil }
+
+        let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let pixelBBox = pixelRect(forGlobal: bbox).integral
+        let clipped = pixelBBox.intersection(bounds)
+        guard clipped.width >= 1, clipped.height >= 1,
+              let base = image.cropping(to: clipped) else { return nil }
+
+        let width = Int(clipped.width)
+        let height = Int(clipped.height)
+        guard let ctx = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        // 先清除整个 ctx（全透明），再裁剪到多边形内绘制。
+        // ctx.makeImage() 可能返回 noneSkipLast（无 alpha），
+        // 所以从 ctx.data 显式建图，指定 premultipliedLast。
+        ctx.clear(CGRect(x: 0, y: 0, width: width, height: height))
+
+        // 翻转 Y 轴：ctx.data 像素第一行是底部（左下原点），
+        // 但 CGImage 约定第一行是顶部。翻转后两者一致。
+        ctx.translateBy(x: 0, y: CGFloat(height))
+        ctx.scaleBy(x: 1, y: -1)
+
+        // 全局坐标（左下原点）→ 翻转后的 CGContext（左上原点）。
+        let path = CGMutablePath()
+        for (i, point) in polygon.enumerated() {
+            let ctxPoint = CGPoint(
+                x: (point.x - bbox.minX) * scale,
+                y: CGFloat(height) - (point.y - bbox.minY) * scale
+            )
+            if i == 0 { path.move(to: ctxPoint) } else { path.addLine(to: ctxPoint) }
+        }
+        path.closeSubpath()
+
+        ctx.addPath(path)
+        ctx.clip()
+        ctx.draw(base, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        let bytesPerRow = width * 4
+        guard let pixelPtr = ctx.data else { return nil }
+        let pixelData = Data(
+            bytes: pixelPtr.assumingMemoryBound(to: UInt8.self),
+            count: bytesPerRow * height
+        )
+        guard let provider = CGDataProvider(data: pixelData as CFData) else { return nil }
+        return CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: true,
+            intent: .defaultIntent
+        )
+    }
+
     /// `CGImage.cropping(to:)` 返回的是**引用原图后备存储**的视图，不是拷贝 ——
     /// 只要裁剪结果还活着，整张全屏位图（4K 屏约 33MB）就跟着活着。
     /// 钉图窗口和后台 OCR 都是长生命周期持有者，所以必须复制成独立位图。

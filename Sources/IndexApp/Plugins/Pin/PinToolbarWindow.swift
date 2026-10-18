@@ -219,12 +219,19 @@ final class PinToolbarView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        if let pressedControlID {
+        if let pressedID = pressedControlID {
             let point = convert(event.locationInWindow, from: nil)
-            let stillInside = slots.contains {
-                $0.control?.id == pressedControlID && $0.hitFrame.contains(point)
+            let slot = slots.first { $0.control?.id == pressedID }
+            // 滑杆类控件：拖动实时调档位。
+            if let control = slot?.control, control.supportsDrag, let context = context?() {
+                _ = control.drag(context, local: point, frame: slot!.frame)
+                needsDisplay = true
+                return
             }
-            let nextHover = stillInside ? pressedControlID : nil
+            let stillInside = slots.contains {
+                $0.control?.id == pressedID && $0.hitFrame.contains(point)
+            }
+            let nextHover = stillInside ? pressedID : nil
             if nextHover != hoveredControlID {
                 hoveredControlID = nextHover
                 needsDisplay = true
@@ -238,13 +245,16 @@ final class PinToolbarView: NSView {
     override func mouseUp(with event: NSEvent) {
         if let pressedID = pressedControlID {
             let point = convert(event.locationInWindow, from: nil)
-            let control = slots.first {
-                $0.control?.id == pressedID && $0.hitFrame.contains(point)
-            }?.control
+            let slot = slots.first { $0.control?.id == pressedID }
+            let control = slot?.control
             pressedControlID = nil
             hoveredControlID = control?.id
             if let context = context?(), let control, control.isEnabled(context) {
-                onActivate?(control)
+                if control.supportsDrag, let slot {
+                    _ = control.drag(context, local: point, frame: slot.frame)
+                } else {
+                    onActivate?(control)
+                }
             }
             needsDisplay = true
         }
@@ -252,9 +262,9 @@ final class PinToolbarView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // 工具条上滚轮改粗细（与截图覆盖层一致，右侧调节区直连滚轮）
+        // 工具条上滚轮改粗细/字号（与截图覆盖层一致，右侧调节区直连滚轮）
         if let context = context?(),
-           context.annotation.styleAxes.contains(.width) {
+           context.annotation.styleAxes.contains(.width) || context.annotation.styleAxes.contains(.fontSize) {
             if !event.momentumPhase.isEmpty {
                 if event.momentumPhase.contains(.ended) { widthScroll.reset() }
                 return

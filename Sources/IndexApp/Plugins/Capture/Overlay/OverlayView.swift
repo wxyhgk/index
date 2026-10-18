@@ -31,9 +31,16 @@ final class OverlayView: NSView {
     private let isPrimaryScreen: Bool
     private let imageLayer = CALayer()
     private let chrome = ChromeView()
+    private var isMouseOverToolbar: Bool = false
     private var toolbarToolTipTags: [NSView.ToolTipTag] = []
     private var toolbarToolTipOwners: [NSView.ToolTipTag: ToolbarToolTipOwner] = [:]
     private var toolbarToolTipSignature = ""
+    /// 控制点淡入进度（选区确认时 0→1，0.15s 3 步）。
+    private var handleAlpha: CGFloat = 1
+    /// 当前 hover 的 resize handle（用于 hover 放大反馈）。nil = 无。
+    private var hoveredHandle: SelectionModel.Handle?
+    /// 当前 hover 的圆角控制点（hover 放大反馈）。nil = 无。
+    private var hoveredCorner: SelectionModel.Corner?
 
     // MARK: - 组合持有的子状态（原散在主视图的可变状态已下沉）
 
@@ -116,6 +123,7 @@ final class OverlayView: NSView {
             annotation: annotation,
             slots: slots,
             toolbarContext: toolbarContext,
+            toolbarOpacity: isMouseOverToolbar ? 1.0 : 0.55,
             hoveredControlID: hoveredControlID,
             pressedControlID: pressedControlID,
             focusedControlID: focusedControlID,
@@ -129,7 +137,10 @@ final class OverlayView: NSView {
             isPrimaryScreen: isPrimaryScreen,
             confirmHint: mode == .plain ? "⏎ 开始录制 · 双击选区 · ⎋ 取消" : nil,
             fullWindowHint: optionHeld && allowsFullWindowCapture,
-            magnifier: magnifierPayload
+            magnifier: magnifierPayload,
+            handleAlpha: handleAlpha,
+            hoveredHandle: hoveredHandle,
+            hoveredCorner: hoveredCorner
         )
     }
 
@@ -268,7 +279,38 @@ final class OverlayView: NSView {
     // MARK: - 鼠标
 
     override func mouseMoved(with event: NSEvent) {
-        router.mouseMoved(local: localPoint(of: event), event: event, host: self)
+        if model.isPolygonMode {
+            model.updatePolygonPreview(geometry.global(fromViewLocal: localPoint(of: event)))
+            redraw()
+            return
+        }
+        let local = localPoint(of: event)
+        // 工具条 hover：鼠标在工具条区域内时完全不透明，否则半透明（PixPin Mouse Penetration 效果）。
+        let overToolbar = model.phase == .confirmed && slots.contains { $0.hitFrame.contains(local) }
+        if overToolbar != isMouseOverToolbar {
+            isMouseOverToolbar = overToolbar
+            needsDisplay = true
+        }
+        // 控制点 hover（confirmed/adjusting 阶段，无工具在手时追踪 resize handle + 圆角控制点）。
+        if model.showsHandles, annotation.tool == nil {
+            let global = geometry.global(fromViewLocal: local)
+            let hit = model.handle(at: global)
+            let resizeHit = (hit?.isMove == false) ? hit : nil
+            if resizeHit != hoveredHandle {
+                hoveredHandle = resizeHit
+                needsDisplay = true
+            }
+            let cornerHit = model.cornerControl(at: global)
+            if cornerHit != hoveredCorner {
+                hoveredCorner = cornerHit
+                needsDisplay = true
+            }
+        } else if hoveredHandle != nil || hoveredCorner != nil {
+            hoveredHandle = nil
+            hoveredCorner = nil
+            needsDisplay = true
+        }
+        router.mouseMoved(local: local, event: event, host: self)
     }
 
     /// ⌥ 按下 / 松开要立刻反映到窗口高亮上（紫框 ↔ 蓝框），所以监听 flagsChanged。
@@ -293,19 +335,54 @@ final class OverlayView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if model.isPolygonMode {
+            super.mouseDown(with: event)
+            return
+        }
+        let vertexGlobal = geometry.global(fromViewLocal: localPoint(of: event))
+        if let vertexIndex = model.polygonVertex(at: vertexGlobal) {
+            model.beginPolygonVertexAdjust(vertexIndex, at: vertexGlobal)
+            NSCursor.openHand.set()
+            return
+        }
         router.mouseDown(local: localPoint(of: event), event: event, host: self)
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if model.isPolygonMode {
+            model.updatePolygonPreview(geometry.global(fromViewLocal: localPoint(of: event)))
+            redraw()
+            return
+        }
+        if model.adjustingPolygonVertex != nil {
+            model.updatePolygonVertex(to: geometry.global(fromViewLocal: localPoint(of: event)))
+            redraw()
+            return
+        }
         router.mouseDragged(local: localPoint(of: event), event: event, host: self)
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // PixPin：工具条右侧调节区 + 滚轮改粗细。只要当前工具有 width 轴，
-        // 且滚轮发生在工具条范围内（或hover在样式控件上），就步进粗细。
-        // 不与选区缩放手势冲突：滚动量很小时不吞事件，让父视图/系统处理。
+        // 滚轮调整图层特殊参数（如放大镜倍率）：鼠标悬停在支持滚轮调整的图层上即生效。
+        if model.phase == .confirmed {
+            let local = localPoint(of: event)
+            let canvasPoint = geometry.annotationPoint(fromViewLocal: local)
+            let tolerance = 8 * annotation.strokeScale
+            for layer in annotation.displayLayers.elements.reversed() where !layer.kind.isEffect {
+                guard let descriptor = ToolRegistry.descriptor(for: layer.kind),
+                      descriptor.supportsScroll,
+                      descriptor.hitTest(layer, at: canvasPoint, tolerance: tolerance) else { continue }
+                if annotation.scrollAdjust(layer.id, deltaY: event.scrollingDeltaY) {
+                    self.redraw()
+                    return
+                }
+            }
+        }
+        // PixPin：工具条右侧调节区 + 滚轮改粗细/字号。
+        // 只要当前工具有 width 或 fontSize 轴，滚轮即步进（stepWidth 内部优先 width，
+        // 无 width 时步进 fontSize）。
         guard model.phase == .confirmed,
-              annotation.styleAxes.contains(.width)
+              annotation.styleAxes.contains(.width) || annotation.styleAxes.contains(.fontSize)
         else {
             interactionState.widthScroll.reset()
             super.scrollWheel(with: event)
@@ -321,9 +398,8 @@ final class OverlayView: NSView {
             // 悬停在任意样式控件上（如刚从工具条移开但仍有hoveredControlID）
             if let hovered = hoveredControlID,
                styleSlots.contains(where: { $0.control?.id == hovered }) { return true }
-            // PixPin 也支持在画布上直接滚轮改粗细：当已选框选工具时，滚轮即改粗细
-            if annotation.tool == .rect || annotation.tool == .ellipse { return true }
-            return false
+            // PixPin：拿着任何有 width 轴的工具，在画布上滚轮即改粗细
+            return true
         }()
         guard shouldHandle else {
             interactionState.widthScroll.reset()
@@ -344,6 +420,24 @@ final class OverlayView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if model.isPolygonMode {
+            if model.polygon?.snapToFirst == true {
+                if model.confirmPolygon() {
+                    enterConfirmedState()
+                }
+            } else {
+                model.addPolygonPoint(geometry.global(fromViewLocal: localPoint(of: event)))
+            }
+            redraw()
+            super.mouseUp(with: event)
+            return
+        }
+        if model.adjustingPolygonVertex != nil {
+            model.endPolygonVertexAdjust()
+            NSCursor.arrow.set()
+            redraw()
+            return
+        }
         router.mouseUp(local: localPoint(of: event), event: event, host: self)
     }
 
@@ -351,11 +445,97 @@ final class OverlayView: NSView {
     /// 清悬停、光标回箭头。任何进入 confirmed 的路径都走这里，
     /// 新增副作用只加这一处。
     func enterConfirmedState() {
+        enterConfirmedState(saveToHistory: true)
+    }
+
+    func enterConfirmedState(saveToHistory: Bool) {
+        if saveToHistory {
+            saveSelectionToHistory()
+        }
         annotation.pointerEngaged = false
         syncLiveTextOverlay()
         prepareLiveTextAnalysis()
         hoveredControlID = nil
         NSCursor.arrow.set()
+        animateHandlesIn()
+    }
+
+    // MARK: 选区历史（R / Shift+R 复用）
+
+    private static let historyKey = "index.captureRectHistory"
+    private static let maxHistoryCount = 10
+    private var historyIndex = 0
+
+    private func saveSelectionToHistory() {
+        guard let rect = model.confirmedRect else { return }
+        let entry: [String: Double] = [
+            "x": rect.origin.x, "y": rect.origin.y,
+            "w": rect.size.width, "h": rect.size.height,
+            "display": Double(model.snapshot.display.id),
+            "radius": Double(model.cornerRadius)
+        ]
+        var history = Self.loadHistory()
+        if history.first != entry {
+            history.insert(entry, at: 0)
+        }
+        if history.count > Self.maxHistoryCount {
+            history = Array(history.prefix(Self.maxHistoryCount))
+        }
+        UserDefaults.standard.set(history, forKey: Self.historyKey)
+        historyIndex = 0
+    }
+
+    private static func loadHistory() -> [[String: Double]] {
+        (UserDefaults.standard.array(forKey: historyKey) as? [[String: Double]]) ?? []
+    }
+
+    /// R 键（重置到最近）/ Shift+R（往更早翻页）：恢复历史选区。
+    func handleHistoryKey(shift: Bool) -> Bool {
+        guard model.phase == .idle else { return false }
+        let targetIndex = shift ? historyIndex + 1 : 0
+        guard targetIndex < Self.loadHistory().count else { return false }
+        guard restoreSelectionAt(targetIndex) else { return false }
+        historyIndex = targetIndex
+        return true
+    }
+
+    private func restoreSelectionAt(_ index: Int) -> Bool {
+        guard model.phase == .idle, index >= 0 else { return false }
+        let history = Self.loadHistory()
+        guard index < history.count else { return false }
+        let entry = history[index]
+        let displayID = model.snapshot.display.id
+        guard Int(entry["display"] ?? 0) == displayID,
+              let x = entry["x"], let y = entry["y"],
+              let w = entry["w"], let h = entry["h"],
+              w > 0, h > 0
+        else { return false }
+        let radius = CGFloat(entry["radius"] ?? 0)
+        guard model.restoreSelection(
+            CGRect(x: x, y: y, width: w, height: h),
+            cornerRadius: radius
+        ) else { return false }
+        enterConfirmedState(saveToHistory: false)
+        redraw()
+        return true
+    }
+
+    /// 控制点淡入：3 步 × 50ms（0→0.4→0.7→1.0），视觉上接近 0.15s 渐变。
+    private func animateHandlesIn() {
+        handleAlpha = 0
+        redraw()
+        let steps: [(delay: TimeInterval, alpha: CGFloat)] = [
+            (0.05, 0.4),
+            (0.10, 0.7),
+            (0.15, 1.0)
+        ]
+        for (delay, alpha) in steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                self.handleAlpha = alpha
+                self.redraw()
+            }
+        }
     }
 
     /// 马赛克要从冻结画面取原始像素：标注空间是显示器局部左上原点，先换回 AppKit 全局。
@@ -422,6 +602,17 @@ final class OverlayView: NSView {
     }
 
     func emit(_ actionID: String) {
+        // "x" 关闭 = 取消整次截图（不保存），和 ESC 取消一致。
+        if actionID == ActionID.close {
+            annotation.endTextEditing()
+            onFinish?(nil)
+            return
+        }
+        // 自动马赛克：不结束截图，异步 OCR 后批量加 pixelate 图层。
+        if actionID == ActionID.autoMosaic {
+            performAutoMosaic()
+            return
+        }
         guard
             model.phase == .confirmed,
             let region = model.confirmedRect,
@@ -444,6 +635,35 @@ final class OverlayView: NSView {
             layers: layers,
             windowCaptureRequest: nil
         ))
+    }
+
+    /// 自动马赛克：Vision API 检测选区内文字区域，批量添加 pixelate 图层。
+    func performAutoMosaic() {
+        guard model.phase == .confirmed, let region = model.confirmedRect else { return }
+        guard let image = model.makeCroppedImage() else { return }
+        let scale = model.snapshot.scale
+        let displayFrame = model.snapshot.frame
+        let offsetX = region.minX - displayFrame.minX
+        let offsetY = displayFrame.maxY - region.maxY
+        let startRegion = region
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let lines = await VisionTextRecognition().recognize(in: image)
+            guard self.model.confirmedRect == startRegion, !lines.isEmpty else { return }
+            let rects = lines.map { line in
+                CGRect(
+                    x: offsetX + line.rect.minX / scale,
+                    y: offsetY + line.rect.minY / scale,
+                    width: line.rect.width / scale,
+                    height: line.rect.height / scale
+                )
+            }
+            self.annotation.addAutoMosaic(in: rects, pixelSource: { [weak self] rect in
+                self?.frozenPixels(rect)
+            })
+            self.redraw()
+        }
     }
 
     /// ⌥+单击的整窗捕获出口。`image` 放冻结画面上窗口可见部分的裁剪 ——

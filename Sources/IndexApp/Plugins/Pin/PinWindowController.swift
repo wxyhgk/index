@@ -67,6 +67,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         )
         // 钉图是浮动面板，不算「正经窗口」，不该让 App 跳出 Dock 图标。
         WindowRegistry.shared.present(controller, dockIcon: false, retain: true)
+        PinWindowRegistry.shared.register(controller)
     }
 
     private init(
@@ -434,6 +435,7 @@ final class PinWindowController: NSWindowController, CaptureActionHost, PinPasst
         saveRevisionIfNeeded()
         imageView?.teardownLiveText()
         PinPassthroughRegistry.shared.unregister(self)
+        PinWindowRegistry.shared.unregister(self)
         toolbarPanel.toolbarView.clearToolTips()
         window?.removeChildWindow(toolbarPanel)
         toolbarPanel.orderOut(nil)

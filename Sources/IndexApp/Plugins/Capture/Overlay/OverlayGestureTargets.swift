@@ -139,6 +139,13 @@ struct OverlayToolbarTarget: OverlayGestureTarget {
 
     func mouseDragged(local: CGPoint, event: NSEvent, host: OverlayGestureHost) {
         guard let pressedID = host.interactionState.pressedControlID else { return }
+        let slot = host.slots.first { $0.control?.id == pressedID }
+        // 滑杆类控件：拖动实时调档位，消费事件。
+        if let control = slot?.control, control.supportsDrag {
+            _ = control.drag(host.toolbarContext, local: local, frame: slot!.frame)
+            host.redraw()
+            return
+        }
         let stillInside = host.slots.contains {
             $0.control?.id == pressedID && $0.hitFrame.contains(local)
         }
@@ -151,13 +158,17 @@ struct OverlayToolbarTarget: OverlayGestureTarget {
 
     func mouseUp(local: CGPoint, event: NSEvent, host: OverlayGestureHost) {
         guard let pressedID = host.interactionState.pressedControlID else { return }
-        let control = host.slots.first {
-            $0.control?.id == pressedID && $0.hitFrame.contains(local)
-        }?.control
+        let slot = host.slots.first { $0.control?.id == pressedID }
+        let control = slot?.control
         host.interactionState.pressedControlID = nil
         host.interactionState.hoveredControlID = control?.id
         if let control, control.isEnabled(host.toolbarContext) {
-            control.activate(host.toolbarContext)
+            // 滑杆类控件：按位置跳档（拖动已实时调完，这里是点击轨道）。
+            if control.supportsDrag, let slot {
+                _ = control.drag(host.toolbarContext, local: local, frame: slot.frame)
+            } else {
+                control.activate(host.toolbarContext)
+            }
             host.syncLiveTextOverlay()
         }
         host.redraw()
@@ -285,7 +296,7 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
             if let selection, selection.contains(global) {
                 let canvas = host.geometry.annotationPoint(fromViewLocal: local)
                 // PixPin 行为：先检测选中图层的控制点（resize），
-                // 再检测图层命中（move），最后才画新标注。
+                // 再检测图层命中，最后才画新标注。
                 if let handle = host.annotation.resizeHandle(at: canvas) {
                     host.annotation.endTextEditing()
                     host.annotation.beginResize(handle: handle, at: canvas)
@@ -294,6 +305,31 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
                     return true
                 }
                 if let id = host.annotation.layer(at: canvas) {
+                    // 文字工具下点击已有文字图层 → 进入编辑态（PixPin 行为）
+                    if host.annotation.tool == .text,
+                       let existing = host.annotation.layers.elements.first(where: { $0.id == id }),
+                       existing.kind == .text {
+                        host.annotation.editingTextID = id
+                        host.annotation.editingTextOriginal = existing
+                        host.annotation.selectedID = id
+                        // 点击定位光标到最近的字符位置
+                        host.annotation.setCursorAtCanvasPoint(canvas)
+                        host.becameActive()
+                        host.redraw()
+                        return true
+                    }
+                    // 序号工具下点击已有序号 → 进入编辑态改编号
+                    if host.annotation.tool == .counter,
+                       let existing = host.annotation.layers.elements.first(where: { $0.id == id }),
+                       existing.kind == .counter {
+                        host.annotation.editingTextID = id
+                        host.annotation.editingTextOriginal = existing
+                        host.annotation.selectedID = id
+                        host.annotation.editingTextCursor = existing.text.count
+                        host.becameActive()
+                        host.redraw()
+                        return true
+                    }
                     host.annotation.endTextEditing()
                     host.annotation.beginMove(id: id, at: canvas)
                     host.becameActive()
@@ -338,8 +374,9 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
 
     func mouseDragged(local: CGPoint, event: NSEvent, host: OverlayGestureHost) {
         let canvas = host.geometry.annotationPoint(fromViewLocal: local)
+        let shift = event.modifierFlags.contains(.shift)
         if host.annotation.isDrawing {
-            host.redrawIfNeeded(host.annotation.updateDraw(to: canvas))
+            host.redrawIfNeeded(host.annotation.updateDraw(to: canvas, shiftPressed: shift))
         } else if host.annotation.isMoving {
             host.redrawIfNeeded(host.annotation.updateMove(to: canvas))
         } else if host.annotation.isResizing {
@@ -404,6 +441,13 @@ struct OverlaySelectionTarget: OverlayGestureTarget {
     func mouseDown(local: CGPoint, event: NSEvent, host: OverlayGestureHost) -> Bool {
         host.annotation.endTextEditing()
         let global = host.geometry.global(fromViewLocal: local)
+        // 圆角控制点优先（在角外侧，不和 resize handle 重叠，但先检测更安全）
+        if let corner = host.model.cornerControl(at: global) {
+            host.model.beginCornerAdjust(corner, at: global)
+            host.becameActive()
+            host.redraw()
+            return true
+        }
         // 点在已有选区的控制点或内部 → 调整，而不是重画
         if let handle = host.model.handle(at: global) {
             host.model.beginAdjust(handle: handle, at: global)
@@ -418,6 +462,12 @@ struct OverlaySelectionTarget: OverlayGestureTarget {
 
     func mouseDragged(local: CGPoint, event: NSEvent, host: OverlayGestureHost) {
         let global = host.geometry.global(fromViewLocal: local)
+        // 圆角控制点拖动
+        if host.model.adjustingCorner != nil {
+            host.model.updateCornerAdjust(to: global)
+            host.redraw()
+            return
+        }
         switch host.model.phase {
         case .adjusting:
             let oldRect = host.model.confirmedRect
@@ -430,12 +480,18 @@ struct OverlaySelectionTarget: OverlayGestureTarget {
                 host.annotation.translateAll(by: CGPoint(x: dx, y: -dy))
             }
         default:
-            host.model.updateDrag(to: global)
+            host.model.updateDrag(to: global, shiftPressed: event.modifierFlags.contains(.shift))
         }
         host.redraw()
     }
 
     func mouseUp(local: CGPoint, event: NSEvent, host: OverlayGestureHost) {
+        // 圆角控制点拖拽结束
+        if host.model.adjustingCorner != nil {
+            host.model.endCornerAdjust()
+            host.redraw()
+            return
+        }
         switch host.model.phase {
         case .adjusting:
             host.model.endAdjust()
@@ -460,6 +516,10 @@ struct OverlaySelectionTarget: OverlayGestureTarget {
     func hover(local: CGPoint, host: OverlayGestureHost) {}
 
     func cursor(local: CGPoint, host: OverlayGestureHost) -> OverlayCursorDecision? {
+        // 圆角控制点：普通箭头光标
+        if host.model.cornerControl(at: host.geometry.global(fromViewLocal: local)) != nil {
+            return .set(.arrow)
+        }
         let handle = host.model.handle(at: host.geometry.global(fromViewLocal: local))
         return .set(handle?.cursor ?? .crosshair)
     }

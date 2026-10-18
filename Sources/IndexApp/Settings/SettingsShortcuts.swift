@@ -63,6 +63,14 @@ struct ShortcutSettings: View {
                     keyRow("右键", "退出")
                 }
 
+                // 选区阶段才生效的裸键。P / R 在标注阶段会切换到像素化 / 矩形工具，
+                // 两套规则靠 phase 分开，所以必须单独列出来，不能混进上面的工具清单。
+                MiniCard("选区", icon: "rectangle.dashed") {
+                    keyRow("R / ⇧R", "复用上次区域")
+                    keyRow("P", "多边形选区")
+                    keyRow("⏎", "闭合多边形")
+                }
+
                 MiniCard("钉图", icon: "pin") {
                     keyRow("⌘T", "穿透")
                     keyRow("滚轮", "缩放")

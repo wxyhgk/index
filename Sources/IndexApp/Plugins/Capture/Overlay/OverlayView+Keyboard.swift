@@ -25,6 +25,11 @@ extension OverlayView {
         // 编辑模式只占一级：第一次一次性收起画笔/指针/文字与图层选择，保留截图；
         // 第二次取消整次捕获。没有进入编辑模式时仍然一次 Esc 退出。
         if event.keyCode == KeyCode.escape {
+            if model.isPolygonMode {
+                model.cancelPolygon()
+                redraw()
+                return
+            }
             cancelFromEscape()
             return
         }
@@ -83,6 +88,35 @@ extension OverlayView {
             return
         }
 
+        // 选区阶段按 R / Shift+R 复用历史区域（必须在标注工具快捷键之前，否则被矩形工具拦截）。
+        if model.phase == .idle,
+           event.keyCode == KeyCode.r,
+           event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+           handleHistoryKey(shift: event.modifierFlags.contains(.shift)) {
+            return
+        }
+
+        // 多边形选区：P 进入，按住→拖→松开确认一个点，双击/⏎ 闭合。
+        //
+        // P 在 confirmed 阶段仍是像素化工具 —— 两条规则按 phase 分开，和上面
+        // R（idle = 复用上次区域 / confirmed = 矩形工具）同一套约定。设置页
+        // 「选区」卡片把这两个键单列出来，避免和「标注工具」里的同名键混淆。
+        if model.phase == .idle,
+           event.keyCode == KeyCode.p,
+           event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            model.enterPolygonMode()
+            redraw()
+            return
+        }
+        if model.isPolygonMode,
+           event.keyCode == KeyCode.returnKey || event.keyCode == KeyCode.keypadEnter {
+            if model.confirmPolygon() {
+                enterConfirmedState()
+                redraw()
+            }
+            return
+        }
+
         if let tool = AnnotationTool.shortcut(forKeyCode: event.keyCode), !cmd {
             selectTool(tool)
             return
@@ -107,6 +141,10 @@ extension OverlayView {
             copyPickedColor()
         case KeyCode.s where cmd:
             emit(ActionID.save)
+        case KeyCode.rightBracket where cmd:
+            redrawIfNeeded(annotation.moveLayerForward())
+        case KeyCode.leftBracket where cmd:
+            redrawIfNeeded(annotation.moveLayerBackward())
         case let code where KeyCode.arrows.contains(code):
             nudge(keyCode: event.keyCode, modifiers: event.modifierFlags)
         default:
@@ -129,6 +167,14 @@ extension OverlayView {
             }
         case KeyCode.delete:
             annotation.deleteBackward()
+        case KeyCode.left:
+            annotation.moveCursor(false)
+        case KeyCode.right:
+            annotation.moveCursor(true)
+        case KeyCode.up:
+            annotation.moveCursorLine(false)
+        case KeyCode.down:
+            annotation.moveCursorLine(true)
         default:
             // 有输入法上下文时先让其解释按键（会回调 setMarkedText/insertText）
             if let inputContext = inputContext, inputContext.handleEvent(event) {
