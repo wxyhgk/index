@@ -316,11 +316,7 @@ final class OverlayView: NSView {
                 obstacles: self.slots.map(\.frame)
             )
             guard rect.width > 0, rect.height > 0 else { return }
-            self.framePreview = OverlayFramePreview(
-                image: image,
-                rect: rect,
-                styleName: self.annotation.frameStyle?.displayName ?? FrameSpec.Style.macos.displayName
-            )
+            self.framePreview = OverlayFramePreview(image: image, rect: rect)
             self.chrome.needsDisplay = true
         }
     }

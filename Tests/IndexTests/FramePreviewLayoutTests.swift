@@ -39,6 +39,32 @@ final class FramePreviewLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(panel.maxY, bounds.maxY - FramePreviewLayout.margin + 0.001)
     }
 
+    func testPanelPrefersRightAndCentersVertically() {
+        let bounds = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let selection = CGRect(x: 100, y: 100, width: 200, height: 150)
+        let panel = FramePreviewLayout.panelRect(
+            imageSize: CGSize(width: 400, height: 300),
+            bounds: bounds,
+            selection: selection,
+            obstacles: []
+        )
+        XCTAssertGreaterThan(panel.minX, selection.maxX)
+        XCTAssertEqual(panel.midY, selection.midY, accuracy: 0.001)
+    }
+
+    func testPanelFlipsLeftWhenRightHasNoRoom() {
+        let bounds = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let selection = CGRect(x: 700, y: 100, width: 250, height: 150)
+        let panel = FramePreviewLayout.panelRect(
+            imageSize: CGSize(width: 400, height: 300),
+            bounds: bounds,
+            selection: selection,
+            obstacles: []
+        )
+        XCTAssertLessThan(panel.maxX, selection.minX)
+        XCTAssertEqual(panel.midY, selection.midY, accuracy: 0.001)
+    }
+
     func testImageRectKeepsAspectRatio() {
         let panel = CGRect(x: 0, y: 0, width: 300, height: 200)
         let image = FramePreviewLayout.imageRect(

@@ -1,15 +1,16 @@
 import CoreGraphics
 
 /// 带壳预览卡片的布局。纯几何，方便测试，不碰 AppKit 视图。
+///
+/// 位置策略固定：优先贴选区右侧并垂直居中；右侧放不下才翻到左侧。
+/// 不再在上/下/角之间跳。
 enum FramePreviewLayout {
-    static let headerHeight: CGFloat = 26
-    static let padding: CGFloat = 8
     static let maxPanelWidth: CGFloat = 300
-    static let maxPanelHeight: CGFloat = 280
+    static let maxPanelHeight: CGFloat = 260
     static let gap: CGFloat = 14
     static let margin: CGFloat = 12
 
-    /// 在选区四周找一个不与选区、工具条重叠的位置；都放不下就退回右上角并夹紧。
+    /// 只算「右侧 / 左侧」两个候选；都放不下时退回屏幕右上角并夹紧。
     static func panelRect(
         imageSize: CGSize,
         bounds: CGRect,
@@ -22,38 +23,41 @@ enum FramePreviewLayout {
 
         let aspect = imageSize.width / imageSize.height
         var panelWidth = min(maxPanelWidth, max(140, bounds.width * 0.28))
-        var panelHeight = (panelWidth - 2 * padding) / aspect + 2 * padding + headerHeight
+        var panelHeight = panelWidth / aspect
         if panelHeight > maxPanelHeight {
-            panelHeight = min(maxPanelHeight, max(100, bounds.height * 0.36))
-            panelWidth = (panelHeight - 2 * padding - headerHeight) * aspect + 2 * padding
+            panelHeight = min(maxPanelHeight, max(90, bounds.height * 0.36))
+            panelWidth = panelHeight * aspect
         }
-        panelWidth = min(max(panelWidth, 120), max(120, bounds.width - 2 * margin))
-        panelHeight = min(max(panelHeight, 90), max(90, bounds.height - 2 * margin))
+        panelWidth = min(max(panelWidth, 100), max(100, bounds.width - 2 * margin))
+        panelHeight = min(max(panelHeight, 70), max(70, bounds.height - 2 * margin))
 
-        let candidates = [
-            CGRect(x: selection.maxX + gap, y: selection.maxY - panelHeight,
-                   width: panelWidth, height: panelHeight),
-            CGRect(x: selection.maxX + gap, y: selection.minY,
-                   width: panelWidth, height: panelHeight),
-            CGRect(x: selection.minX - gap - panelWidth, y: selection.maxY - panelHeight,
-                   width: panelWidth, height: panelHeight),
-            CGRect(x: selection.minX - gap - panelWidth, y: selection.minY,
-                   width: panelWidth, height: panelHeight),
-            CGRect(x: selection.midX - panelWidth / 2, y: selection.minY - gap - panelHeight,
-                   width: panelWidth, height: panelHeight),
-            CGRect(x: selection.midX - panelWidth / 2, y: selection.maxY + gap,
-                   width: panelWidth, height: panelHeight)
-        ]
+        let y = selection.midY - panelHeight / 2
+        let right = CGRect(
+            x: selection.maxX + gap,
+            y: y,
+            width: panelWidth,
+            height: panelHeight
+        )
+        let left = CGRect(
+            x: selection.minX - gap - panelWidth,
+            y: y,
+            width: panelWidth,
+            height: panelHeight
+        )
 
-        let selectionZone = selection.insetBy(dx: -4, dy: -4)
+        let rightFits = right.maxX <= bounds.maxX - margin
+        let leftFits = left.minX >= bounds.minX + margin
         let obstacleZones = obstacles.map { $0.insetBy(dx: -6, dy: -6) }
 
-        for candidate in candidates {
-            let clamped = clamp(candidate, in: bounds)
-            if !clamped.intersects(selectionZone),
-               obstacleZones.allSatisfy({ !$0.intersects(clamped) }) {
+        // 右侧优先；若右侧被工具条挡住，而左侧可用，则翻左。
+        if rightFits {
+            let clamped = clamp(right, in: bounds)
+            if obstacleZones.allSatisfy({ !$0.intersects(clamped) }) || !leftFits {
                 return clamped
             }
+        }
+        if leftFits {
+            return clamp(left, in: bounds)
         }
 
         return clamp(
@@ -67,26 +71,22 @@ enum FramePreviewLayout {
         )
     }
 
-    /// 标题栏下方的图片区，按 aspect-fit 居中。
+    /// 卡片没有标题栏，缩略图直接铺满；保留这个函数是为了统一处理
+    /// 极端长宽比（面板被上限裁剪时仍按 aspect-fit 居中）。
     static func imageRect(in panel: CGRect, imageSize: CGSize) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0 else { return .zero }
-        let area = CGRect(
-            x: panel.minX + padding,
-            y: panel.minY + padding,
-            width: panel.width - 2 * padding,
-            height: panel.height - 2 * padding - headerHeight
-        )
-        guard area.width > 0, area.height > 0 else { return .zero }
+        guard imageSize.width > 0, imageSize.height > 0,
+              panel.width > 0, panel.height > 0
+        else { return .zero }
         let aspect = imageSize.width / imageSize.height
-        var width = area.width
+        var width = panel.width
         var height = width / aspect
-        if height > area.height {
-            height = area.height
+        if height > panel.height {
+            height = panel.height
             width = height * aspect
         }
         return CGRect(
-            x: area.midX - width / 2,
-            y: area.midY - height / 2,
+            x: panel.midX - width / 2,
+            y: panel.midY - height / 2,
             width: width,
             height: height
         )

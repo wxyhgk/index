@@ -16,7 +16,6 @@ import AppKit
 struct OverlayFramePreview {
     let image: CGImage
     let rect: CGRect
-    let styleName: String
 }
 
 struct OverlayRenderState {
@@ -337,60 +336,30 @@ enum OverlayRenderer {
             transform: nil
         )
 
+        // 极简卡片：没有标题栏和底板，缩略图本身 + 圆角 + 阴影。
         ctx.saveGState()
         ctx.setShadow(
-            offset: CGSize(width: 0, height: -4),
-            blur: 18,
-            color: NSColor.black.withAlphaComponent(0.45).cgColor
+            offset: CGSize(width: 0, height: -5),
+            blur: 20,
+            color: NSColor.black.withAlphaComponent(0.5).cgColor
         )
-        ctx.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 0.9).cgColor)
+        ctx.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 1).cgColor)
         ctx.addPath(path)
         ctx.fillPath()
         ctx.restoreGState()
 
         ctx.saveGState()
         ctx.addPath(path)
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.18).cgColor)
-        ctx.setLineWidth(1)
-        ctx.strokePath()
-        ctx.restoreGState()
-
-        // 标题：左下原点，用 CoreText 直接排，避免额外翻转。
-        let title = "带壳预览 · \(preview.styleName)"
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.white.withAlphaComponent(0.85)
-        ]
-        let line = CTLineCreateWithAttributedString(
-            NSAttributedString(string: title, attributes: attrs)
-        )
-        var ascent: CGFloat = 0
-        var descent: CGFloat = 0
-        CTLineGetTypographicBounds(line, &ascent, &descent, nil)
-        ctx.saveGState()
-        ctx.textMatrix = .identity
-        ctx.textPosition = CGPoint(
-            x: panel.minX + 10,
-            y: panel.maxY - (FramePreviewLayout.headerHeight - (ascent + descent)) / 2 - descent
-        )
-        CTLineDraw(line, ctx)
-        ctx.restoreGState()
-
-        let imageRect = FramePreviewLayout.imageRect(
-            in: panel,
-            imageSize: CGSize(width: preview.image.width, height: preview.image.height)
-        )
-        guard imageRect.width > 0, imageRect.height > 0 else { return }
-        ctx.saveGState()
-        ctx.addPath(CGPath(
-            roundedRect: imageRect,
-            cornerWidth: 6,
-            cornerHeight: 6,
-            transform: nil
-        ))
         ctx.clip()
         ctx.interpolationQuality = .high
-        ctx.draw(preview.image, in: imageRect)
+        ctx.draw(preview.image, in: panel)
+        ctx.restoreGState()
+
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.14).cgColor)
+        ctx.setLineWidth(1)
+        ctx.strokePath()
         ctx.restoreGState()
     }
 
