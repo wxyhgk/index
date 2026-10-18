@@ -4,6 +4,8 @@ build/
 Package.resolved
 .DS_Store
 .claude/
+# 本地 Agent 工作区（计划草稿、一次性脚本），不属于仓库内容
+.qwen/
 __pycache__/
 *.pyc
 

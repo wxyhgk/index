@@ -46,8 +46,13 @@ test_status=$?
 #
 # 每个 suite 各打一行 "Executed N tests"，总数是其中最大的那个
 # （取 tail -1 会拿到最后一个 suite 的数，曾经把 76 报成 17）。
+#
+# 有跳过用例时聚合行形如 "Executed 596 tests, with 6 tests skipped and 0 failures"，
+# 中间多一段 —— 旧正则只认无跳过的那一种，于是把最后一个「没跳过」的 suite（29）
+# 当成总数报了出来。跳过的 6 个是 WebDAV 真实服务器集成测试，离线时整组跳过。
 summary=$(printf "%s" "$test_output" \
-    | grep -oE "Executed [0-9]+ tests, with [0-9]+ failures" | sort -t' ' -k2 -rn | head -1)
+    | grep -oE "Executed [0-9]+ tests, with( [0-9]+ tests skipped and)? [0-9]+ failures" \
+    | sort -t' ' -k2 -rn | head -1)
 if [ "$test_status" -eq 0 ]; then
     ok "${summary:-测试通过}"
 else

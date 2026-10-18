@@ -4,6 +4,7 @@
 - `design/mockups/`：界面设计过程中的 4K 方案图，不作为当前产品状态的依据。
 - `errors/`：可复盘的系统、签名和捕获链路故障。
 - `images/`：README、发布页和宣传材料使用的当前产品截图。
+- `research/`：第三方产品的逆向与对标分析（如 PixPin），只作交互参考，不代表 Index 的现行行为。
 - `ci.md`：CI 与 Release 构建说明。
 - `input-method.md`：输入即检索插件、兼容现有中文输入法的默认路径，以及可选独立输入源的边界和构建步骤。
 - `gallery-chrome-spec.md`：图库界面的结构与视觉约束。

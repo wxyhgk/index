@@ -50,6 +50,7 @@ docs/
 ├── design/mockups/   4K 界面方案原稿，不直接用于 README
 ├── errors/           可复盘的捕获、签名与系统服务事故
 ├── images/           README 和发布页实际使用的产品截图
+├── research/         第三方产品逆向与对标分析（只作参考）
 ├── app-store.md      Mac App Store 账号、签名、打包与上传流程
 ├── input-method.md   “输入即检索”输入法原型的边界、构建与启用步骤
 ├── ci.md             CI 与 Release 说明
