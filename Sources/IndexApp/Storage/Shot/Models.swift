@@ -58,6 +58,12 @@ struct Layer: Codable, Identifiable, Equatable {
         /// 测量：拖出矩形/线段，旁边标注图像像素尺寸。
         /// 标签文字在生成时按画布→像素倍率烤进 `text`（见 `AnnotationState`）。
         case dimension
+        /// 自由画笔：跟手画路径，Catmull-Rom 平滑。
+        case pencil
+        /// 橡皮擦：拖动擦除路径经过的标注层。不产生实际图层。
+        case eraser
+        /// 放大镜：框选区域放大显示。
+        case magnifier
         /// 美化：把成品垫在渐变/纯色背景上，内容圆角 + 投影 + 四周留白。
         /// 复用现有字段避免动 Codable：`lineWidth` = 留白 padding（像素）、
         /// `fontSize` = 内容圆角半径、`text` = 背景预设名、`color` = solid 预设的颜色。
@@ -112,6 +118,9 @@ struct Layer: Codable, Identifiable, Equatable {
             case .counter: return "序号"
             case .spotlight: return "聚光灯"
             case .dimension: return "测量"
+            case .pencil: return "画笔"
+            case .eraser: return "橡皮擦"
+            case .magnifier: return "放大镜"
             case .backdrop: return "美化"
             case .watermark: return "水印"
             case .frame: return "外壳"
@@ -132,6 +141,9 @@ struct Layer: Codable, Identifiable, Equatable {
             case .counter: return "1.circle"
             case .spotlight: return "flashlight.on.fill"
             case .dimension: return "ruler"
+            case .pencil: return "pencil.tip"
+            case .eraser: return "eraser"
+            case .magnifier: return "plus.magnifyingglass"
             case .backdrop: return "sparkles.rectangle.stack"
             case .watermark: return "signature"
             case .frame: return "macwindow"
@@ -164,6 +176,26 @@ struct Layer: Codable, Identifiable, Equatable {
     var fillMode: Int?
     /// 测量单位（0=px, 1=pt）。nil = 旧图层，px。
     var unit: Int?
+    /// 文字粗体（0=正常, 1=粗体）。nil = 旧图层，正常。
+    var bold: Int?
+    /// 文字斜体（0=正常, 1=斜体）。nil = 旧图层，正常。
+    var italic: Int?
+    /// 文字背景（0=无, 1=半透明黑底, 2=半透明白底）。nil = 旧图层，无背景。
+    var textBg: Int?
+    /// 箭头双头（0=单头, 1=双头）。nil = 旧图层，单头。
+    var arrowDouble: Int?
+    /// 马赛克模式（0=马赛克, 1=模糊）。nil = 旧图层，马赛克。
+    var pixelateMode: Int?
+    /// 矩形圆角（画布单位）。nil = 旧图层，直角。
+    var cornerRadius: Double?
+    /// 文字对齐（0=左, 1=中, 2=右）。nil = 旧图层，左对齐。
+    var textAlign: Int?
+    /// 自由画笔路径点（画布空间）。nil = 非画笔图层。
+    var strokePoints: [CGPoint]?
+    /// 放大镜倍率（默认 2.0）。nil = 非放大镜图层。
+    var magnifierZoom: Double?
+    /// 放大镜显示区域左上角（标注坐标系）。nil = 自动计算（source 右侧 20pt）。
+    var magnifierDisplayOrigin: CGPoint?
 }
 
 // MARK: - 截图记录（原图不可变）

@@ -52,17 +52,19 @@ final class OverlayInteractionRouterTests: XCTestCase {
         confirmSelection(on: view)
         // 先画一个矩形图层。选区在视图局部 (10,10)-(100,80)（左下原点），
         // 对应画布空间（左上原点）y = 300-(10..80) = 220..290；
-        // 图层画在画布 (30,250)-(60,270)，换算回视图局部 y 30..50，在选区内。
+        // 图层画在画布 (30,240)-(70,270)，换算回视图局部 y 30..60，在选区内。
         view.annotation.tool = .rect
-        view.annotation.beginDraw(at: CGPoint(x: 30, y: 250))
-        view.annotation.updateDraw(to: CGPoint(x: 60, y: 270))
+        view.annotation.beginDraw(at: CGPoint(x: 30, y: 240))
+        view.annotation.updateDraw(to: CGPoint(x: 70, y: 270))
         view.annotation.endDraw(pixelSource: { view.frozenPixels($0) })
         view.annotation.tool = nil
         view.annotation.pointerEngaged = true
         XCTAssertFalse(view.annotation.layers.isEmpty)
 
-        // 点图层中心（不在缩放控制点上）：画布 (45,260) → 视图局部 (45, 300-260) = (45,40)。
-        view.mouseDown(with: mouse(.leftMouseDown, at: CGPoint(x: 45, y: 40)))
+        // 点图层边框（不在缩放控制点上）：矩形命中只认边框（点在内部 = 画新形状），
+        // 上边框画布 (40,270) → 视图局部 (40, 300-270) = (40,30)；
+        // 距最近的 top 控制点 (50,270) 10pt > 8pt 热区，不会误触 resize。
+        view.mouseDown(with: mouse(.leftMouseDown, at: CGPoint(x: 40, y: 30)))
         XCTAssertTrue(view.annotation.isMoving)
     }
 

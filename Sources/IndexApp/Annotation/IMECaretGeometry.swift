@@ -26,7 +26,7 @@ enum IMECaretGeometry {
         // 多行：只取最后一行
         let lastLine = prefix.components(separatedBy: "\n").last ?? prefix
         guard !lastLine.isEmpty else { return 0 }
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
         let attr = NSAttributedString(string: lastLine, attributes: [.font: font])
         let line = CTLineCreateWithAttributedString(attr)
         return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))

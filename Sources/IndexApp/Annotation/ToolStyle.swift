@@ -34,6 +34,20 @@ enum ToolStyleAxis: String, Codable, CaseIterable {
     case fillMode
     /// 测量单位（0=px, 1=pt）。
     case unit
+    /// 文字粗体（0=正常, 1=粗体）。
+    case bold
+    /// 文字斜体（0=正常, 1=斜体）。
+    case italic
+    /// 文字背景（0=无, 1=半透明黑底, 2=半透明白底）。
+    case textBg
+    /// 箭头双头（0=单头, 1=双头）。
+    case arrowDouble
+    /// 马赛克模式（0=马赛克, 1=模糊）。
+    case pixelateMode
+    /// 矩形圆角（画布单位，0=直角）。
+    case cornerRadius
+    /// 文字对齐（0=左, 1=中, 2=右）。
+    case textAlign
 
     /// 轴的元数据由 `ToolStyleAxisDescriptor` 统一声明。
     var descriptor: ToolStyleAxisDescriptor {
@@ -339,6 +353,262 @@ struct ToolStyleAxisDescriptor {
                 layer.unit = Int(style.value(for: .unit))
             }
         ),
+        ToolStyleAxisDescriptor(
+            axis: .bold,
+            order: 900,
+            title: "粗体",
+            steps: [0, 1],
+            defaultIndex: 0,
+            codingKey: "boldIndex",
+            keyPath: \ToolStyle.boldIndex,
+            toolbarDraw: nil,
+            applyToLayer: { layer, style, _ in
+                guard layer.kind == .text else { return false }
+                layer.bold = Int(style.value(for: .bold))
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.bold = Int(style.value(for: .bold))
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .italic,
+            order: 910,
+            title: "斜体",
+            steps: [0, 1],
+            defaultIndex: 0,
+            codingKey: "italicIndex",
+            keyPath: \ToolStyle.italicIndex,
+            toolbarDraw: nil,
+            applyToLayer: { layer, style, _ in
+                guard layer.kind == .text else { return false }
+                layer.italic = Int(style.value(for: .italic))
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.italic = Int(style.value(for: .italic))
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .textBg,
+            order: 920,
+            title: "文字底",
+            steps: [0, 1, 2],
+            defaultIndex: 0,
+            codingKey: "textBgIndex",
+            keyPath: \ToolStyle.textBgIndex,
+            toolbarDraw: { frame, index in
+                let modes: [Double] = [0, 1, 2]
+                guard modes.indices.contains(index) else { return }
+                let rect = NSRect(x: frame.midX - 7, y: frame.midY - 5, width: 14, height: 10)
+                switch index {
+                case 0:
+                    // 无背景：画 A 加斜杠
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: NSFont.systemFont(ofSize: 8, weight: .medium),
+                        .foregroundColor: NSColor.white.withAlphaComponent(0.5)
+                    ]
+                    let text = "A" as NSString
+                    let bounds = text.size(withAttributes: attrs)
+                    text.draw(at: NSPoint(x: rect.midX - bounds.width / 2, y: rect.midY - bounds.height / 2), withAttributes: attrs)
+                    NSColor.white.setStroke()
+                    let slash = NSBezierPath()
+                    slash.move(to: NSPoint(x: rect.minX, y: rect.minY))
+                    slash.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+                    slash.lineWidth = 1
+                    slash.stroke()
+                case 1:
+                    // 半透明黑底
+                    NSColor.black.withAlphaComponent(0.6).setFill()
+                    NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+                    NSColor.white.setFill()
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: NSFont.systemFont(ofSize: 8, weight: .bold),
+                        .foregroundColor: NSColor.white
+                    ]
+                    let text = "A" as NSString
+                    let bounds = text.size(withAttributes: attrs)
+                    text.draw(at: NSPoint(x: rect.midX - bounds.width / 2, y: rect.midY - bounds.height / 2), withAttributes: attrs)
+                default:
+                    // 半透明白底
+                    NSColor.white.withAlphaComponent(0.7).setFill()
+                    NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+                    NSColor.black.withAlphaComponent(0.8).setFill()
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: NSFont.systemFont(ofSize: 8, weight: .bold),
+                        .foregroundColor: NSColor.black
+                    ]
+                    let text = "A" as NSString
+                    let bounds = text.size(withAttributes: attrs)
+                    text.draw(at: NSPoint(x: rect.midX - bounds.width / 2, y: rect.midY - bounds.height / 2), withAttributes: attrs)
+                }
+            },
+            applyToLayer: { layer, style, _ in
+                guard layer.kind == .text else { return false }
+                layer.textBg = Int(style.value(for: .textBg))
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.textBg = Int(style.value(for: .textBg))
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .arrowDouble,
+            order: 930,
+            title: "双头",
+            steps: [0, 1],
+            defaultIndex: 0,
+            codingKey: "arrowDoubleIndex",
+            keyPath: \ToolStyle.arrowDoubleIndex,
+            toolbarDraw: { frame, index in
+                NSColor.white.setFill()
+                let path = NSBezierPath()
+                let cx = frame.midX, cy = frame.midY
+                let half: CGFloat = 8
+                if index == 1 {
+                    // 双头：两端箭头
+                    path.move(to: NSPoint(x: cx - half, y: cy))
+                    path.line(to: NSPoint(x: cx - half + 5, y: cy - 4))
+                    path.line(to: NSPoint(x: cx - half + 5, y: cy + 4))
+                    path.close()
+                    path.move(to: NSPoint(x: cx + half, y: cy))
+                    path.line(to: NSPoint(x: cx + half - 5, y: cy - 4))
+                    path.line(to: NSPoint(x: cx + half - 5, y: cy + 4))
+                    path.close()
+                } else {
+                    // 单头：只有右侧箭头
+                    path.move(to: NSPoint(x: cx + half, y: cy))
+                    path.line(to: NSPoint(x: cx + half - 5, y: cy - 4))
+                    path.line(to: NSPoint(x: cx + half - 5, y: cy + 4))
+                    path.close()
+                }
+                path.fill()
+            },
+            applyToLayer: { layer, style, _ in
+                guard layer.kind == .arrow else { return false }
+                layer.arrowDouble = Int(style.value(for: .arrowDouble))
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.arrowDouble = Int(style.value(for: .arrowDouble))
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .pixelateMode,
+            order: 940,
+            title: "模糊",
+            steps: [0, 1],
+            defaultIndex: 0,
+            codingKey: "pixelateModeIndex",
+            keyPath: \ToolStyle.pixelateModeIndex,
+            toolbarDraw: { frame, index in
+                NSColor.white.setFill()
+                let rect = NSRect(x: frame.midX - 7, y: frame.midY - 7, width: 14, height: 14)
+                if index == 1 {
+                    // 模糊：虚线框 + 中间实心圆（失焦感）
+                    NSColor.white.withAlphaComponent(0.5).setStroke()
+                    let path = NSBezierPath(rect: rect)
+                    path.lineWidth = 1
+                    path.setLineDash([3, 2], count: 2, phase: 0)
+                    path.stroke()
+                    NSColor.white.setFill()
+                    NSBezierPath(ovalIn: rect.insetBy(dx: 3, dy: 3)).fill()
+                } else {
+                    // 马赛克：4 格方块
+                    let cell: CGFloat = 6
+                    for row in 0..<2 {
+                        for col in 0..<2 where (row + col) % 2 == 0 {
+                            NSBezierPath(rect: NSRect(
+                                x: rect.minX + CGFloat(col) * cell,
+                                y: rect.minY + CGFloat(row) * cell,
+                                width: cell, height: cell
+                            )).fill()
+                        }
+                    }
+                }
+            },
+            applyToLayer: { layer, style, _ in
+                guard layer.kind == .pixelate else { return false }
+                layer.pixelateMode = Int(style.value(for: .pixelateMode))
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.pixelateMode = Int(style.value(for: .pixelateMode))
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .cornerRadius,
+            order: 950,
+            title: "圆角",
+            steps: [0, 4, 8, 16],
+            defaultIndex: 0,
+            codingKey: "cornerRadiusIndex",
+            keyPath: \ToolStyle.cornerRadiusIndex,
+            toolbarDraw: { frame, index in
+                let radii: [Double] = [0, 4, 8, 16]
+                guard radii.indices.contains(index) else { return }
+                let r = CGFloat(radii[index])
+                let rect = NSRect(x: frame.midX - 7, y: frame.midY - 7, width: 14, height: 14)
+                NSColor.white.setStroke()
+                let path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r)
+                path.lineWidth = 1.5
+                path.stroke()
+            },
+            applyToLayer: { layer, style, _ in
+                guard layer.kind == .rect else { return false }
+                layer.cornerRadius = style.value(for: .cornerRadius)
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.cornerRadius = style.value(for: .cornerRadius)
+            }
+        ),
+        ToolStyleAxisDescriptor(
+            axis: .textAlign,
+            order: 960,
+            title: "对齐",
+            steps: [0, 1, 2],
+            defaultIndex: 0,
+            codingKey: "textAlignIndex",
+            keyPath: \ToolStyle.textAlignIndex,
+            toolbarDraw: { frame, index in
+                NSColor.white.setStroke()
+                let cx = frame.midX
+                let cy = frame.midY
+                let w: CGFloat = 10
+                let lineY: [CGFloat] = [-4, 0, 4]
+                let path = NSBezierPath()
+                path.lineWidth = 1.5
+                switch index {
+                case 1:
+                    for y in lineY {
+                        path.move(to: NSPoint(x: cx - w / 2, y: cy + y))
+                        path.line(to: NSPoint(x: cx + w / 2, y: cy + y))
+                    }
+                case 2:
+                    for y in lineY {
+                        path.move(to: NSPoint(x: cx - w / 2 + (y == 0 ? 3 : 0), y: cy + y))
+                        path.line(to: NSPoint(x: cx + w / 2, y: cy + y))
+                    }
+                default:
+                    for (i, y) in lineY.enumerated() {
+                        let x1: CGFloat = cx - w / 2
+                        let x2: CGFloat = cx + w / 2 - CGFloat(i * 3)
+                        path.move(to: NSPoint(x: x1, y: cy + y))
+                        path.line(to: NSPoint(x: x2, y: cy + y))
+                    }
+                }
+                path.stroke()
+            },
+            applyToLayer: { layer, style, _ in
+                guard layer.kind == .text else { return false }
+                layer.textAlign = Int(style.value(for: .textAlign))
+                return true
+            },
+            bakeToLayer: { layer, style in
+                layer.textAlign = Int(style.value(for: .textAlign))
+            }
+        ),
     ]
 
     static func descriptor(for axis: ToolStyleAxis) -> ToolStyleAxisDescriptor {
@@ -361,6 +631,13 @@ struct ToolStyle: Codable, Equatable {
     var headSizeIndex: Int = 1
     var fillModeIndex: Int = 0
     var unitIndex: Int = 0
+    var boldIndex: Int = 0
+    var italicIndex: Int = 0
+    var textBgIndex: Int = 0
+    var arrowDoubleIndex: Int = 0
+    var pixelateModeIndex: Int = 0
+    var cornerRadiusIndex: Int = 0
+    var textAlignIndex: Int = 0
 
     init(colorIndex: Int = 0, widthIndex: Int = 1, fontSizeIndex: Int = 1) {
         self.colorIndex = colorIndex

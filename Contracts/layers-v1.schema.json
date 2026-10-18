@@ -37,9 +37,9 @@
         "kind": {
           "type": "string",
           "enum": [
-            "rect", "ellipse", "arrow", "line", "text", "highlight", "pixelate",
-            "crop", "counter", "spotlight", "dimension", "backdrop", "watermark",
-            "frame", "captureInfo"
+            "rect", "ellipse", "arrow", "line", "text", "highlight", "pencil",
+            "eraser", "pixelate", "crop", "counter", "spotlight", "dimension",
+            "magnifier", "backdrop", "watermark", "frame", "captureInfo"
           ]
         },
         "rect": { "$ref": "#/$defs/rect" },

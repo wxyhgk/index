@@ -81,7 +81,7 @@ extension AnnotationState {
         guard layer != original else { return true }
 
         if layer.kind == .pixelate {
-            pixelatePreviews[resizeID] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
+            pixelatePreviews[resizeID] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1, mode: layer.pixelateMode ?? 0) }
             history.record(.move(
                 id: resizeID,
                 from: original.rect,

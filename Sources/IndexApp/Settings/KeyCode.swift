@@ -17,6 +17,10 @@ enum KeyCode {
     static let l: UInt16 = 37
     static let n: UInt16 = 45
     static let m: UInt16 = 46
+    static let b: UInt16 = 11
+    static let e: UInt16 = 14
+    static let leftBracket: UInt16 = 33
+    static let rightBracket: UInt16 = 30
 
     static let returnKey: UInt16 = 36
     static let tab: UInt16 = 48

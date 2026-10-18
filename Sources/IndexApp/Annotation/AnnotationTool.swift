@@ -17,6 +17,12 @@ enum AnnotationTool: CaseIterable {
     case spotlight
     /// 测量：拖出矩形/线段，旁边标注图像像素尺寸。
     case dimension
+    /// 自由画笔：跟手画路径，Catmull-Rom 平滑。
+    case pencil
+    /// 橡皮擦：拖动擦除路径经过的标注层。
+    case eraser
+    /// 放大镜：框选区域放大显示。
+    case magnifier
 
     var layerKind: Layer.Kind {
         switch self {
@@ -31,6 +37,9 @@ enum AnnotationTool: CaseIterable {
         case .counter: return .counter
         case .spotlight: return .spotlight
         case .dimension: return .dimension
+        case .pencil: return .pencil
+        case .eraser: return .eraser
+        case .magnifier: return .magnifier
         }
     }
 
@@ -55,6 +64,10 @@ struct ToolShortcut {
 }
 
 extension AnnotationTool {
+
+    /// 第二栏平铺 +「标注」菜单列出的常用标注工具。
+    /// 非常用工具（椭圆/裁剪/橡皮擦/高亮/直线/序号/聚光灯/测量）通过快捷键激活。
+    static let commonTools: [AnnotationTool] = [.rect, .arrow, .pencil, .text, .pixelate]
 
     /// 全部裸键绑定。**唯一真相**，由各工具的描述符自己声明（见 `BuiltinTools`）——
     /// 此前这里是一张手写的表，加工具要记得回来补一行，忘了就只能从工具条选。

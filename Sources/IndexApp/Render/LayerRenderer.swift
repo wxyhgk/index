@@ -696,16 +696,26 @@ enum LayerRenderer {
         }
     }
 
-    /// 把整张小图马赛克化。覆盖层用它给每个马赛克图层预先算好贴片。
-    static func pixelated(_ image: CGImage, blockScale: Double = 1) -> CGImage? {
+    /// 把整张小图马赛克化或模糊。覆盖层用它给每个马赛克图层预先算好贴片。
+    /// - Parameter mode: 0=马赛克（CIPixellate）, 1=模糊（CIGaussianBlur）
+    static func pixelated(_ image: CGImage, blockScale: Double = 1, mode: Int = 0) -> CGImage? {
         let width = CGFloat(image.width)
         let height = CGFloat(image.height)
-        let blockSize = max(6, 12 * blockScale)
 
-        guard let filter = CIFilter(name: "CIPixellate") else { return nil }
-        filter.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
-        filter.setValue(blockSize, forKey: kCIInputScaleKey)
-        filter.setValue(CIVector(x: width / 2, y: height / 2), forKey: kCIInputCenterKey)
+        let filter: CIFilter
+        if mode == 1 {
+            guard let f = CIFilter(name: "CIGaussianBlur") else { return nil }
+            f.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
+            f.setValue(8.0 * blockScale, forKey: kCIInputRadiusKey)
+            filter = f
+        } else {
+            guard let f = CIFilter(name: "CIPixellate") else { return nil }
+            let blockSize = max(6, 12 * blockScale)
+            f.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
+            f.setValue(blockSize, forKey: kCIInputScaleKey)
+            f.setValue(CIVector(x: width / 2, y: height / 2), forKey: kCIInputCenterKey)
+            filter = f
+        }
 
         guard let output = filter.outputImage else { return nil }
         return ciContext.createCGImage(
@@ -736,12 +746,17 @@ enum LayerRenderer {
             )
 
             // blockScale 是相对默认颗粒的倍率；旧图层没有这个字段（nil）→ 1.0 → 与从前一致。
-            // 块大小用固定基准（12px × 倍率），不随矩形尺寸缩放 —— 用户预期「档位 = 固定块大小」。
+            let isBlur = layer.pixelateMode == 1
             let scale = max(6, 12 * (layer.blockScale ?? 1))
-            guard let filter = CIFilter(name: "CIPixellate") else { continue }
+            let filterName = isBlur ? "CIGaussianBlur" : "CIPixellate"
+            guard let filter = CIFilter(name: filterName) else { continue }
             filter.setValue(current, forKey: kCIInputImageKey)
-            filter.setValue(scale, forKey: kCIInputScaleKey)
-            filter.setValue(CIVector(x: ciRect.midX, y: ciRect.midY), forKey: kCIInputCenterKey)
+            if isBlur {
+                filter.setValue(8.0 * (layer.blockScale ?? 1), forKey: kCIInputRadiusKey)
+            } else {
+                filter.setValue(scale, forKey: kCIInputScaleKey)
+                filter.setValue(CIVector(x: ciRect.midX, y: ciRect.midY), forKey: kCIInputCenterKey)
+            }
             guard let output = filter.outputImage else { continue }
 
             // 只把马赛克结果贴回选定区域。

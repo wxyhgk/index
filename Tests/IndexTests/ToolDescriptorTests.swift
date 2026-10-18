@@ -40,6 +40,8 @@ final class ToolDescriptorTests: XCTestCase {
             (KeyCode.l, .line),
             (KeyCode.t, .text),
             (KeyCode.h, .highlight),
+            (KeyCode.b, .pencil),
+            (KeyCode.e, .eraser),
             (KeyCode.p, .pixelate),
             (KeyCode.x, .crop),
             (KeyCode.n, .counter),
@@ -60,9 +62,9 @@ final class ToolDescriptorTests: XCTestCase {
         XCTAssertEqual(Set(keys).count, keys.count, "有重复的快捷键：\(keys)")
     }
 
-    /// 常驻工具条的仍然是那四个主力。
+    /// 常驻工具条的主力工具。
     func testPinnedToolsUnchanged() {
-        XCTAssertEqual(ToolRegistry.pinnedTools, [.rect, .arrow, .text, .pixelate])
+        XCTAssertEqual(ToolRegistry.pinnedTools, [.rect, .arrow, .text, .pencil, .magnifier, .pixelate])
     }
 
     // MARK: - 命中测试
@@ -118,15 +120,18 @@ final class ToolDescriptorTests: XCTestCase {
     }
 
     /// 线段拖 `topLeft` 移动起点、长度相应缩短；负宽高合法（方向不能丢）。
+    /// 角度吸附：拖后方向 ≈ -138.4°，与 -135° 差 3.4° < 5° 阈值 → 吸附到 -135°。
+    /// 以 end=(100,100) 为固定端，start 被约束到 -135° 方向上，
+    /// 最终 start ≈ (4.853, -5.147)，w/h 为负（方向不能丢）。
     func testSegmentResizeMovesEndpoints() {
         let original = layer(.arrow, CGRect(x: 0, y: 0, width: 100, height: 100))
         let moved = descriptor(.arrow).resize(
             original, handle: .topLeft, delta: CGPoint(x: 10, y: 20), pixelScale: 1
         )
-        XCTAssertEqual(moved.rect.x, 10, accuracy: 0.001)
-        XCTAssertEqual(moved.rect.y, 20, accuracy: 0.001)
-        XCTAssertEqual(moved.rect.w, 90, accuracy: 0.001)
-        XCTAssertEqual(moved.rect.h, 80, accuracy: 0.001)
+        XCTAssertEqual(moved.rect.x, 4.853, accuracy: 0.001)
+        XCTAssertEqual(moved.rect.y, -5.147, accuracy: 0.001)
+        XCTAssertEqual(moved.rect.w, -4.853, accuracy: 0.001)
+        XCTAssertEqual(moved.rect.h, 5.147, accuracy: 0.001)
     }
 
     /// 序号缩放保持正圆，且被拖点的对侧不动（这里拖右下，左上角应钉住）。
@@ -140,7 +145,7 @@ final class ToolDescriptorTests: XCTestCase {
         XCTAssertEqual(rect.minX, 0, accuracy: 0.001)
     }
 
-    /// 文字缩放改的是字号而不是矩形。
+    /// 文字缩放改的是字号，不是矩形。
     func testTextResizeScalesFontSize() {
         var text = layer(.text, CGRect(x: 0, y: 0, width: 0, height: 0))
         text.text = "测量"
@@ -152,7 +157,7 @@ final class ToolDescriptorTests: XCTestCase {
         let grown = descriptor(.text).resize(
             text, handle: .top, delta: CGPoint(x: 0, y: bounds.height), pixelScale: 1
         )
-        XCTAssertGreaterThan(grown.fontSize, text.fontSize)
+        XCTAssertGreaterThan(grown.fontSize, text.fontSize, "字号应随缩放变大")
     }
 
     // MARK: - 最小尺寸
@@ -257,11 +262,14 @@ final class ToolDescriptorTests: XCTestCase {
         XCTAssertEqual(box.text, "60 × 40 px")
     }
 
-    /// 落笔方式：文字和序号是点一下就落，其余是拖。
+    /// 落笔方式：序号和文字是点一下就落，画笔和荧光笔是跟手画路径，其余工具都是拖。
     func testInputModes() {
-        XCTAssertEqual(descriptor(.text).input, .click)
         XCTAssertEqual(descriptor(.counter).input, .click)
-        for tool in AnnotationTool.allCases where tool != .text && tool != .counter {
+        XCTAssertEqual(descriptor(.text).input, .click)
+        XCTAssertEqual(descriptor(.pencil).input, .stroke)
+        XCTAssertEqual(descriptor(.highlight).input, .stroke)
+        for tool in AnnotationTool.allCases
+        where tool != .counter && tool != .text && tool != .pencil && tool != .highlight {
             XCTAssertEqual(descriptor(tool).input, .drag, "\(tool) 应该是拖拽落笔")
         }
     }

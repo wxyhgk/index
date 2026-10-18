@@ -15,12 +15,22 @@ import AppKit
 // 这里把「一个工具是什么」收敛成一份契约 + 一个登记处，与 `CaptureAction`、
 // `GalleryDestination` 同一路子。绘制仍在 LayerRenderer（见文件末尾的说明）。
 
+/// 拖动起点命中了图层的哪个区域。
+enum LayerMoveTarget {
+    /// 源区域（layer.rect 本体）。
+    case source
+    /// 特殊区域（如放大镜的 display 显示区域）。
+    case specialRegion
+}
+
 /// 工具落笔的方式。
 enum ToolInput {
     /// 拖出形体：矩形、椭圆、箭头、线、马赛克…
     case drag
     /// 点一下就落一层：文字、序号。
     case click
+    /// 跟手画路径：自由画笔。
+    case stroke
 }
 
 /// 造一个新图层时能拿到的全部材料。
@@ -43,6 +53,8 @@ struct ToolLayerContext {
     let pixelScale: Double
     /// 画布上已有的图层。序号取下一个编号要用。
     let existing: [Layer]
+    /// 自由画笔的路径点（画布空间）。非画笔工具为空。
+    var strokePoints: [CGPoint] = []
 }
 
 /// 一个标注工具的完整契约。
@@ -98,11 +110,37 @@ protocol AnnotationToolDescriptor: Sendable {
     /// 缩到多小就算「缩没了」（缩没的整层恢复原样、不入撤销栈）。默认宽高都要 ≥ 4。
     func meetsMinimumSize(_ layer: Layer) -> Bool
 
+    // MARK: 移动语义
+    //
+    // 大多数工具的"移动"就是移动 layer.rect。
+    // 特殊工具（放大镜的 display 区域、画笔的路径点）需要额外的同步逻辑。
+
+    /// 拖动起点命中了图层的哪个区域。默认：源区域。
+    func moveTarget(_ layer: Layer, at point: CGPoint) -> LayerMoveTarget
+
+    /// 特殊区域拖动：只移动特殊区域（不移动 layer.rect）。返回 nil 表示不消费。
+    func moveSpecialRegion(_ layer: Layer, by delta: CGPoint) -> Layer?
+
+    /// layer.rect 被移动后，同步附属数据（display origin / strokePoints）。
+    func afterSourceMove(_ layer: Layer, by delta: CGPoint) -> Layer
+
+    // MARK: 滚轮调整
+
+    /// 是否支持滚轮调整特殊参数（如放大镜倍率）。
+    var supportsScroll: Bool { get }
+
+    /// 滚轮调整特殊参数。返回 nil 表示不消费（未命中或已在边界）。
+    func scrollAdjust(_ layer: Layer, deltaY: CGFloat) -> Layer?
+
     // MARK: 绘制
     //
     // 坐标系由调用方给定：上下文已经翻成左上原点，图层坐标直接可用。
     // 同一份代码同时服务预览（画布空间）和导出（图像像素空间）——
     // 两者的差异全部体现在 `lineWidth` / `fontSize` 上，由投影换算好。
+
+    /// 在其余矢量层**之下**绘制的部分（如放大镜的放大内容、裁剪的压暗框、
+    /// 马赛克的预渲染贴片）。默认不画。
+    func drawBelow(_ layer: Layer, preview: CGImage?, baseImage: CGImage?, canvasSize: CGSize, in ctx: CGContext)
 
     /// 画一层。默认什么都不画 —— 马赛克是图像级滤镜、裁剪改的是画布，
     /// 它们不参与逐层矢量绘制（见 `LayerRenderer.render` 的一、二两步）。
@@ -174,6 +212,22 @@ extension AnnotationToolDescriptor {
         return rect.width >= ToolGeometry.minimumSide && rect.height >= ToolGeometry.minimumSide
     }
 
+    // MARK: 移动语义（默认：只动 rect）
+
+    func moveTarget(_ layer: Layer, at point: CGPoint) -> LayerMoveTarget { .source }
+
+    func moveSpecialRegion(_ layer: Layer, by delta: CGPoint) -> Layer? { nil }
+
+    func afterSourceMove(_ layer: Layer, by delta: CGPoint) -> Layer { layer }
+
+    // MARK: 滚轮调整（默认：不支持）
+
+    var supportsScroll: Bool { false }
+
+    func scrollAdjust(_ layer: Layer, deltaY: CGFloat) -> Layer? { nil }
+
+    func drawBelow(_ layer: Layer, preview: CGImage?, baseImage: CGImage?, canvasSize: CGSize, in ctx: CGContext) {}
+
     func draw(_ layer: Layer, in ctx: CGContext) {}
 
     var drawsMerged: Bool { false }
@@ -240,5 +294,51 @@ enum ToolRegistry {
         let tool: AnnotationTool
         var axes: [ToolStyleAxis] { [.color, .width] }
         var defaultStyle: ToolStyle { ToolStyle() }
+    }
+}
+
+// MARK: - 共享路径工具（画笔/荧光笔）
+
+extension ToolLayerContext {
+    /// strokePoints 的包围盒；空数组返回 .zero。
+    var strokeBoundingRect: CGRect {
+        guard !strokePoints.isEmpty else { return .zero }
+        let xs = strokePoints.map(\.x)
+        let ys = strokePoints.map(\.y)
+        return CGRect(
+            x: xs.min() ?? 0, y: ys.min() ?? 0,
+            width: (xs.max() ?? 0) - (xs.min() ?? 0),
+            height: (ys.max() ?? 0) - (ys.min() ?? 0)
+        )
+    }
+}
+
+extension Layer {
+    /// 点到 strokePoints 路径的最近距离是否 ≤ pad。
+    func hitTestStroke(at point: CGPoint, pad: CGFloat) -> Bool {
+        guard let points = strokePoints, !points.isEmpty else { return false }
+        return points.contains { hypot(point.x - $0.x, point.y - $0.y) <= pad }
+    }
+
+    /// Catmull-Rom → 贝塞尔平滑（≥4 点）；短路径退化为折线。
+    /// 调用者需已设置 strokeColor / lineWidth / lineCap / lineJoin。
+    func addStrokePath(to ctx: CGContext) {
+        guard let points = strokePoints, points.count >= 2 else { return }
+        ctx.move(to: points[0])
+        if points.count >= 4 {
+            for i in 0..<(points.count - 1) {
+                let p0 = points[max(0, i - 1)]
+                let p1 = points[i]
+                let p2 = points[i + 1]
+                let p3 = points[min(points.count - 1, i + 2)]
+                let c1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+                let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+                ctx.addCurve(to: p2, control1: c1, control2: c2)
+            }
+        } else {
+            for i in 1..<points.count {
+                ctx.addLine(to: points[i])
+            }
+        }
     }
 }

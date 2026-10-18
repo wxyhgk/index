@@ -163,13 +163,23 @@ extension Layer {
     var handleBounds: CGRect {
         guard kind == .text else { return rect.cg }
 
+        // 新数据（拖出框）：rect 有 w/h，直接用
+        if rect.w > 0 && rect.h > 0 {
+            return rect.cg
+        }
+
+        // 旧数据（锚点，w/h 恒为 0）：按文字量现算
         let height: CGFloat
         let width: CGFloat
         if text.isEmpty {
             width = 0
             height = fontSize
         } else {
-            let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+            let weight: NSFont.Weight = (bold == 1) ? .bold : .regular
+            var font = NSFont.systemFont(ofSize: fontSize, weight: weight)
+            if italic == 1 {
+                font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+            }
             let lines = text.components(separatedBy: "\n")
             var maxLineWidth: CGFloat = 0
             var ascent: CGFloat = 0
@@ -178,12 +188,8 @@ extension Layer {
                 let ctLine = CTLineCreateWithAttributedString(
                     NSAttributedString(string: line, attributes: [.font: font])
                 )
-                var a: CGFloat = 0
-                var d: CGFloat = 0
-                let w = CGFloat(CTLineGetTypographicBounds(ctLine, &a, &d, nil))
+                let w = CGFloat(CTLineGetTypographicBounds(ctLine, &ascent, &descent, nil))
                 maxLineWidth = max(maxLineWidth, w)
-                ascent = max(ascent, a)
-                descent = max(descent, d)
             }
             width = maxLineWidth
             height = CGFloat(lines.count) * fontSize * 1.3

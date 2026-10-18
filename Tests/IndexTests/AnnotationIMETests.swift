@@ -23,17 +23,20 @@ final class AnnotationIMETests: XCTestCase {
     }
 
     func testPrefixWidthMatchesHandleBoundsForPrefix() {
-        // 与 Layer.handleBounds 的测量路径一致：同一字体、同一 CTLine 系数
+        // 与 Layer.handleBounds 的测量路径一致：同一字体（regular）、同一 CTLine 系数。
+        // 直接拿 handleBounds 的宽度做 oracle：旧数据（w/h 恒为 0）分支按文字量现算，
+        // 与 IMECaretGeometry.prefixWidth 必须逐前缀吻合。
+        var layer = Layer(kind: .text, rect: LRect(x: 0, y: 0, w: 0, h: 0), color: .red, lineWidth: 4)
         let text = "Hello中文"
         let fs: CGFloat = 28
+        layer.text = text
+        layer.fontSize = fs
         for len in 0...(text as NSString).length {
             let w = IMECaretGeometry.prefixWidth(fullText: text, prefixLength: len, fontSize: fs)
-            // 独立用 CTLine 量同一前缀比对
-            let prefix = (text as NSString).substring(to: len)
-            let font = NSFont.systemFont(ofSize: fs, weight: .semibold)
-            let line = CTLineCreateWithAttributedString(NSAttributedString(string: prefix, attributes: [.font: font]))
-            let expected = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
-            XCTAssertEqual(w, expected, accuracy: 0.01, "len=\(len) 字符级宽度应与 CTLine 完全一致")
+            var prefixLayer = layer
+            prefixLayer.text = (text as NSString).substring(to: len)
+            let expected = prefixLayer.handleBounds.width
+            XCTAssertEqual(w, expected, accuracy: 0.01, "len=\(len) 字符级宽度应与 handleBounds 完全一致")
         }
     }
 
@@ -88,7 +91,10 @@ final class AnnotationIMETests: XCTestCase {
     func testDisplayLayersAppendsMarkedTextInsteadOfCursor() {
         let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = .text
+        // 文字工具是拖拽落笔：编辑态在 endDraw（画完框）时进入
         _ = state.beginDraw(at: CGPoint(x: 10, y: 10))
+        _ = state.updateDraw(to: CGPoint(x: 12, y: 14))
+        _ = state.endDraw(pixelSource: { _ in nil })
         guard let id = state.editingTextID, let idx = state.layers.firstIndex(id: id) else {
             XCTFail("应进入文字编辑态")
             return
@@ -111,7 +117,10 @@ final class AnnotationIMETests: XCTestCase {
     func testMarkedTextEmptyTreatedAsNilCursor() {
         let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = .text
+        // 文字工具是拖拽落笔：编辑态在 endDraw（画完框）时进入
         _ = state.beginDraw(at: CGPoint(x: 0, y: 0))
+        _ = state.updateDraw(to: CGPoint(x: 1, y: 5))
+        _ = state.endDraw(pixelSource: { _ in nil })
         guard let id = state.editingTextID else { XCTFail(); return }
         state.insertText("x")
         state.markedText = ""

@@ -37,9 +37,8 @@ final class AnnotationState: ObservableObject {
 
     nonisolated static let palette: [LColor] = [
         LColor(r: 0.98, g: 0.22, b: 0.22, a: 1),   // 红
-        LColor(r: 1.00, g: 0.72, b: 0.10, a: 1),   // 橙
-        LColor(r: 0.20, g: 0.55, b: 0.98, a: 1),   // 蓝
-        LColor(r: 1.00, g: 1.00, b: 1.00, a: 1)    // 白
+        LColor(r: 0.30, g: 0.80, b: 0.35, a: 1),   // 绿
+        LColor(r: 0.25, g: 0.55, b: 0.98, a: 1)    // 蓝
     ]
     nonisolated static let widths: [Double] = [2, 4, 8]
 
@@ -87,6 +86,8 @@ final class AnnotationState: ObservableObject {
     /// 外部代码读走 `displayLayers`，写一律经状态机方法（会进撤销栈）。
     var layers = Layers<CanvasSpace>() { willSet { publishChange() } }
     var editingTextID: UUID? { willSet { publishChange() } }
+    /// 编辑态文字光标位置（在 text 中的下标，0 = 最前，len = 末尾）。
+    var editingTextCursor: Int = 0 { willSet { publishChange() } }
     /// 输入法合成中的标注文本（marked text），不入撤销栈，仅作预览。
     var markedText: String? { willSet { publishChange() } }
 
@@ -99,12 +100,23 @@ final class AnnotationState: ObservableObject {
 
     private var dragStart: CGPoint? { willSet { publishChange() } }
     private var dragCurrent: CGPoint? { willSet { publishChange() } }
+    /// 自由画笔路径点（画布空间）。仅 `.stroke` 工具使用。
+    private var strokePoints: [CGPoint] = []
+
+    /// 拖动时的对齐参考线（渲染用，不入撤销栈）。
+    struct AlignmentGuide: Equatable {
+        let isHorizontal: Bool
+        let position: CGFloat
+    }
+    var alignmentGuides: [AlignmentGuide] = [] { willSet { publishChange() } }
 
     private var moveID: UUID? { willSet { publishChange() } }
     private var moveLastPoint: CGPoint? { willSet { publishChange() } }
     /// beginMove 时的矩形与马赛克贴片。endMove 拿它们记一条可撤销的 move。
     private var moveFromRect: LRect?
     private var moveFromPreview: CGImage?
+    /// 拖动目标区域（由描述符的 moveTarget 决定）。
+    private var moveTarget: LayerMoveTarget = .source
 
     /// 拖角缩放的进行时状态（写访问为 +Resize 扩展放开）。
     /// `resizeOriginal` 是 beginResize 时的整层快照 ——
@@ -268,11 +280,17 @@ final class AnnotationState: ObservableObject {
     var displayLayers: Layers<CanvasSpace> {
         var result = layers
         if let editingTextID, let index = result.firstIndex(id: editingTextID) {
+            let text = result[index].text
+            let cursor = min(editingTextCursor, text.count)
             if let marked = markedText, !marked.isEmpty {
-                // 合成中：原文 + 带下划线的合成串（渲染层仍按普通文字画，候选窗口由系统绘制）。
-                result[index].text += marked
+                // 合成中：光标前的文字 + 带下划线的合成串 + 光标后的文字
+                let prefix = text.prefix(cursor)
+                let suffix = text.suffix(from: text.index(text.startIndex, offsetBy: cursor))
+                result[index].text = String(prefix) + marked + String(suffix)
             } else {
-                result[index].text += "|"
+                let prefix = text.prefix(cursor)
+                let suffix = text.suffix(from: text.index(text.startIndex, offsetBy: cursor))
+                result[index].text = String(prefix) + "|" + String(suffix)
             }
         }
         if let pendingLayer {
@@ -298,7 +316,8 @@ final class AnnotationState: ObservableObject {
             color: color,
             strokeScale: strokeScale,
             pixelScale: pixelScale,
-            existing: layers.elements
+            existing: layers.elements,
+            strokePoints: strokePoints
         ))
     }
 
@@ -312,9 +331,11 @@ final class AnnotationState: ObservableObject {
         endTextEditing()
         select(nil)
 
-        guard ToolRegistry.descriptor(for: tool).input == .click else {
+        let input = ToolRegistry.descriptor(for: tool).input
+        guard input == .click else {
             dragStart = point
             dragCurrent = point
+            if input == .stroke { strokePoints = [point] }
             return true
         }
 
@@ -326,6 +347,7 @@ final class AnnotationState: ObservableObject {
         if tool == .text {
             editingTextID = layer.id
             editingTextOriginal = nil
+            editingTextCursor = 0
         } else {
             history.record(.add(layer, preview: nil))
         }
@@ -333,9 +355,30 @@ final class AnnotationState: ObservableObject {
     }
 
     @discardableResult
-    func updateDraw(to point: CGPoint) -> Bool {
-        guard dragStart != nil else { return false }
-        dragCurrent = point
+    func updateDraw(to point: CGPoint, shiftPressed: Bool = false) -> Bool {
+        guard let start = dragStart else { return false }
+        // 橡皮擦：擦除命中的层，不走标准拖拽流程。
+        if tool == .eraser {
+            dragCurrent = point
+            eraseAt(point)
+            return true
+        }
+        if shiftPressed, let tool, tool == .rect || tool == .ellipse {
+            // Shift 约束正方形/正圆：取两轴绝对值较大者作为边长，保留方向符号。
+            let dx = point.x - start.x
+            let dy = point.y - start.y
+            let side = max(abs(dx), abs(dy))
+            dragCurrent = CGPoint(
+                x: start.x + (dx >= 0 ? side : -side),
+                y: start.y + (dy >= 0 ? side : -side)
+            )
+        } else {
+            dragCurrent = point
+        }
+        // 自由画笔：追加点
+        if let tool, ToolRegistry.descriptor(for: tool).input == .stroke {
+            strokePoints.append(point)
+        }
         return true
     }
 
@@ -347,14 +390,17 @@ final class AnnotationState: ObservableObject {
         defer {
             dragStart = nil
             dragCurrent = nil
+            strokePoints = []
         }
+        // 橡皮擦不产生图层。
+        guard tool != .eraser else { return true }
         guard let layer = pendingLayer else { return false }
 
         let r = layer.rect.cg
         guard r.width >= 2 || r.height >= 2 else { return false }
 
         if layer.kind == .pixelate {
-            pixelatePreviews[layer.id] = pixelSource(r).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
+            pixelatePreviews[layer.id] = pixelSource(r).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1, mode: layer.pixelateMode ?? 0) }
         }
         // 裁剪同时只允许存在一个：旧的记成可撤销的删除，再落新的。
         if layer.kind == .crop {
@@ -371,6 +417,25 @@ final class AnnotationState: ObservableObject {
         return true
     }
 
+    /// 自动马赛克：对多个文字区域批量添加 pixelate 图层。
+    func addAutoMosaic(in rects: [CGRect], pixelSource: (CGRect) -> CGImage?) {
+        guard !rects.isEmpty else { return }
+        endTextEditing()
+        select(nil)
+        let tool = AnnotationTool.pixelate
+        for rect in rects {
+            let b = CGPoint(x: rect.maxX, y: rect.maxY)
+            let layer = makeLayer(tool: tool, from: rect.origin, to: b)
+            if layer.kind == .pixelate {
+                pixelatePreviews[layer.id] = pixelSource(rect).flatMap {
+                    LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1, mode: layer.pixelateMode ?? 0)
+                }
+            }
+            layers.append(layer)
+            history.record(.add(layer, preview: pixelatePreviews[layer.id]))
+        }
+    }
+
     /// 丢弃全部标注，回到干净状态。撤销历史一并清空 —— 不做跨清空的持久撤销。
     func clear() {
         endTextEditing()
@@ -381,6 +446,7 @@ final class AnnotationState: ObservableObject {
         moveLastPoint = nil
         moveFromRect = nil
         moveFromPreview = nil
+        moveTarget = .source
         resizeID = nil
         activeResizeHandle = nil
         resizeOriginal = nil
@@ -404,7 +470,7 @@ final class AnnotationState: ObservableObject {
         clear()
         layers = Layers<CanvasSpace>(source.elements)
         for layer in layers.elements where layer.kind == .pixelate {
-            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
+            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1, mode: layer.pixelateMode ?? 0) }
         }
     }
 
@@ -436,30 +502,122 @@ final class AnnotationState: ObservableObject {
         selectedID = id
         moveID = id
         moveLastPoint = point
-        if let index = layers.firstIndex(id: id) {
+        moveTarget = .source
+        if let index = layers.firstIndex(id: id),
+           let descriptor = ToolRegistry.descriptor(for: layers[index].kind) {
             moveFromRect = layers[index].rect
             moveFromPreview = pixelatePreviews[id]
+            moveTarget = descriptor.moveTarget(layers[index], at: point)
         }
     }
 
     @discardableResult
     func updateMove(to point: CGPoint) -> Bool {
         guard let moveID, let last = moveLastPoint,
-              let index = layers.firstIndex(id: moveID) else { return false }
-        layers[index].rect.x += point.x - last.x
-        layers[index].rect.y += point.y - last.y
+              let index = layers.firstIndex(id: moveID),
+              let descriptor = ToolRegistry.descriptor(for: layers[index].kind) else { return false }
+        let dx = point.x - last.x
+        let dy = point.y - last.y
+
+        // 特殊区域拖动（如放大镜 display）：只移动特殊区域，不做对齐 snap。
+        if moveTarget == .specialRegion {
+            if let updated = descriptor.moveSpecialRegion(layers[index], by: CGPoint(x: dx, y: dy)) {
+                layers[index] = updated
+                moveLastPoint = point
+                return true
+            }
+        }
+
+        // 对齐参考线：拖动时 snap 到其他图层的边/中心。
+        let proposedRect = layers[index].rect.cg.offsetBy(dx: dx, dy: dy)
+        let (snapDx, snapDy, guides) = computeAlignment(for: proposedRect, excluding: moveID)
+        alignmentGuides = guides
+        let finalDx = dx + (snapDx ?? 0)
+        let finalDy = dy + (snapDy ?? 0)
+
+        layers[index].rect.x += finalDx
+        layers[index].rect.y += finalDy
+        // 同步附属数据（画笔路径点 / 放大镜 display origin），由描述符决定。
+        layers[index] = descriptor.afterSourceMove(layers[index], by: CGPoint(x: finalDx, y: finalDy))
+
         moveLastPoint = point
         return true
     }
 
+    /// 滚轮调整图层特殊参数（如放大镜倍率）。返回是否修改了图层。
+    @discardableResult
+    func scrollAdjust(_ id: UUID, deltaY: CGFloat) -> Bool {
+        guard let index = layers.firstIndex(id: id),
+              let descriptor = ToolRegistry.descriptor(for: layers[index].kind),
+              let updated = descriptor.scrollAdjust(layers[index], deltaY: deltaY) else { return false }
+        layers[index] = updated
+        publishChange()
+        return true
+    }
+
+    /// 计算当前层移动后是否接近其他图层的边/中心，返回 snap 偏移和参考线。
+    private func computeAlignment(for rect: CGRect, excluding id: UUID) -> (dx: CGFloat?, dy: CGFloat?, guides: [AlignmentGuide]) {
+        let threshold: CGFloat = 4 * strokeScale
+        var guides: [AlignmentGuide] = []
+        var snapDx: CGFloat?
+        var snapDy: CGFloat?
+
+        var vLines: [CGFloat] = []
+        var hLines: [CGFloat] = []
+        for layer in layers.elements where layer.id != id && !layer.kind.isEffect {
+            let r = layer.rect.cg
+            vLines.append(contentsOf: [r.minX, r.midX, r.maxX])
+            hLines.append(contentsOf: [r.minY, r.midY, r.maxY])
+        }
+
+        if !vLines.isEmpty {
+            let candidates: [CGFloat] = [rect.minX, rect.midX, rect.maxX]
+            var best: (offset: CGFloat, line: CGFloat)?
+            for cv in candidates {
+                for vl in vLines {
+                    let d = vl - cv
+                    if abs(d) <= threshold, abs(d) < (best.map { abs($0.offset) } ?? .infinity) {
+                        best = (d, vl)
+                    }
+                }
+            }
+            if let best {
+                snapDx = best.offset
+                guides.append(AlignmentGuide(isHorizontal: false, position: best.line))
+            }
+        }
+
+        if !hLines.isEmpty {
+            let candidates: [CGFloat] = [rect.minY, rect.midY, rect.maxY]
+            var best: (offset: CGFloat, line: CGFloat)?
+            for ch in candidates {
+                for hl in hLines {
+                    let d = hl - ch
+                    if abs(d) <= threshold, abs(d) < (best.map { abs($0.offset) } ?? .infinity) {
+                        best = (d, hl)
+                    }
+                }
+            }
+            if let best {
+                snapDy = best.offset
+                guides.append(AlignmentGuide(isHorizontal: true, position: best.line))
+            }
+        }
+
+        return (snapDx, snapDy, guides)
+    }
+
     /// 选区整体平移时，画布上的所有标注一起平移 ——
-    /// 保持“跟截图框走”而非“跟屏幕走”（见 `Layers.projected` 导出时才减选区原点）。
+    /// 保持"跟截图框走"而非"跟屏幕走"（见 `Layers.projected` 导出时才减选区原点）。
     /// 缩放不跟随：扩边只是多露内容。
     func translateAll(by delta: CGPoint) {
         guard delta != .zero, !layers.isEmpty else { return }
         for i in layers.elements.indices {
             layers[i].rect.x += delta.x
             layers[i].rect.y += delta.y
+            if let descriptor = ToolRegistry.descriptor(for: layers[i].kind) {
+                layers[i] = descriptor.afterSourceMove(layers[i], by: delta)
+            }
         }
     }
 
@@ -472,11 +630,12 @@ final class AnnotationState: ObservableObject {
             moveLastPoint = nil
             moveFromRect = nil
             moveFromPreview = nil
+            alignmentGuides = []
         }
         guard let moveID, let index = layers.firstIndex(id: moveID) else { return false }
         let layer = layers[index]
         if layer.kind == .pixelate {
-            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1) }
+            pixelatePreviews[layer.id] = pixelSource(layer.rect.cg).flatMap { LayerRenderer.pixelated($0, blockScale: layer.blockScale ?? 1, mode: layer.pixelateMode ?? 0) }
         }
         // 原地点了一下没有位移，不算一次操作。
         if let from = moveFromRect, from != layer.rect {
@@ -501,6 +660,48 @@ final class AnnotationState: ObservableObject {
         layers.remove(id: id)
         pixelatePreviews[id] = nil
         return true
+    }
+
+    /// 图层前进（上移一层，更靠近顶层）。⌘]
+    @discardableResult
+    func moveLayerForward() -> Bool {
+        guard let id = selectedID, let index = layers.firstIndex(id: id),
+              index < layers.count - 1 else { return false }
+        let toIndex = index + 1
+        let layer = layers[index]
+        layers.remove(id: id)
+        layers.insert(layer, at: toIndex)
+        history.record(.reorder(id: id, fromIndex: index, toIndex: toIndex))
+        return true
+    }
+
+    /// 图层后退（下移一层，更靠近底层）。⌘[
+    @discardableResult
+    func moveLayerBackward() -> Bool {
+        guard let id = selectedID, let index = layers.firstIndex(id: id),
+              index > 0 else { return false }
+        let toIndex = index - 1
+        let layer = layers[index]
+        layers.remove(id: id)
+        layers.insert(layer, at: toIndex)
+        history.record(.reorder(id: id, fromIndex: index, toIndex: toIndex))
+        return true
+    }
+
+    /// 橡皮擦：擦除鼠标位置命中的最上层非效果层。
+    private func eraseAt(_ point: CGPoint) {
+        let radius = currentStyle.value(for: .width) * strokeScale
+        for index in layers.elements.indices.reversed() {
+            let layer = layers[index]
+            guard !layer.kind.isEffect else { continue }
+            let bounds = layer.rect.cg.insetBy(dx: -radius, dy: -radius)
+            guard bounds.contains(point) else { continue }
+            history.record(.remove(layer, index: index, preview: pixelatePreviews[layer.id]))
+            layers.remove(id: layer.id)
+            pixelatePreviews[layer.id] = nil
+            if selectedID == layer.id { selectedID = nil }
+            break
+        }
     }
 
     /// 把当前颜色应用到选中的图层（高亮保持半透明）。
@@ -591,6 +792,12 @@ final class AnnotationState: ObservableObject {
         case .style(let id, let before, _):
             guard let index = layers.firstIndex(id: id) else { return }
             layers[index] = before
+
+        case .reorder(let id, let fromIndex, _):
+            guard let current = layers.firstIndex(id: id) else { return }
+            let layer = layers[current]
+            layers.remove(id: id)
+            layers.insert(layer, at: fromIndex)
         }
     }
 
@@ -615,6 +822,12 @@ final class AnnotationState: ObservableObject {
         case .style(let id, _, let after):
             guard let index = layers.firstIndex(id: id) else { return }
             layers[index] = after
+
+        case .reorder(let id, _, let toIndex):
+            guard let current = layers.firstIndex(id: id) else { return }
+            let layer = layers[current]
+            layers.remove(id: id)
+            layers.insert(layer, at: toIndex)
         }
     }
 

@@ -132,7 +132,7 @@ struct LineTool: SegmentTool {
 
 struct ArrowTool: SegmentTool {
     let tool = AnnotationTool.arrow
-    let axes: [ToolStyleAxis] = [.color, .width, .headSize]
+    let axes: [ToolStyleAxis] = [.color, .width, .headSize, .arrowDouble]
     let defaultStyle = ToolStyle()
     let shortcut: (keyCode: UInt16, label: String)? = (KeyCode.a, "A")
     let isPinnedToBar = true
@@ -145,21 +145,31 @@ struct ArrowTool: SegmentTool {
         let headLength = max(10, width * headScale)
         let angle = atan2(b.y - a.y, b.x - a.x)
         guard hypot(b.x - a.x, b.y - a.y) > 1 else { return }
+        let isDouble = layer.arrowDouble == 1
+        let spread = CGFloat.pi / 7
 
+        // 双头时线段两端都缩进，避免线条刺入箭头
+        let shaftStart: CGPoint = isDouble
+            ? CGPoint(
+                x: a.x + cos(angle) * headLength * 0.75,
+                y: a.y + sin(angle) * headLength * 0.75
+              )
+            : a
         let shaftEnd = CGPoint(
             x: b.x - cos(angle) * headLength * 0.75,
             y: b.y - sin(angle) * headLength * 0.75
         )
 
+        ctx.saveGState()
         ctx.setStrokeColor(layer.color.cg)
         ctx.setFillColor(layer.color.cg)
         ctx.setLineWidth(width)
         ctx.setLineCap(.round)
-        ctx.move(to: a)
+        ctx.move(to: shaftStart)
         ctx.addLine(to: shaftEnd)
         ctx.strokePath()
 
-        let spread = CGFloat.pi / 7
+        // b 端箭头
         ctx.move(to: b)
         ctx.addLine(to: CGPoint(
             x: b.x - cos(angle - spread) * headLength,
@@ -171,5 +181,21 @@ struct ArrowTool: SegmentTool {
         ))
         ctx.closePath()
         ctx.fillPath()
+
+        // a 端箭头（仅双头）
+        if isDouble {
+            ctx.move(to: a)
+            ctx.addLine(to: CGPoint(
+                x: a.x + cos(angle - spread) * headLength,
+                y: a.y + sin(angle - spread) * headLength
+            ))
+            ctx.addLine(to: CGPoint(
+                x: a.x + cos(angle + spread) * headLength,
+                y: a.y + sin(angle + spread) * headLength
+            ))
+            ctx.closePath()
+            ctx.fillPath()
+        }
+        ctx.restoreGState()
     }
 }

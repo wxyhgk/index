@@ -26,6 +26,8 @@ final class AnnotationHistory {
         case move(id: UUID, from: LRect, to: LRect, oldPreview: CGImage?, newPreview: CGImage?)
         /// 颜色 / 粗细 / 文字内容都算 style：整层快照替换，简单且不会漏字段。
         case style(id: UUID, before: Layer, after: Layer)
+        /// 图层叠放顺序变化。撤销 = 移回原位，重做 = 移到新位。
+        case reorder(id: UUID, fromIndex: Int, toIndex: Int)
     }
 
     private(set) var undoStack: [Mutation] = []

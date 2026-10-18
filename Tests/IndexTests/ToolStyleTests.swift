@@ -54,7 +54,7 @@ final class ToolStyleTests: XCTestCase {
 
         XCTAssertEqual(style.colorIndex, 2)
         XCTAssertEqual(style.widthIndex, 0)
-        XCTAssertEqual(style.fontSizeIndex, 1, "缺失的轴应回中档")
+        XCTAssertEqual(style.fontSizeIndex, 3, "缺失的轴应回中档")
         XCTAssertEqual(style.opacityIndex, 1)
         XCTAssertEqual(style.blockSizeIndex, 1)
         XCTAssertEqual(style.dimIndex, 1)
@@ -64,7 +64,7 @@ final class ToolStyleTests: XCTestCase {
     func testOutOfRangeIndexFallsBackToMiddleStep() {
         var style = ToolStyle()
         style.widthIndex = 99
-        XCTAssertEqual(style.value(for: .width), ToolStyleAxis.width.steps[1])
+        XCTAssertEqual(style.value(for: .width), ToolStyleAxis.width.steps[6])
     }
 
     // MARK: - 档位值与旧行为对齐
@@ -74,8 +74,8 @@ final class ToolStyleTests: XCTestCase {
         XCTAssertEqual(ToolStyleAxis.opacity.steps[1], 0.40, accuracy: 0.001, "旧高亮透明度")
         XCTAssertEqual(ToolStyleAxis.dim.steps[1], 0.55, accuracy: 0.001, "旧聚光灯压暗")
         XCTAssertEqual(ToolStyleAxis.blockSize.steps[1], 1.0, accuracy: 0.001, "旧马赛克颗粒公式")
-        // 旧字号公式是 线宽 × 4 + 8，线宽三档 [2,4,8] → [16,24,40]
-        XCTAssertEqual(ToolStyleAxis.fontSize.steps, [16, 24, 40])
+        // 字号现在是独立的 10 档轴，不再绑定线宽
+        XCTAssertEqual(ToolStyleAxis.fontSize.steps, [12, 16, 20, 24, 28, 32, 36, 40, 48, 56])
     }
 
     // MARK: - 描述符

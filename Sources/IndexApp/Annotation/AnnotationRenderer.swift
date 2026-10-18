@@ -15,13 +15,13 @@ enum AnnotationRenderer {
     static func draw<Space: LayerSpace>(
         _ layers: Layers<Space>,
         pixelatePreviews: [UUID: CGImage],
+        baseImage: CGImage? = nil,
+        canvasSize: CGSize = .zero,
         in ctx: CGContext
     ) {
-        for layer in layers.elements where layer.kind == .pixelate {
-            drawPixelate(layer, preview: pixelatePreviews[layer.id], in: ctx)
-        }
-        for layer in layers.elements where layer.kind == .crop {
-            drawCropHint(layer, in: ctx)
+        for layer in layers.elements {
+            guard let descriptor = ToolRegistry.descriptor(for: layer.kind) else { continue }
+            descriptor.drawBelow(layer, preview: pixelatePreviews[layer.id], baseImage: baseImage, canvasSize: canvasSize, in: ctx)
         }
         LayerRenderer.drawVectors(layers.elements, in: ctx)
 
@@ -36,23 +36,6 @@ enum AnnotationRenderer {
             else { continue }
             previewDraw(layer, ctx, ctx.boundingBoxOfClipPath)
         }
-    }
-
-    /// 裁剪层只在导出时真正生效（`LayerRenderer.render` 最后一步），
-    /// 预览阶段画一个黑白虚线框示意保留范围。
-    private static func drawCropHint(_ layer: Layer, in ctx: CGContext) {
-        let rect = layer.rect.cg
-        guard rect.width >= 1, rect.height >= 1 else { return }
-
-        let width = max(1, layer.lineWidth / 2)
-        ctx.saveGState()
-        ctx.setLineWidth(width)
-        ctx.setStrokeColor(CGColor(gray: 0, alpha: 0.55))
-        ctx.stroke(rect)
-        ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.95))
-        ctx.setLineDash(phase: 0, lengths: [width * 4, width * 4])
-        ctx.stroke(rect)
-        ctx.restoreGState()
     }
 
     /// 选中图层的虚线外框 + 缩放控制点。和图层画在同一个（左上原点、Y 向下的）
@@ -71,12 +54,35 @@ enum AnnotationRenderer {
 
         ctx.saveGState()
         ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
-        ctx.setLineWidth(strokeScale)
-        ctx.setLineDash(phase: 0, lengths: [3 * strokeScale, 3 * strokeScale])
+        ctx.setLineWidth(1.5 * strokeScale)
         ctx.stroke(box)
         ctx.restoreGState()
 
         drawResizeHandles(for: layer, strokeScale: strokeScale, in: ctx)
+    }
+
+    /// 拖动时的对齐参考线：红色细线贯穿整个画布。
+    static func drawAlignmentGuides(
+        _ guides: [AnnotationState.AlignmentGuide],
+        strokeScale: CGFloat,
+        in ctx: CGContext
+    ) {
+        guard !guides.isEmpty else { return }
+        let canvas = ctx.boundingBoxOfClipPath
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.systemRed.withAlphaComponent(0.8).cgColor)
+        ctx.setLineWidth(1 * strokeScale)
+        for guide in guides {
+            if guide.isHorizontal {
+                ctx.move(to: CGPoint(x: canvas.minX, y: guide.position))
+                ctx.addLine(to: CGPoint(x: canvas.maxX, y: guide.position))
+            } else {
+                ctx.move(to: CGPoint(x: guide.position, y: canvas.minY))
+                ctx.addLine(to: CGPoint(x: guide.position, y: canvas.maxY))
+            }
+        }
+        ctx.strokePath()
+        ctx.restoreGState()
     }
 
     /// 缩放控制点：矩形类 8 个小方块（样式参照选区的 `OverlayRenderer.drawHandles`：
@@ -117,23 +123,4 @@ enum AnnotationRenderer {
         ctx.restoreGState()
     }
 
-    /// 马赛克贴片是图层提交时预先算好的；正在拖的那个还没有，先用灰块占位。
-    /// 绝不在每帧重跑 CoreImage。
-    private static func drawPixelate(_ layer: Layer, preview: CGImage?, in ctx: CGContext) {
-        let rect = layer.rect.cg
-        guard rect.width >= 1, rect.height >= 1 else { return }
-
-        guard let preview else {
-            ctx.setFillColor(NSColor(calibratedWhite: 0.55, alpha: 0.9).cgColor)
-            ctx.fill(rect)
-            return
-        }
-
-        // 上下文此刻是 Y 向下的，画位图要再翻一次。
-        ctx.saveGState()
-        ctx.translateBy(x: rect.minX, y: rect.maxY)
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.draw(preview, in: CGRect(origin: .zero, size: rect.size))
-        ctx.restoreGState()
-    }
 }
