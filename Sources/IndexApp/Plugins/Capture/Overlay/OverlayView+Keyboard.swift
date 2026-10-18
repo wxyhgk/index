@@ -230,6 +230,7 @@ extension OverlayView {
 
     private func selectTool(_ tool: AnnotationTool?) {
         guard model.phase == .confirmed else { return }
+        resetPointerInsideSelection()
         annotation.endTextEditing()
         toolbarContext.capabilities.deactivateAll()
         annotation.tool = tool

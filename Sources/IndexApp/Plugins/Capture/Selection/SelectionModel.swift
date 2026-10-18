@@ -136,34 +136,44 @@ final class SelectionModel {
         (phase == .confirmed || phase == .adjusting) && confirmedPolygon != nil
     }
 
-    // MARK: 圆角控制点（单个，固定在选区左上角内侧）
+    // MARK: 圆角控制点（四角内侧的绿点，hover 选区时出现）
 
-    /// 手柄命中半径（点）。比视觉大一圈，好抓。
+    /// 命中半径（点）。视觉 8pt，命中 12pt。
     private let cornerHandleHitRadius: CGFloat = 12
-    /// 手柄距选区左上角的内缩距离；小选区按比例缩小，保证永远在选区内。
+
+    /// 绿点距角的斜向内缩；小选区按比例缩小，保证点始终在选区内。
     private func cornerHandleInset(in rect: CGRect) -> CGFloat {
-        min(22, max(8, min(rect.width, rect.height) / 3))
+        min(12, max(6, min(rect.width, rect.height) / 4))
     }
 
-    /// 手柄中心（全局坐标，AppKit Y 向上：视觉左上角是 (minX, maxY)）。
-    func cornerHandlePoint(in rect: CGRect) -> CGPoint {
+    /// 四角绿点中心（全局坐标，AppKit Y 向上）。
+    func cornerHandlePoint(for corner: Corner, in rect: CGRect) -> CGPoint {
         let inset = cornerHandleInset(in: rect)
-        return CGPoint(x: rect.minX + inset, y: rect.maxY - inset)
+        switch corner {
+        case .topLeft:     return CGPoint(x: rect.minX + inset, y: rect.maxY - inset)
+        case .topRight:    return CGPoint(x: rect.maxX - inset, y: rect.maxY - inset)
+        case .bottomLeft:  return CGPoint(x: rect.minX + inset, y: rect.minY + inset)
+        case .bottomRight: return CGPoint(x: rect.maxX - inset, y: rect.minY + inset)
+        }
     }
 
-    /// 只剩一个手柄；为兼容调用方仍返回 `.topLeft`。
     func cornerControl(at global: CGPoint) -> Corner? {
         guard showsHandles,
               let rect = confirmedRect,
               rect.width >= 40, rect.height >= 40
         else { return nil }
-        let center = cornerHandlePoint(in: rect)
-        let dx = global.x - center.x
-        let dy = global.y - center.y
-        return dx * dx + dy * dy <= cornerHandleHitRadius * cornerHandleHitRadius ? .topLeft : nil
+        for corner in Corner.allCases {
+            let center = cornerHandlePoint(for: corner, in: rect)
+            let dx = global.x - center.x
+            let dy = global.y - center.y
+            if dx * dx + dy * dy <= cornerHandleHitRadius * cornerHandleHitRadius {
+                return corner
+            }
+        }
+        return nil
     }
 
-    /// 拖拽起点与起始半径：用增量而不是绝对距离，抓住手柄时半径不会跳。
+    /// 拖拽起点与起始半径：用增量而不是绝对距离，抓住绿点时半径不会跳。
     private var cornerAdjustStartRadius: CGFloat = 0
     private var cornerAdjustStartPoint: CGPoint = .zero
 
@@ -175,11 +185,13 @@ final class SelectionModel {
 
     @discardableResult
     func updateCornerAdjust(to global: CGPoint) -> Bool {
-        guard adjustingCorner != nil, let rect = confirmedRect else { return false }
+        guard let corner = adjustingCorner, let rect = confirmedRect else { return false }
         let dx = global.x - cornerAdjustStartPoint.x
         let dy = global.y - cornerAdjustStartPoint.y
-        // 手柄在左上角内侧：向左/向上拖 = 增大圆角。投影到对角线，斜拖也跟手。
-        let outward = (-dx + dy) / CGFloat(2).squareRoot()
+        // 向外拖（远离选区中心）= 增大圆角；四个角的方向各自不同。
+        let dirX: CGFloat = (corner == .topLeft || corner == .bottomLeft) ? -1 : 1
+        let dirY: CGFloat = (corner == .topLeft || corner == .topRight) ? 1 : -1
+        let outward = (dx * dirX + dy * dirY) / CGFloat(2).squareRoot()
         let maxRadius = max(0, min(rect.width, rect.height) / 2 - 1)
         cornerRadius = max(0, min(cornerAdjustStartRadius + outward, maxRadius))
         return true
@@ -189,7 +201,7 @@ final class SelectionModel {
         adjustingCorner = nil
     }
 
-    /// 双击 / 滚轮 / 快捷键入口。返回是否真的改变。
+    /// 双击 / 滚轮入口。返回是否真的改变。
     @discardableResult
     func setCornerRadius(_ value: CGFloat) -> Bool {
         guard showsHandles, let rect = confirmedRect else { return false }

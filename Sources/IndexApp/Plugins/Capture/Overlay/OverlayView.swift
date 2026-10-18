@@ -41,6 +41,8 @@ final class OverlayView: NSView {
     private var hoveredHandle: SelectionModel.Handle?
     /// 当前 hover 的圆角控制点（hover 放大反馈）。nil = 无。
     private var hoveredCorner: SelectionModel.Corner?
+    /// 鼠标是否在选区内：四角绿点只在 hover 选区时出现。
+    private var pointerInsideSelection = false
 
     // MARK: - 组合持有的子状态（原散在主视图的可变状态已下沉）
 
@@ -140,7 +142,8 @@ final class OverlayView: NSView {
             magnifier: magnifierPayload,
             handleAlpha: handleAlpha,
             hoveredHandle: hoveredHandle,
-            hoveredCorner: hoveredCorner
+            hoveredCorner: hoveredCorner,
+            pointerInsideSelection: pointerInsideSelection
         )
     }
 
@@ -272,6 +275,28 @@ final class OverlayView: NSView {
         toolbarToolTipSignature = ""
     }
 
+    /// 切到标注工具时立刻收起绿点；下一次 mouseMoved 会按新状态重算。
+    func resetPointerInsideSelection() {
+        guard pointerInsideSelection else { return }
+        pointerInsideSelection = false
+        needsDisplay = true
+    }
+
+    /// 四角绿点的显隐条件：确认态、无标注工具、指针在选区内。
+    private func updatePointerInsideSelection(local: CGPoint) {
+        let inside: Bool
+        if model.phase == .confirmed,
+           annotation.tool == nil,
+           let rect = model.confirmedRect {
+            inside = rect.contains(geometry.global(fromViewLocal: local))
+        } else {
+            inside = false
+        }
+        guard inside != pointerInsideSelection else { return }
+        pointerInsideSelection = inside
+        needsDisplay = true
+    }
+
     private func localPoint(of event: NSEvent) -> CGPoint {
         convert(event.locationInWindow, from: nil)
     }
@@ -285,6 +310,7 @@ final class OverlayView: NSView {
             return
         }
         let local = localPoint(of: event)
+        updatePointerInsideSelection(local: local)
         // 工具条 hover：鼠标在工具条区域内时完全不透明，否则半透明（PixPin Mouse Penetration 效果）。
         let overToolbar = model.phase == .confirmed && slots.contains { $0.hitFrame.contains(local) }
         if overToolbar != isMouseOverToolbar {
@@ -464,6 +490,8 @@ final class OverlayView: NSView {
         if saveToHistory {
             saveSelectionToHistory()
         }
+        // 刚松手时指针就在选区内：绿点应立刻出现，不用等下一次 mouseMoved。
+        pointerInsideSelection = true
         annotation.pointerEngaged = false
         syncLiveTextOverlay()
         prepareLiveTextAnalysis()

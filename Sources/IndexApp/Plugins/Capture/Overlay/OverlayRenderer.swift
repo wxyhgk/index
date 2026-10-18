@@ -38,6 +38,8 @@ struct OverlayRenderState {
     let hoveredHandle: SelectionModel.Handle?
     /// 当前 hover 的圆角控制点（hover 放大反馈）。nil = 无。
     let hoveredCorner: SelectionModel.Corner?
+    /// 鼠标是否在选区内（决定四角绿点显不显示）。
+    let pointerInsideSelection: Bool
 }
 
 enum OverlayRenderer {
@@ -137,6 +139,7 @@ enum OverlayRenderer {
         let handleAlpha = state.handleAlpha
         let hoveredHandle = state.hoveredHandle
         let hoveredCorner = state.hoveredCorner
+        let pointerInsideSelection = state.pointerInsideSelection
         // 冻结画面本身由 CALayer 承载，这里**绝不重画位图** ——
         // 拖拽时每帧重采样一张 4K 位图会直接把主线程压垮。
         // 压暗：全屏填充 + clip 挖掉选区内部。
@@ -256,7 +259,8 @@ enum OverlayRenderer {
                 radius: model.cornerRadius,
                 alpha: handleAlpha,
                 hovered: hoveredCorner,
-                isAdjusting: model.adjustingCorner != nil
+                adjusting: model.adjustingCorner,
+                visible: pointerInsideSelection || model.adjustingCorner != nil
             )
         }
 
@@ -493,67 +497,54 @@ enum OverlayRenderer {
         }
     }
 
-    /// 圆角控件：四个角画淡淡的 1/4 弧（说明四角统一），左上角内侧一个固定手柄。
-    /// 手柄位置不随半径移动；拖拽 / 悬停时在旁边显示当前半径。
+    /// 圆角绿点：鼠标进入选区后，四角各出现一个绿色小点；拖任意一点调统一半径。
     private static func drawCornerControls(
         in local: CGRect,
         radius: CGFloat,
         alpha: CGFloat,
         hovered: SelectionModel.Corner?,
-        isAdjusting: Bool
+        adjusting: SelectionModel.Corner?,
+        visible: Bool
     ) {
-        guard alpha > 0 else { return }
+        guard alpha > 0, visible, local.width >= 40, local.height >= 40 else { return }
 
-        // 四个角只做预览弧线，统一用半透明黑线。
-        let arcRadius = max(min(radius, 30), 8)
-        let arcAlpha = (isAdjusting || hovered != nil) ? 0.65 : 0.4
-        let corners: [(CGPoint, CGFloat, CGFloat)] = [
-            (CGPoint(x: local.minX, y: local.maxY), 90, 180),
-            (CGPoint(x: local.maxX, y: local.maxY), 0, 90),
-            (CGPoint(x: local.minX, y: local.minY), 180, 270),
-            (CGPoint(x: local.maxX, y: local.minY), 270, 360)
-        ]
-        NSColor.black.withAlphaComponent(arcAlpha * alpha).setStroke()
-        for (center, startAngle, endAngle) in corners {
-            let path = NSBezierPath()
-            path.appendArc(
-                withCenter: center,
-                radius: arcRadius,
-                startAngle: startAngle,
-                endAngle: endAngle,
-                clockwise: false
-            )
-            path.lineWidth = (isAdjusting || hovered != nil) ? 1.4 : 1.0
-            path.stroke()
+        let inset = min(12, max(6, min(local.width, local.height) / 4))
+        let active = adjusting ?? hovered
+
+        for corner in SelectionModel.Corner.allCases {
+            let center = cornerPoint(for: corner, in: local, inset: inset)
+            let isHovered = (corner == hovered) || (corner == adjusting)
+            let size: CGFloat = isHovered ? 11 : 8
+            let dot = NSBezierPath(ovalIn: CGRect(
+                x: center.x - size / 2,
+                y: center.y - size / 2,
+                width: size,
+                height: size
+            ))
+            NSColor.systemGreen.withAlphaComponent((isHovered ? 1.0 : 0.85) * alpha).setFill()
+            dot.fill()
+            // 半透明白描边：浅色/深色截图上都能辨出边界，同时仍是「绿点」。
+            NSColor.white.withAlphaComponent(0.9 * alpha).setStroke()
+            dot.lineWidth = 1
+            dot.stroke()
         }
 
-        guard local.width >= 40, local.height >= 40 else { return }
-        let inset = min(22, max(8, min(local.width, local.height) / 3))
-        let center = CGPoint(x: local.minX + inset, y: local.maxY - inset)
-        let isHovered = hovered != nil || isAdjusting
-        let strokeAlpha = (isHovered ? 0.8 : 0.55) * alpha
-        NSColor.black.withAlphaComponent(strokeAlpha).setStroke()
-
-        // 空心圈 + 斜向握把线：不填充，避免盖住截图内容。
-        let ringSize: CGFloat = isHovered ? 20 : 16
-        let ring = NSBezierPath(ovalIn: CGRect(
-            x: center.x - ringSize / 2,
-            y: center.y - ringSize / 2,
-            width: ringSize,
-            height: ringSize
-        ))
-        ring.lineWidth = isHovered ? 1.8 : 1.2
-        ring.stroke()
-
-        let gripLength: CGFloat = isHovered ? 10 : 8
-        let grip = NSBezierPath()
-        grip.move(to: CGPoint(x: center.x - gripLength / 2, y: center.y + gripLength / 2))
-        grip.line(to: CGPoint(x: center.x + gripLength / 2, y: center.y - gripLength / 2))
-        grip.lineWidth = isHovered ? 1.8 : 1.2
-        grip.stroke()
-
-        if radius > 0 || isHovered, local.width >= 120 {
+        if let active, local.width >= 120, radius > 0 || adjusting != nil {
+            let center = cornerPoint(for: active, in: local, inset: inset)
             drawRadiusLabel(radius: radius, near: center, in: local, alpha: alpha)
+        }
+    }
+
+    private static func cornerPoint(
+        for corner: SelectionModel.Corner,
+        in local: CGRect,
+        inset: CGFloat
+    ) -> CGPoint {
+        switch corner {
+        case .topLeft:     return CGPoint(x: local.minX + inset, y: local.maxY - inset)
+        case .topRight:    return CGPoint(x: local.maxX - inset, y: local.maxY - inset)
+        case .bottomLeft:  return CGPoint(x: local.minX + inset, y: local.minY + inset)
+        case .bottomRight: return CGPoint(x: local.maxX - inset, y: local.minY + inset)
         }
     }
 
