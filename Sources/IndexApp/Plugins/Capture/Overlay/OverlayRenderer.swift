@@ -251,7 +251,13 @@ enum OverlayRenderer {
         // 中性态和鼠标模式都显示 —— 两种状态下拖空白处仍是调整选区。
         if model.showsHandles && annotation.tool == nil && !selectionAIIsActive {
             drawHandles(in: local, alpha: handleAlpha, hovered: hoveredHandle)
-            drawCornerControls(in: local, radius: model.cornerRadius, alpha: handleAlpha, hovered: hoveredCorner)
+            drawCornerControls(
+                in: local,
+                radius: model.cornerRadius,
+                alpha: handleAlpha,
+                hovered: hoveredCorner,
+                isAdjusting: model.adjustingCorner != nil
+            )
         }
 
         if model.phase == .confirmed {
@@ -487,93 +493,97 @@ enum OverlayRenderer {
         }
     }
 
-    /// 圆角控制点：双层同心圆（PixPin 风格：16pt 外圈 + 8pt 内层）+ 1/4 弧线。
-    /// 弧线始终显示（radius=0 时画最小 8pt 弧线提示可拖拽）。
+    /// 圆角控件：四个角画淡淡的 1/4 弧（说明四角统一），左上角内侧一个固定手柄。
+    /// 手柄位置不随半径移动；拖拽 / 悬停时在旁边显示当前半径。
     private static func drawCornerControls(
         in local: CGRect,
         radius: CGFloat,
         alpha: CGFloat,
-        hovered: SelectionModel.Corner?
+        hovered: SelectionModel.Corner?,
+        isAdjusting: Bool
     ) {
         guard alpha > 0 else { return }
-        let offset = max(radius + 8, 16)
-        let dotSize: CGFloat = 8
-        let ringSize: CGFloat = 16
-        let hoverDotSize: CGFloat = 10
-        let hoverRingSize: CGFloat = 20
 
-        for corner in SelectionModel.Corner.allCases {
-            let center: CGPoint
-            switch corner {
-            case .topLeft:     center = CGPoint(x: local.minX - offset, y: local.minY - offset)
-            case .topRight:    center = CGPoint(x: local.maxX + offset, y: local.minY - offset)
-            case .bottomLeft:  center = CGPoint(x: local.minX - offset, y: local.maxY + offset)
-            case .bottomRight: center = CGPoint(x: local.maxX + offset, y: local.maxY + offset)
-            }
-
-            let isHovered = (corner == hovered)
-            let dot = isHovered ? hoverDotSize : dotSize
-            let ring = isHovered ? hoverRingSize : ringSize
-
-            // 1/4 弧线（始终显示；radius=0 时最小 8pt 提示方向，最大 30pt 限制）
-            let arcRadius = max(min(radius, 30), 8)
-            let arcCenter: CGPoint
-            let startAngle: CGFloat
-            let endAngle: CGFloat
-            switch corner {
-            case .topLeft:
-                arcCenter = CGPoint(x: local.minX, y: local.minY)
-                startAngle = 90
-                endAngle = 180
-            case .topRight:
-                arcCenter = CGPoint(x: local.maxX, y: local.minY)
-                startAngle = 0
-                endAngle = 90
-            case .bottomLeft:
-                arcCenter = CGPoint(x: local.minX, y: local.maxY)
-                startAngle = 180
-                endAngle = 270
-            case .bottomRight:
-                arcCenter = CGPoint(x: local.maxX, y: local.maxY)
-                startAngle = 270
-                endAngle = 360
-            }
-            let arcPath = NSBezierPath()
-            arcPath.appendArc(
-                withCenter: arcCenter,
+        // 四个角只做预览弧线，不再各放一个可拖拽的点。
+        let arcRadius = max(min(radius, 30), 8)
+        let arcAlpha = (isAdjusting || hovered != nil) ? 0.55 : 0.3
+        let corners: [(CGPoint, CGFloat, CGFloat)] = [
+            (CGPoint(x: local.minX, y: local.maxY), 90, 180),
+            (CGPoint(x: local.maxX, y: local.maxY), 0, 90),
+            (CGPoint(x: local.minX, y: local.minY), 180, 270),
+            (CGPoint(x: local.maxX, y: local.minY), 270, 360)
+        ]
+        NSColor.white.withAlphaComponent(arcAlpha * alpha).setStroke()
+        for (center, startAngle, endAngle) in corners {
+            let path = NSBezierPath()
+            path.appendArc(
+                withCenter: center,
                 radius: arcRadius,
                 startAngle: startAngle,
                 endAngle: endAngle,
                 clockwise: false
             )
-            NSColor.white.withAlphaComponent((isHovered ? 0.6 : 0.45) * alpha).setStroke()
-            arcPath.lineWidth = isHovered ? 1.5 : 1
-            arcPath.stroke()
-
-            // 外圈 ring（半透明白色，hover 时更亮）
-            let ringRect = CGRect(
-                x: center.x - ring / 2,
-                y: center.y - ring / 2,
-                width: ring,
-                height: ring
-            )
-            NSColor.white.withAlphaComponent((isHovered ? 0.4 : 0.25) * alpha).setFill()
-            NSBezierPath(ovalIn: ringRect).fill()
-
-            // 实心圆点 + 细描边
-            let dotRect = CGRect(
-                x: center.x - dot / 2,
-                y: center.y - dot / 2,
-                width: dot,
-                height: dot
-            )
-            let dotPath = NSBezierPath(ovalIn: dotRect)
-            NSColor.white.withAlphaComponent(alpha).setFill()
-            dotPath.fill()
-            NSColor.black.withAlphaComponent(0.35 * alpha).setStroke()
-            dotPath.lineWidth = 0.5
-            dotPath.stroke()
+            path.lineWidth = 1
+            path.stroke()
         }
+
+        guard local.width >= 40, local.height >= 40 else { return }
+        let inset = min(22, max(8, min(local.width, local.height) / 3))
+        let center = CGPoint(x: local.minX + inset, y: local.maxY - inset)
+        let isHovered = hovered != nil || isAdjusting
+
+        let ringSize: CGFloat = isHovered ? 20 : 16
+        let dotSize: CGFloat = isHovered ? 7 : 5
+        NSColor.white.withAlphaComponent((isHovered ? 0.4 : 0.25) * alpha).setFill()
+        NSBezierPath(ovalIn: CGRect(
+            x: center.x - ringSize / 2,
+            y: center.y - ringSize / 2,
+            width: ringSize,
+            height: ringSize
+        )).fill()
+
+        let dotRect = CGRect(
+            x: center.x - dotSize / 2,
+            y: center.y - dotSize / 2,
+            width: dotSize,
+            height: dotSize
+        )
+        let dot = NSBezierPath(ovalIn: dotRect)
+        NSColor.white.withAlphaComponent(alpha).setFill()
+        dot.fill()
+        NSColor.black.withAlphaComponent(0.35 * alpha).setStroke()
+        dot.lineWidth = 0.5
+        dot.stroke()
+
+        if radius > 0 || isHovered, local.width >= 120 {
+            drawRadiusLabel(radius: radius, near: center, in: local, alpha: alpha)
+        }
+    }
+
+    private static func drawRadiusLabel(radius: CGFloat, near center: CGPoint, in local: CGRect, alpha: CGFloat) {
+        let text = "圆角 \(Int(radius.rounded()))"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: DS.font11, weight: .medium),
+            .foregroundColor: NSColor.white
+        ]
+        let textSize = (text as NSString).size(withAttributes: attrs)
+        let padding: CGFloat = 5
+        var box = NSRect(
+            x: center.x + 14,
+            y: center.y - (textSize.height + padding) / 2,
+            width: textSize.width + padding * 2,
+            height: textSize.height + padding
+        )
+        if box.maxX > local.maxX - 4 { box.origin.x = center.x - box.width - 14 }
+        box.origin.x = max(local.minX + 4, box.origin.x)
+        box.origin.y = min(max(local.minY + 4, box.origin.y), local.maxY - box.height - 4)
+
+        NSColor.black.withAlphaComponent(0.75 * alpha).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
+        (text as NSString).draw(
+            at: NSPoint(x: box.minX + padding, y: box.minY + padding / 2),
+            withAttributes: attrs
+        )
     }
 
     /// 窗口吸附参考线：红色细线贯穿全屏（和标注对齐线同款视觉）。

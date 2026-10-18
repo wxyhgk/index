@@ -363,6 +363,18 @@ final class OverlayView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        // 悬停在圆角手柄上：滚轮微调半径（1pt/格），不进入下面的工具滚轮逻辑。
+        if model.phase == .confirmed,
+           annotation.tool == nil,
+           model.cornerControl(at: geometry.global(fromViewLocal: localPoint(of: event))) != nil {
+            let delta = event.scrollingDeltaY
+            if delta != 0 {
+                _ = model.adjustCornerRadius(by: delta > 0 ? 1 : -1)
+                redraw()
+            }
+            return
+        }
+
         // 滚轮调整图层特殊参数（如放大镜倍率）：鼠标悬停在支持滚轮调整的图层上即生效。
         if model.phase == .confirmed {
             let local = localPoint(of: event)

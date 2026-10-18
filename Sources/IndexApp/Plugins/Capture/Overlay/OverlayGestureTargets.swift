@@ -441,9 +441,16 @@ struct OverlaySelectionTarget: OverlayGestureTarget {
     func mouseDown(local: CGPoint, event: NSEvent, host: OverlayGestureHost) -> Bool {
         host.annotation.endTextEditing()
         let global = host.geometry.global(fromViewLocal: local)
-        // 圆角控制点优先（在角外侧，不和 resize handle 重叠，但先检测更安全）
-        if let corner = host.model.cornerControl(at: global) {
-            host.model.beginCornerAdjust(corner, at: global)
+        // 圆角手柄优先：它在选区内侧，先于 resize/inside 命中。
+        // 拿标注工具时不抢点击。
+        if host.annotation.tool == nil,
+           let corner = host.model.cornerControl(at: global) {
+            if event.clickCount >= 2 {
+                // 双击复位：最常用的「不要圆角」操作，不用精确拖回 0。
+                _ = host.model.setCornerRadius(0)
+            } else {
+                host.model.beginCornerAdjust(corner, at: global)
+            }
             host.becameActive()
             host.redraw()
             return true
@@ -516,8 +523,9 @@ struct OverlaySelectionTarget: OverlayGestureTarget {
     func hover(local: CGPoint, host: OverlayGestureHost) {}
 
     func cursor(local: CGPoint, host: OverlayGestureHost) -> OverlayCursorDecision? {
-        // 圆角控制点：普通箭头光标
-        if host.model.cornerControl(at: host.geometry.global(fromViewLocal: local)) != nil {
+        // 圆角手柄：普通箭头光标（拿标注工具时不露出）
+        if host.annotation.tool == nil,
+           host.model.cornerControl(at: host.geometry.global(fromViewLocal: local)) != nil {
             return .set(.arrow)
         }
         let handle = host.model.handle(at: host.geometry.global(fromViewLocal: local))
