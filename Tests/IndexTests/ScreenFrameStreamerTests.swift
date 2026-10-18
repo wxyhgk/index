@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreVideo
 import XCTest
 @testable import IndexApp
 
@@ -19,34 +20,56 @@ final class ScreenFrameStreamerTests: XCTestCase {
         return ctx.makeImage()!
     }
 
+    private func makePixelBuffer(width: Int, height: Int) -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            nil,
+            &buffer
+        )
+        XCTAssertEqual(status, kCVReturnSuccess)
+        return buffer!
+    }
+
     // MARK: - FrameStore
 
     func testFrameStoreUpdateAndLatest() {
         let store = FrameStore()
         XCTAssertNil(store.latest(1))
-        store.update(1, makeImage(width: 100, height: 50))
+        store.update(1, makePixelBuffer(width: 100, height: 50))
         let fetched = store.latest(1)
-        XCTAssertEqual(fetched?.width, 100)
-        XCTAssertEqual(fetched?.height, 50)
+        XCTAssertEqual(fetched.map(CVPixelBufferGetWidth), 100)
+        XCTAssertEqual(fetched.map(CVPixelBufferGetHeight), 50)
         XCTAssertNil(store.latest(2))
     }
 
     func testFrameStoreReplaceOldFrame() {
         let store = FrameStore()
-        store.update(1, makeImage(width: 100, height: 50))
-        store.update(1, makeImage(width: 200, height: 100))
+        store.update(1, makePixelBuffer(width: 100, height: 50))
+        store.update(1, makePixelBuffer(width: 200, height: 100))
         let fetched = store.latest(1)
-        XCTAssertEqual(fetched?.width, 200)
-        XCTAssertEqual(fetched?.height, 100)
+        XCTAssertEqual(fetched.map(CVPixelBufferGetWidth), 200)
+        XCTAssertEqual(fetched.map(CVPixelBufferGetHeight), 100)
     }
 
     func testFrameStoreRemoveAll() {
         let store = FrameStore()
-        store.update(1, makeImage(width: 100, height: 50))
-        store.update(2, makeImage(width: 100, height: 50))
+        store.update(1, makePixelBuffer(width: 100, height: 50))
+        store.update(2, makePixelBuffer(width: 100, height: 50))
         XCTAssertEqual(store.all().count, 2)
         store.removeAll()
         XCTAssertTrue(store.all().isEmpty)
+    }
+
+    /// 像素缓冲 → CGImage 的转换只在取快照时发生；这里锁住尺寸与位深。
+    func testMakeImageFromPixelBuffer() throws {
+        let buffer = makePixelBuffer(width: 120, height: 80)
+        let image = try XCTUnwrap(ScreenFrameStreamer.makeImage(from: buffer))
+        XCTAssertEqual(image.width, 120)
+        XCTAssertEqual(image.height, 80)
     }
 
     // MARK: - snapshotsFromFrames（纯函数）

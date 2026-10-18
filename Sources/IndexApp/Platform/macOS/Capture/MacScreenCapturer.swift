@@ -62,11 +62,20 @@ final class MacScreenCapturer: ScreenCapturing {
                 "\(snapshot.display.name)=\(snapshot.image.width)x\(snapshot.image.height)@\(String(format: "%.2f", snapshot.imageScale))x"
             }.joined(separator: ", ")
             NSLog("[Index] 多屏冻结完成(常驻流) count=%d images=%@", snapshots.count, imageSummary)
+            ScreenFrameStreamer.shared.scheduleIdleStop()
             return snapshots
         }
 
-        // 慢路径（兜底）：流未就绪（启动中 / 崩溃重建中）→ SCScreenshotManager 单帧
-        return try await captureDisplaysViaScreenshotManager()
+        // 慢路径（兜底）：流未就绪（首张 / 已空闲停流 / 崩溃重建中）→ SCScreenshotManager 单帧
+        let snapshots = try await captureDisplaysViaScreenshotManager()
+
+        // 本次已拿到图，后台预热帧流供下一张走快路径；20 秒无截图自动停。
+        // 放在慢路径之后，避免与本次 SCK 请求在 replayd 内交错。
+        Task { @MainActor in
+            await ScreenFrameStreamer.shared.start()
+            ScreenFrameStreamer.shared.scheduleIdleStop()
+        }
+        return snapshots
     }
 
     /// 慢路径：逐屏 SCScreenshotManager.captureImage（首次 / 流未就绪时的兜底）。

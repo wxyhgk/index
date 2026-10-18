@@ -5,11 +5,14 @@ import CoreVideo
 import Foundation
 import ScreenCaptureKit
 
-/// App 启动即建的常驻 SCStream 帧流（对标 PixPin 的 PixScreenManager + PixScreenStreamer）。
+/// 按需启停的 SCStream 帧流（对标 PixPin 的 PixScreenManager + PixScreenStreamer）。
 ///
-/// 每块屏一个 SCStream，持续收帧维护 latest-frame 缓存。截图走快路径：
-/// 从缓存取最新帧（O(1)），不再向 replayd 发 captureImage 请求。overlay 背景
-/// 订阅流做准实时显示（对标 PixPin 的 ScreenShotBgLayer）。
+/// 每块屏一个 SCStream，收帧时只 retain 最新 CVPixelBuffer（零拷贝）；
+/// 转 CGImage 推迟到真正取快照 / 有订阅者时。截图快路径从缓存取最新帧。
+///
+/// **不常驻**：4 条 30fps 流会把 WindowServer 从 ~37% 推到 ~90%，即使 App 自身
+/// 空闲也一样。首次截图走 SCScreenshotManager 慢路径，随后后台预热，
+/// 20 秒无截图自动停流（scheduleIdleStop）。
 ///
 /// 流排除自身 PID：overlay 窗口不会递归拍进背景，截图背景是「干净桌面」。
 ///
@@ -20,7 +23,8 @@ final class ScreenFrameStreamer {
 
     static let shared = ScreenFrameStreamer()
 
-    /// 帧率上限（30fps）。静止屏幕 SCK 不推新帧，空转零成本。
+    /// 帧率上限（30fps）。实测 SCK 在静止屏幕仍会持续推帧，所以这里只缓存
+    /// CVPixelBuffer（retain，零拷贝），转 CGImage 推迟到真正取快照时。
     private static let fps: Int32 = 30
 
     nonisolated private let frameStore = FrameStore()
@@ -32,6 +36,9 @@ final class ScreenFrameStreamer {
 
     private(set) var isRunning = false
     private var isStarting = false
+    private var isStopping = false
+    /// 空闲自动停流；每次截图/预热都会顺延。
+    private var idleStopTask: Task<Void, Never>?
 
     private init() {}
 
@@ -39,6 +46,8 @@ final class ScreenFrameStreamer {
 
     /// App 启动时调用：已授权则建 per-display 常驻流。
     func start() async {
+        idleStopTask?.cancel()
+        idleStopTask = nil
         guard !isStarting, !isRunning else { return }
         guard CGPreflightScreenCaptureAccess() else {
             NSLog("[Index] 常驻帧流：未授权，跳过")
@@ -48,11 +57,26 @@ final class ScreenFrameStreamer {
     }
 
     func stop() async {
-        guard isRunning else { return }
+        idleStopTask?.cancel()
+        idleStopTask = nil
+        guard isRunning, !isStopping else { return }
+        isStopping = true
+        defer { isStopping = false }
         await teardownStreams()
         frameStore.removeAll()
         isRunning = false
         NSLog("[Index] 常驻帧流已停止")
+    }
+
+    /// 截图后调用：`seconds` 内没有新的截图就停流，避免 SCStream 空闲时
+    /// 持续让 WindowServer 合成。重复调用会顺延计时。
+    func scheduleIdleStop(after seconds: TimeInterval = 20) {
+        idleStopTask?.cancel()
+        idleStopTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            await self?.stop()
+        }
     }
 
     /// 拓扑变化 / 流崩溃时重建全部流。
@@ -139,6 +163,8 @@ final class ScreenFrameStreamer {
 
     /// 流停止（replayd 崩溃等）→ 重建。
     func handleStreamStopped(displayID: CGDirectDisplayID, error: Error) {
+        // 主动 stop / rebuild 时的 teardown 不是崩溃，别触发重建回环。
+        guard isRunning, !isStopping else { return }
         NSLog("[Index] 常驻帧流 displayID=%u 停止 error=%@，触发重建", displayID, String(describing: error))
         Task { @MainActor in
             await self.rebuild()
@@ -157,7 +183,8 @@ final class ScreenFrameStreamer {
 
     /// nonisolated：跨线程安全（frameStore 锁保护）。供 OverlayView init 等非 @MainActor 上下文取单屏最新帧。
     nonisolated func latestFrame(for displayID: CGDirectDisplayID) -> CGImage? {
-        frameStore.latest(displayID)
+        guard let buffer = frameStore.latest(displayID) else { return nil }
+        return Self.makeImage(from: buffer)
     }
 
     func isReady(for displays: [DisplayInfo]) -> Bool {
@@ -167,7 +194,13 @@ final class ScreenFrameStreamer {
 
     func latestFrames(for displays: [DisplayInfo]) -> [CGDirectDisplayID: CGImage] {
         let validIDs = Set(displays.map(\.id))
-        return frameStore.all().filter { validIDs.contains($0.key) }
+        var result: [CGDirectDisplayID: CGImage] = [:]
+        for (displayID, buffer) in frameStore.all() where validIDs.contains(displayID) {
+            if let image = Self.makeImage(from: buffer) {
+                result[displayID] = image
+            }
+        }
+        return result
     }
 
     /// 从常驻流最新帧构造 [DisplaySnapshot]。任一屏缺帧或尺寸不符返回 nil（调用方回退慢路径）。
@@ -226,6 +259,43 @@ final class ScreenFrameStreamer {
         subscriptionStore.remove(subscription.displayID, subscription.token)
     }
 
+    /// 有没有订阅者。没有订阅时 FrameOutput 连 CGImage 都不建。
+    nonisolated func hasSubscribers(for displayID: CGDirectDisplayID) -> Bool {
+        subscriptionStore.hasHandlers(for: displayID)
+    }
+
+    /// 把 SCK 的 BGRA 像素缓冲转成 CGImage。只在取快照 / 有订阅者时调用。
+    nonisolated static func makeImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
+        let w = CVPixelBufferGetWidth(pixelBuffer)
+        let h = CVPixelBufferGetHeight(pixelBuffer)
+        guard w > 0, h > 0 else { return nil }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let basePtr = base.assumingMemoryBound(to: UInt8.self)
+        let pixelData = Data(bytes: basePtr, count: bytesPerRow * h)
+        let cfData = pixelData as CFData
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
+        guard let provider = CGDataProvider(data: cfData) else { return nil }
+        return CGImage(
+            width: w,
+            height: h,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo,
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        )
+    }
+
     /// 推送新帧给订阅者（@MainActor，FrameOutput 通过 Task 调用）。
     func notifySubscribers(displayID: CGDirectDisplayID, image: CGImage) {
         let handlers = subscriptionStore.handlers(for: displayID)
@@ -238,21 +308,22 @@ final class ScreenFrameStreamer {
 /// 线程安全帧缓存（sampleQueue 写、MainActor 读）。
 final class FrameStore: @unchecked Sendable {
     private let lock = NSLock()
-    private var frames: [CGDirectDisplayID: CGImage] = [:]
+    /// 只 retain CVPixelBuffer；转 CGImage（一次整屏 memcpy）推迟到取快照时。
+    private var frames: [CGDirectDisplayID: CVPixelBuffer] = [:]
 
-    func update(_ displayID: CGDirectDisplayID, _ image: CGImage) {
+    func update(_ displayID: CGDirectDisplayID, _ buffer: CVPixelBuffer) {
         lock.lock()
-        frames[displayID] = image
+        frames[displayID] = buffer
         lock.unlock()
     }
 
-    func latest(_ displayID: CGDirectDisplayID) -> CGImage? {
+    func latest(_ displayID: CGDirectDisplayID) -> CVPixelBuffer? {
         lock.lock()
         defer { lock.unlock() }
         return frames[displayID]
     }
 
-    func all() -> [CGDirectDisplayID: CGImage] {
+    func all() -> [CGDirectDisplayID: CVPixelBuffer] {
         lock.lock()
         defer { lock.unlock() }
         return frames
@@ -289,6 +360,12 @@ final class SubscriptionStore: @unchecked Sendable {
         guard let dict = subs[displayID] else { return [] }
         return Array(dict.values)
     }
+
+    func hasHandlers(for displayID: CGDirectDisplayID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return subs[displayID]?.isEmpty == false
+    }
 }
 
 /// 单块屏的 SCStream 输出（sampleQueue 上收帧 → 更新缓存 + 通知订阅者）。
@@ -305,10 +382,18 @@ private final class FrameOutput: NSObject, SCStreamOutput, SCStreamDelegate, @un
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen else { return }
-        guard let image = Self.makeImage(from: sampleBuffer) else { return }
-        frameStore.update(displayID, image)
-        guard let streamer else { return }
+        guard type == .screen,
+              let pixelBuffer = Self.completePixelBuffer(from: sampleBuffer)
+        else { return }
+
+        // 热路径：只 retain 最新一帧，不拷贝像素。
+        frameStore.update(displayID, pixelBuffer)
+
+        // 没有订阅者（常规情况：overlay 用冻结帧）就到此为止，
+        // 不再为每帧派发主线程 Task。
+        guard let streamer, streamer.hasSubscribers(for: displayID),
+              let image = ScreenFrameStreamer.makeImage(from: pixelBuffer)
+        else { return }
         let displayID = self.displayID
         Task { @MainActor in
             streamer.notifySubscribers(displayID: displayID, image: image)
@@ -322,7 +407,8 @@ private final class FrameOutput: NSObject, SCStreamOutput, SCStreamDelegate, @un
         }
     }
 
-    private static func makeImage(from sampleBuffer: CMSampleBuffer) -> CGImage? {
+    /// 只接受 .complete 帧，返回其像素缓冲；不做任何拷贝。
+    private static func completePixelBuffer(from sampleBuffer: CMSampleBuffer) -> CVPixelBuffer? {
         guard
             CMSampleBufferIsValid(sampleBuffer),
             let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
@@ -330,36 +416,6 @@ private final class FrameOutput: NSObject, SCStreamOutput, SCStreamDelegate, @un
             SCFrameStatus(rawValue: statusRaw) == .complete,
             let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         else { return nil }
-
-        let w = CVPixelBufferGetWidth(pixelBuffer)
-        let h = CVPixelBufferGetHeight(pixelBuffer)
-        guard w > 0, h > 0 else { return nil }
-
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
-
-        // CVPixelBufferCreateCGImage 未被当前工具链的 Clang importer 导入（C 头文件未声明），
-        // 故用 CFDataCreate + CGImage 完整版 init（指定 BGRA bitmapInfo，与 CLIPEncoder 一致）。
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let basePtr = base.assumingMemoryBound(to: UInt8.self)
-        let pixelData = Data(bytes: basePtr, count: bytesPerRow * h)
-        let cfData = pixelData as CFData
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
-        guard let provider = CGDataProvider(data: cfData) else { return nil }
-        return CGImage(
-            width: w,
-            height: h,
-            bitsPerComponent: 8,
-            bitsPerPixel: 32,
-            bytesPerRow: bytesPerRow,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo,
-            provider: provider,
-            decode: nil,
-            shouldInterpolate: false,
-            intent: .defaultIntent
-        )
+        return pixelBuffer
     }
 }

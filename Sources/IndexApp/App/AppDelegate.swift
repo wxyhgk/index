@@ -144,12 +144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupHotKeys()
 
-        // 常驻帧流（对标 PixPin 启动即 init）：已授权时建 per-display SCStream，
-        // 截图走 O(1) 取帧快路径。overlay 背景用冻结帧（不订阅实时流，
-        // 对标 PixPin ScreenShotBgLayer 一次性捕获）。
-        Task { @MainActor in
-            await ScreenFrameStreamer.shared.start()
-        }
+        // 帧流按需启停：启动时不建 SCStream。首次截图走 SCScreenshotManager
+        // 慢路径，随后在后台预热帧流；20 秒无截图自动停流。
+        // 实测 4 条常驻流会把 WindowServer 从 ~37% 推到 ~90%，不能常驻。
 
         AttributeBackfill.runIfNeeded(styleStore: settings, store: shotStore)   // 给老截图补缺失的派生属性，后台串行，不影响启动
         StorageJanitor.runIfNeeded(settings: settings, store: shotStore)      // 清理过期且无价值（未收藏、未标注）的旧截图
