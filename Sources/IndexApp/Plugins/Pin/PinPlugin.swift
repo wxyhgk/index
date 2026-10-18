@@ -17,5 +17,7 @@ final class PinPlugin: Plugin {
         ctx.actionRegistry.register(
             PinAction(capture: ctx.settings, annotationStyle: ctx.settings)
         )
+        // 紧凑排列（钉图工具条，多张钉图时出现）
+        ctx.actionRegistry.register(CompactArrangeAction())
     }
 }

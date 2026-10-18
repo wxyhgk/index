@@ -153,6 +153,9 @@ final class CaptureCoordinator {
     }
 
     private func handle(_ result: SelectionResult, previousApp: NSRunningApplication?) {
+        // "x" 关闭 = 取消，不入库。正常路径 emit 已走 onFinish?(nil) 不会到这里，
+        // 但防御性兜底：任何路径若带着 close 的 result 进来，也不保存。
+        if result.actionID == ActionID.close { return }
         // 工具条上直接转录屏/长截图：不产生一张截图，避免图库多一张无用记录。
         // 走注入的闭包而非直接调插件单例 —— Capture 不认识 Recording/Scroll 的具体类型。
         if result.actionID == ActionID.record {

@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import ImageIO
 
 /// 串起一次完整录屏：
 ///
@@ -39,6 +40,9 @@ final class RecordingCoordinator {
     /// 本次录制的选区与显示器，首帧入库时充当截图元数据。
     private var lastRegion: CGRect?
     private var lastDisplay: DisplayInfo?
+
+    /// GIF 录制取消标志：倒计时阶段按停止 = 取消，录制阶段按停止 = 提前结束。
+    private var gifCancelled = false
 
     /// 录制开始/结束/暂停时通知（AppDelegate 用来刷新菜单栏图标和计时）。
     var onStateChanged: (() -> Void)?
@@ -164,6 +168,159 @@ final class RecordingCoordinator {
     func startDirectly(region: CGRect, display: DisplayInfo) {
         guard !recorder.isRecording, !overlay.isActive else { return }
         Task { await startRecording(region: region, display: display) }
+    }
+
+    /// 供截图工具条直接复用已选区域：跳过二次框选，直接开始 GIF 录制
+    func startGifDirectly(region: CGRect, display: DisplayInfo) {
+        guard case .idle = recorder.state, !overlay.isActive else { return }
+        Task { await startGifRecording(region: region, display: display) }
+    }
+
+    // MARK: - GIF 录制
+
+    /// 框选 → 3 秒自动录制 → 转 GIF → 展示。
+    func beginGifCapture() {
+        guard ScreenRecorder.isSupported else {
+            presentInfo(
+                "需要 macOS 15",
+                "GIF 录制基于 SCRecordingOutput，仅 macOS 15 及以上可用。"
+            )
+            return
+        }
+        guard case .idle = recorder.state, !overlay.isActive else { return }
+        guard !CaptureCoordinator.shared.isBusy,
+              !ScrollCaptureController.shared.isActive
+        else { return }
+        guard MacScreenCapturer.shared.isPermissionGranted else {
+            _ = MacScreenCapturer.shared.requestPermission()
+            presentInfo(
+                "需要「屏幕录制」权限",
+                "请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 Index，授权后重新启动。"
+            )
+            return
+        }
+
+        Task {
+            do {
+                let snapshots = try await ImmediateScreenSource().makeSnapshots()
+                let windowList = MacWindowLister.shared.onScreenWindows(
+                    excludingPID: ProcessInfo.processInfo.processIdentifier
+                )
+                let didBegin = overlay.begin(snapshots: snapshots, windowList: windowList, mode: .plain) {
+                    [weak self] result in
+                    guard let self, let result else { return }
+                    Task { await self.startGifRecording(region: result.region, display: result.display) }
+                }
+                guard didBegin else { throw CaptureError.displayTopologyChanged }
+            } catch {
+                NSLog("[Index] GIF 框选失败: \(error)")
+                presentError("无法开始 GIF 录制", error)
+            }
+        }
+    }
+
+    private func startGifRecording(region: CGRect, display: DisplayInfo) async {
+        gifCancelled = false
+        lastRegion = region
+        lastDisplay = display
+
+        // 红框 + 控制条（GIF 模式：无暂停按钮，只有停止）
+        showBorder(around: region)
+        showGifControls(around: region, display: display)
+
+        // 倒计时 3s：控制条显示 3→2→1，按停止可取消
+        for remaining in [3, 2, 1] {
+            controlPanel?.updateCountdown(remaining)
+            try? await Task.sleep(for: .seconds(1))
+            if gifCancelled {
+                teardownGifUI()
+                return
+            }
+        }
+
+        // 开始录制，用户按停止结束（手动停止，时长任意）
+        do {
+            try await recorder.start(region: region, display: display)
+        } catch {
+            NSLog("[Index] GIF 录制启动失败: \(error)")
+            teardownGifUI()
+            presentError("GIF 录制失败", error)
+            return
+        }
+        guard recorder.isRecording else {
+            teardownGifUI()
+            return
+        }
+        controlPanel?.updateTime(elapsed: 0)
+        startTimer()
+    }
+
+    /// 用户按停止：停止录制 → 转 GIF → 入库 → 拆 UI。
+    func stopGifAndExport() async {
+        stopTimer()
+        teardownGifUI()
+        do {
+            let mp4URL = try await recorder.stop()
+            // SCRecordingOutput 的 moov atom flush 在 stop() 返回后仍可能进行，
+            // 等一拍让文件完全落盘，否则 AVURLAsset 打开报 "Cannot Open"。
+            try await Task.sleep(for: .milliseconds(500))
+            let gifURL = try await GIFExporter.export(videoURL: mp4URL)
+            guard let region = lastRegion, let display = lastDisplay else {
+                try? FileManager.default.removeItem(at: mp4URL)
+                try? FileManager.default.removeItem(at: gifURL)
+                return
+            }
+            try await importGif(gifURL, region: region, display: display)
+            try? FileManager.default.removeItem(at: mp4URL)
+            try? FileManager.default.removeItem(at: gifURL)
+        } catch {
+            NSLog("[Index] GIF 录制失败: \(error)")
+            presentError("GIF 录制失败", error)
+        }
+    }
+
+    private func showGifControls(around region: CGRect, display: DisplayInfo) {
+        let panel = RecordingControlPanel()
+        panel.isGifMode = true
+        panel.onStop = { [weak self] in
+            guard let self else { return }
+            if !self.recorder.isRecording {
+                // 倒计时阶段：取消
+                self.gifCancelled = true
+            } else {
+                // 录制阶段：停止 + 转 GIF + 入库
+                Task { await self.stopGifAndExport() }
+            }
+        }
+        panel.show(near: region, on: display)
+        controlPanel = panel
+    }
+
+    private func teardownGifUI() {
+        hideBorder()
+        hideControls()
+    }
+
+    private func importGif(_ url: URL, region: CGRect, display: DisplayInfo) async throws {
+        let gifData = try Data(contentsOf: url)
+        guard let source = CGImageSourceCreateWithData(gifData as CFData, nil),
+              let firstFrame = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw GIFExportError.noVideo
+        }
+
+        var meta = CaptureMetadata()
+        meta.windowTitle = "GIF"
+        meta.globalRegion = region
+        meta.scale = Double(display.scale)
+        meta.displayID = display.id
+        meta.displayName = display.name
+
+        _ = try shotStore.save(
+            image: firstFrame,
+            metadata: meta,
+            originalData: gifData,
+            originalExtension: "gif"
+        )
     }
 
     private func startRecording(region: CGRect, display: DisplayInfo) async {
@@ -446,6 +603,12 @@ private final class RecordingControlPanel: NSObject {
 
     var onPauseResume: (() -> Void)?
     var onStop: (() -> Void)?
+    /// GIF 模式：隐藏暂停按钮，显示时长选择行。
+    var isGifMode = false
+    /// 当前选定的 GIF 录制时长（秒）。Coordinator 读它决定录多久。
+    var selectedDuration: TimeInterval = 3
+    /// 时长被切换时回调（Coordinator 持久化到 UserDefaults）。
+    var onDurationChanged: ((TimeInterval) -> Void)?
 
     private var panel: NSPanel?
     private var timeLabel: NSTextField?
@@ -512,6 +675,7 @@ private final class RecordingControlPanel: NSObject {
         pause.image = NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "暂停")
         pause.imagePosition = .imageOnly
         pause.toolTip = "暂停"
+        if isGifMode { pause.isHidden = true }
 
         let stop = NSButton(title: "", target: self, action: #selector(stopTapped))
         stop.bezelStyle = .circular
@@ -551,6 +715,10 @@ private final class RecordingControlPanel: NSObject {
     func updateTime(elapsed: Int) {
         self.elapsed = elapsed
         timeLabel?.stringValue = String(format: "%02d:%02d", elapsed / 60, elapsed % 60)
+    }
+
+    func updateCountdown(_ seconds: Int) {
+        timeLabel?.stringValue = "\(seconds)"
     }
 
     func dismiss() {
