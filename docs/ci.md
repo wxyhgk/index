@@ -38,7 +38,17 @@ Release job **硬性要求**以下仓库 secrets，缺任何一项都会在打�
 6. 删除 `/tmp/cert.b64`，然后重跑 release workflow。
 
 本地固定开发证书（`Index Dev`）不会上传到公共 CI；ad-hoc 只允许显式
-`INDEX_ALLOW_ADHOC=1`，且仅用于本地临时验证，不进 Release 流水线。
+`INDEX_ALLOW_ADHOC=1`。
+
+没有 Apple 凭据时可以手动出预览包：
+
+```bash
+gh workflow run release.yml -f tag=v0.1.29 -f adhoc_preview=true
+```
+
+`adhoc_preview=true` 会跳过 Developer ID 导入与公证，用 ad-hoc 签名构建，
+产物标记为 prerelease，说明里明确写「未签名、未公证」。tag push 仍走强制
+签名 + 公证路径，不会静默降级。
 
 ## 本地提交前
 

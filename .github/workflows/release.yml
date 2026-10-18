@@ -10,6 +10,11 @@ on:
         description: Existing version tag to package, for example v0.1.9
         required: true
         type: string
+      adhoc_preview:
+        description: Build an unsigned preview (no Developer ID, no notarization)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -62,6 +67,7 @@ jobs:
         run: ./scripts/check.sh
 
       - name: Import Developer ID certificate
+        if: ${{ inputs.adhoc_preview != true }}
         env:
           CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -84,6 +90,7 @@ jobs:
           echo "INDEX_RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
       - name: Build, notarize, and staple app
+        if: ${{ inputs.adhoc_preview != true }}
         env:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.NOTARY_APP_SPECIFIC_PASSWORD }}
@@ -119,6 +126,21 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$package_root/Index.app" "$archive"
           shasum -a 256 "$archive" > "$archive.sha256"
 
+      - name: Build unsigned preview
+        if: ${{ inputs.adhoc_preview == true }}
+        run: |
+          INDEX_ALLOW_ADHOC=1 ./build.sh release
+          built_app="build/Index.app"
+          if [[ ! -d "$built_app" ]]; then
+            echo "Release App was not produced" >&2
+            exit 1
+          fi
+          archive="${{ steps.metadata.outputs.archive }}"
+          package_root="$(mktemp -d)"
+          ditto "$built_app" "$package_root/Index.app"
+          ditto -c -k --sequesterRsrc --keepParent "$package_root/Index.app" "$archive"
+          shasum -a 256 "$archive" > "$archive.sha256"
+
       - name: Remove signing keychain
         if: always()
         run: |
@@ -131,8 +153,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
           ARCHIVE: ${{ steps.metadata.outputs.archive }}
+          PREVIEW: ${{ inputs.adhoc_preview }}
         run: |
-          cat > release-notes.md <<EOF
+          if [[ "$PREVIEW" == "true" ]]; then
+            cat > release-notes.md <<EOF
+          ## Index $RELEASE_TAG（未签名预览）
+
+          此附件由 GitHub Actions 构建，**未使用 Developer ID 签名、未公证**。
+          适合体验，不代表正式发行。首次打开时可能需要在「系统设置 → 隐私与安全性」
+          中允许运行。
+
+          下载 $ARCHIVE，解压后运行其中的 Index.app。
+          EOF
+          else
+            cat > release-notes.md <<EOF
           ## Index $RELEASE_TAG
 
           此附件由 GitHub Actions 从版本标签自动构建。
@@ -141,16 +175,24 @@ jobs:
 
           下载 $ARCHIVE，解压后运行其中的 Index.app。
           EOF
+          fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" \
-              --title "Index $RELEASE_TAG" \
-              --notes-file release-notes.md
+            if [[ "$PREVIEW" == "true" ]]; then
+              gh release edit "$RELEASE_TAG" --prerelease \
+                --title "Index $RELEASE_TAG" --notes-file release-notes.md
+            else
+              gh release edit "$RELEASE_TAG" \
+                --title "Index $RELEASE_TAG" --notes-file release-notes.md
+            fi
           else
-            gh release create "$RELEASE_TAG" \
-              --verify-tag \
-              --title "Index $RELEASE_TAG" \
-              --notes-file release-notes.md
+            if [[ "$PREVIEW" == "true" ]]; then
+              gh release create "$RELEASE_TAG" --verify-tag --prerelease \
+                --title "Index $RELEASE_TAG" --notes-file release-notes.md
+            else
+              gh release create "$RELEASE_TAG" --verify-tag \
+                --title "Index $RELEASE_TAG" --notes-file release-notes.md
+            fi
           fi
 
           gh release upload "$RELEASE_TAG" \
