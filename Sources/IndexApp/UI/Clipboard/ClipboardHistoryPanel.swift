@@ -101,21 +101,20 @@ final class ClipboardHistoryPanelCommands: ObservableObject {
 }
 
 @MainActor
-final class ClipboardHistoryPanel: NSPanel {
+final class ClipboardHistoryPanel: FloatingPanel {
 
     private let store: ClipboardHistoryStore
     var onClose: (() -> Void)?
     var onPanelShown: (() -> Void)?
 
     private var viewModel: ClipboardHistoryViewModel!
-    private let commands = ClipboardHistoryPanelCommands()
-    private var localMonitor: Any?
-    private var globalMonitor: Any?
+    private let commands: ClipboardHistoryPanelCommands
+    private let monitors = PanelEventMonitors()
     /// 钉住模式：点击外部不关闭。
     var isPinned = false {
         didSet {
             if isPinned {
-                removeGlobalMonitor()
+                monitors.removeGlobalClick()
             } else {
                 installGlobalMonitor()
             }
@@ -128,23 +127,19 @@ final class ClipboardHistoryPanel: NSPanel {
         // Tab 只共享持久化 store，不能共享一份 UI 状态。
         let resolvedViewModel = viewModel ?? ClipboardHistoryViewModel(store: store)
         self.viewModel = resolvedViewModel
-        super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 320),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
+
+        let commands = ClipboardHistoryPanelCommands()
+        self.commands = commands
+
+        var spec = PanelSpec.clipboard(size: CGSize(width: 1100, height: 320))
+        spec.contentCornerRadius = DS.radiusPanel
+        let root = ClipboardHistoryView(
+            viewModel: resolvedViewModel,
+            commands: commands,
+            store: store
         )
-        isFloatingPanel = true
-        level = .floating
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = true
-        isReleasedWhenClosed = false
-        hidesOnDeactivate = false
-        isMovable = true
-        becomesKeyOnlyIfNeeded = false
-        PanelPlacement.detachFromAppStage(self)
+        super.init(spec: spec, contentViewController: NSHostingController(rootView: root))
+
         commands.onCardInteraction = { [weak self] in
             // 卡片的点击由手势识别器完成，不会像原生可选列表那样自动接管
             // first responder。显式结束搜索框的 field editor，随后方向键、
@@ -154,17 +149,6 @@ final class ClipboardHistoryPanel: NSPanel {
         commands.onClose = { [weak self] in
             self?.close()
         }
-
-        let root = ClipboardHistoryView(
-            viewModel: resolvedViewModel,
-            commands: commands,
-            store: store
-        )
-        let hosting = NSHostingController(rootView: root)
-        hosting.view.wantsLayer = true
-        hosting.view.layer?.cornerRadius = DS.radiusPanel
-        hosting.view.layer?.masksToBounds = true
-        contentView = hosting.view
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -199,8 +183,7 @@ final class ClipboardHistoryPanel: NSPanel {
         }
         // nonactivatingPanel 能在不激活整个 App 的情况下拿键盘焦点。
         // 不能调用 NSApp.activate：台前调度会把图库等所有 Index 窗口一起带出来。
-        orderFrontRegardless()
-        makeKey()
+        presentWithoutActivating()
         resetScrollPosition()
         installMonitors()
         onPanelShown?()
@@ -228,10 +211,10 @@ final class ClipboardHistoryPanel: NSPanel {
     }
 
     private func installMonitors() {
-        removeMonitors()
+        monitors.removeAll()
         // 键盘导航集中由纯解析器解释。搜索框拿到 first responder 时仍接管
         // Enter/Shift+Enter/⌘C/⌘R/Esc；重命名输入框则完全保留原生编辑语义。
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] (event: NSEvent) -> NSEvent? in
+        monitors.installLocalKey(matching: [.keyDown, .keyUp]) { [weak self] event in
             guard let self else { return event }
             return self.handleShortcutEvent(event)
         }
@@ -323,8 +306,7 @@ final class ClipboardHistoryPanel: NSPanel {
     /// 可能把点击路由给之前的前台应用，但鼠标位置不会变——
     /// 只要鼠标在面板 frame 内就不关闭。
     private func installGlobalMonitor() {
-        guard globalMonitor == nil else { return }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+        monitors.installGlobalClick { [weak self] in
             guard let self, self.isVisible, !self.isPinned else { return }
             // 鼠标在面板内 → 不关闭（即使事件被路由到了其他应用）。
             let mouseLocation = NSEvent.mouseLocation
@@ -335,19 +317,8 @@ final class ClipboardHistoryPanel: NSPanel {
         }
     }
 
-    private func removeGlobalMonitor() {
-        if let monitor = globalMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalMonitor = nil
-        }
-    }
-
     private func removeMonitors() {
-        if let monitor = localMonitor {
-            NSEvent.removeMonitor(monitor)
-            localMonitor = nil
-        }
-        removeGlobalMonitor()
+        monitors.removeAll()
     }
 
     /// 上次保存的相对位置（0-1 比例），适配多显示器/分辨率变化。

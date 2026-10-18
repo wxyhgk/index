@@ -41,35 +41,20 @@ struct AgentMessage: Identifiable, Equatable {
 // MARK: - 面板
 
 @MainActor
-final class AgentPanel: NSPanel {
+final class AgentPanel: FloatingPanel {
 
-    private var localMonitor: Any?
+    private let monitors = PanelEventMonitors()
 
     init() {
+        let hosting = NSHostingController(rootView: AgentChatView())
         super.init(
-            contentRect: NSRect(origin: .zero, size: AgentUIMetrics.panelDefaultSize),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
+            spec: PanelSpec.agent(size: AgentUIMetrics.panelDefaultSize),
+            contentViewController: hosting
         )
-        title = "Agent"
-        isFloatingPanel = true
-        level = .floating
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        isReleasedWhenClosed = false
-        hidesOnDeactivate = false
-        becomesKeyOnlyIfNeeded = false
         setContentSize(AgentUIMetrics.panelDefaultSize)
-
-        let view = AgentChatView()
-        let hosting = NSHostingController(rootView: view)
-        contentView = hosting.view
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
 
     func show() {
         if let screen = NSScreen.main {
@@ -79,8 +64,7 @@ final class AgentPanel: NSPanel {
             setFrameOrigin(NSPoint(x: x, y: y))
         }
         // 不能调用 NSApp.activate：台前调度会把图库等所有 Index 窗口一起带出来。
-        orderFrontRegardless()
-        makeKey()
+        presentWithoutActivating()
         installMonitor()
         // 每次打开都是新对话
         NotificationCenter.default.post(name: .agentPanelWillShow, object: nil)
@@ -106,23 +90,18 @@ final class AgentPanel: NSPanel {
     }
 
     private func installMonitor() {
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self else { return event }
-                if event.keyCode == 53 { // Esc
-                    self.close()
-                    return nil
-                }
-                return event
+        monitors.installLocalKey { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == KeyCode.escape {
+                self.close()
+                return nil
             }
+            return event
         }
     }
 
     private func removeMonitor() {
-        if let monitor = localMonitor {
-            NSEvent.removeMonitor(monitor)
-            localMonitor = nil
-        }
+        monitors.removeAll()
     }
 }
 

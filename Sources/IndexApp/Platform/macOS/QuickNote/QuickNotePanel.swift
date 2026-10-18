@@ -8,38 +8,23 @@ import Combine
 // NSEvent 键盘监听、位置记忆。SwiftUI 视图（QuickNoteView）在 Content 层。
 
 @MainActor
-final class QuickNotePanel: NSPanel {
+final class QuickNotePanel: FloatingPanel {
 
     let viewModel: QuickNoteViewModel
 
-    private var localMonitor: Any?
+    private let monitors = PanelEventMonitors()
     private var isClosing = false
     private var cancellables = Set<AnyCancellable>()
 
     init(viewModel: QuickNoteViewModel? = nil) {
-        self.viewModel = viewModel ?? QuickNoteViewModel()
+        let resolved = viewModel ?? QuickNoteViewModel()
+        self.viewModel = resolved
+        let hosting = NSHostingController(rootView: QuickNoteView(viewModel: resolved))
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
+            spec: PanelSpec.quickNote(size: CGSize(width: 560, height: 420)),
+            contentViewController: hosting
         )
-        title = ""
-        titlebarAppearsTransparent = true
-        titleVisibility = .hidden
-        standardWindowButton(.closeButton)?.isHidden = true
-        standardWindowButton(.miniaturizeButton)?.isHidden = true
-        standardWindowButton(.zoomButton)?.isHidden = true
-        level = .floating
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        isReleasedWhenClosed = false
-        hidesOnDeactivate = false
-        isMovableByWindowBackground = true
-        hasShadow = true
         setContentSize(NSSize(width: 560, height: 420))
-
-        let hosting = NSHostingController(rootView: QuickNoteView(viewModel: self.viewModel))
-        contentView = hosting.view
 
         self.viewModel.$selectedShotID
             .dropFirst()
@@ -122,8 +107,7 @@ final class QuickNotePanel: NSPanel {
         )
         alphaValue = 0
         setFrame(scaledFrame, display: false)
-        orderFrontRegardless()
-        makeKey()
+        presentWithoutActivating()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             alphaValue = 1
@@ -172,63 +156,58 @@ final class QuickNotePanel: NSPanel {
 
     private func installMonitor() {
         removeMonitor()
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self else { return event }
-                let vm = self.viewModel
-                // Esc 只在面板是 key window 时拦截，避免图库等窗口按 Esc 误关便签
-                if event.keyCode == 53, event.modifierFlags.isEmpty, self.isKeyWindow {
-                    self.close()
-                    return nil
-                }
-                if event.keyCode == 1, event.modifierFlags.contains(.command) {
-                    vm.persistNow()
-                    return nil
-                }
-                if event.keyCode == 45, event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control) {
-                    vm.newNote()
-                    return nil
-                }
-                if event.keyCode == 39, event.modifierFlags.contains(.command) {
-                    vm.toggleSidebar()
-                    return nil
-                }
-                if event.keyCode == 9, event.modifierFlags.contains(.command) {
-                    // 剪贴板有图片时导入图库 + 在光标位置插入 ![[sha256]]
-                    if let sha = QuickNoteImageStore.importClipboardImage() {
-                        self.pasteImage(name: sha)
-                        return nil
-                    }
-                    if vm.pasteClipboardText() { return nil }
-                }
-                if event.keyCode == 6, event.modifierFlags.contains(.command) {
-                    if event.modifierFlags.contains(.shift) {
-                        vm.redo()
-                    } else {
-                        vm.undo()
-                    }
-                    return nil
-                }
-                if event.modifierFlags.isEmpty {
-                    if event.keyCode == 126 {
-                        vm.navigate(direction: -1)
-                        return nil
-                    }
-                    if event.keyCode == 125 {
-                        vm.navigate(direction: 1)
-                        return nil
-                    }
-                }
-                return event
+        monitors.installLocalKey { [weak self] event in
+            guard let self else { return event }
+            let vm = self.viewModel
+            // Esc 只在面板是 key window 时拦截，避免图库等窗口按 Esc 误关便签
+            if event.keyCode == 53, event.modifierFlags.isEmpty, self.isKeyWindow {
+                self.close()
+                return nil
             }
+            if event.keyCode == 1, event.modifierFlags.contains(.command) {
+                vm.persistNow()
+                return nil
+            }
+            if event.keyCode == 45, event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control) {
+                vm.newNote()
+                return nil
+            }
+            if event.keyCode == 39, event.modifierFlags.contains(.command) {
+                vm.toggleSidebar()
+                return nil
+            }
+            if event.keyCode == 9, event.modifierFlags.contains(.command) {
+                // 剪贴板有图片时导入图库 + 在光标位置插入 ![[sha256]]
+                if let sha = QuickNoteImageStore.importClipboardImage() {
+                    self.pasteImage(name: sha)
+                    return nil
+                }
+                if vm.pasteClipboardText() { return nil }
+            }
+            if event.keyCode == 6, event.modifierFlags.contains(.command) {
+                if event.modifierFlags.contains(.shift) {
+                    vm.redo()
+                } else {
+                    vm.undo()
+                }
+                return nil
+            }
+            if event.modifierFlags.isEmpty {
+                if event.keyCode == 126 {
+                    vm.navigate(direction: -1)
+                    return nil
+                }
+                if event.keyCode == 125 {
+                    vm.navigate(direction: 1)
+                    return nil
+                }
+            }
+            return event
         }
     }
 
     private func removeMonitor() {
-        if let monitor = localMonitor {
-            NSEvent.removeMonitor(monitor)
-            localMonitor = nil
-        }
+        monitors.removeAll()
     }
 }
 
