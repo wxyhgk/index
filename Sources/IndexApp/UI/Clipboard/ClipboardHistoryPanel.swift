@@ -81,9 +81,14 @@ final class ClipboardHistoryPanelCommands: ObservableObject {
     @Published private(set) var renameGeneration = 0
     private(set) var isRenaming = false
     var onCardInteraction: (() -> Void)?
+    var onClose: (() -> Void)?
 
     func requestRename() {
         renameGeneration &+= 1
+    }
+
+    func closePanel() {
+        onClose?()
     }
 
     func setRenaming(_ isRenaming: Bool) {
@@ -145,6 +150,9 @@ final class ClipboardHistoryPanel: NSPanel {
             // first responder。显式结束搜索框的 field editor，随后方向键、
             // Space 和 Delete 才归卡片流处理。
             self?.makeFirstResponder(nil)
+        }
+        commands.onClose = { [weak self] in
+            self?.close()
         }
 
         let root = ClipboardHistoryView(

@@ -1,7 +1,9 @@
 import Combine
+import Foundation
 
 enum ClipboardWorkspaceMode: String, CaseIterable, Identifiable {
     case history
+    case sessions
     case threads
     case capsules
 
@@ -10,6 +12,7 @@ enum ClipboardWorkspaceMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .history: return "历史"
+        case .sessions: return "项目"
         case .threads: return "线程"
         case .capsules: return "胶囊"
         }
@@ -18,9 +21,33 @@ enum ClipboardWorkspaceMode: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .history: return "clock.arrow.circlepath"
+        case .sessions: return "folder"
         case .threads: return "point.3.connected.trianglepath.dotted"
         case .capsules: return "shippingbox"
         }
+    }
+}
+
+/// 点击组卡片后聚焦显示其全部条目。
+struct FocusedGroup: Equatable {
+    let label: String
+    let items: [ClipboardHistoryItem]
+}
+
+/// AI 推断的工作上下文分组（同一 sessionLabel 的条目聚合）。
+struct ClipboardSessionGroup: Identifiable {
+    let id: String
+    let label: String
+    let items: [ClipboardHistoryItem]
+
+    var latestAt: Date { items.first?.capturedAt ?? .distantPast }
+    var earliestAt: Date { items.last?.capturedAt ?? .distantPast }
+    var duration: TimeInterval { max(0, latestAt.timeIntervalSince(earliestAt)) }
+
+    var durationText: String {
+        let secs = Int(duration)
+        if secs < 60 { return "\(secs) 秒" }
+        return "\(max(1, secs / 60)) 分钟"
     }
 }
 

@@ -102,7 +102,9 @@ struct ClipboardContent: View {
                 Text("剪贴板历史")
                     .font(.title2.weight(.semibold))
                     .lineLimit(1)
-                Text("\(viewModel.filteredItems.count) 个项目")
+                Text(viewModel.query.trimmingCharacters(in: .whitespaces).isEmpty
+                    ? "\(viewModel.totalCount) 项"
+                    : "\(viewModel.filteredItems.count) 项")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()

@@ -162,11 +162,17 @@ struct GalleryPageHeader: View {
 
     /// 固定录屏入口在异步换页完成前也能直接读取准确总数，避免页头先显示
     /// 全图库数量、下一帧再跳成录屏数量。搜索/语义结果仍使用当前内存列表。
+    /// 无筛选无搜索时用 COUNT(*) 显示数据库总条数，不依赖分页加载。
     private var visibleCount: Int {
         if scope == .recordings,
            viewModel.searchText.isEmpty,
            !viewModel.semanticMode {
             return store.recordingCount()
+        }
+        if viewModel.filter == .all,
+           viewModel.searchText.isEmpty,
+           !viewModel.semanticMode {
+            return store.totalCount
         }
         return visibleShots.count
     }

@@ -2,98 +2,11 @@ import SwiftUI
 import AppKit
 
 // ============================================================
-// MARK: - 剪贴板卡片公共组件
+// MARK: - 剪贴板卡片主体视图 + 原生 AppKit 控件
 //
-// 浮动面板（ClipboardHistoryCard）和主窗口 tab（ClipboardGridCard）
-// 共享 Paste 式信息卡：顶部给出类型、时间与来源 App，中部预览内容，
-// 底部显示对辨认内容有帮助的字符数、图片尺寸或文件名。
+// CardBody View 及其 4 个 private 控件（TitleEditor / EditorView /
+// ActionButton / SourceAppIcon）。private 类型必须与使用者同文件。
 // ============================================================
-
-// MARK: 卡片内容
-
-/// 剪贴板卡片只有两种固定规格。尺寸集中在这里，主窗口和快捷弹窗
-/// 不再各自维护一份字面量，避免布局尺寸与 SwiftUI 内容帧悄悄漂移。
-enum ClipboardCardMetrics {
-    static let gridWidth: CGFloat = 200
-    static let gridHeight: CGFloat = 178
-    static let popupWidth: CGFloat = 220
-    static let popupHeight: CGFloat = 196
-    static let headerHeight: CGFloat = 52
-    static let footerHeight: CGFloat = 26
-}
-
-/// 编辑中的草稿故意不是 ObservableObject。原生文本框每输入一个字符只更新这个
-/// 引用，不让整个 RecyclingCardCollectionView 因父级 @State 改变而刷新可见卡片。
-final class ClipboardCardRenameDraft {
-    var text = ""
-}
-
-enum ClipboardCardInteractionZone: Equatable {
-    case header
-    case content
-    case footer
-    case outside
-}
-
-enum ClipboardCardInteractionZones {
-    /// NSCollectionView 使用左下角原点。只有中间内容层承担选中与双击，
-    /// 顶部和底部 Bar 留给各自的控件与后续扩展。
-    static func zone(at point: NSPoint, in size: NSSize) -> ClipboardCardInteractionZone {
-        guard point.x >= 0, point.x < size.width,
-              point.y >= 0, point.y < size.height
-        else { return .outside }
-        if point.y < ClipboardCardMetrics.footerHeight { return .footer }
-        if point.y >= size.height - ClipboardCardMetrics.headerHeight { return .header }
-        return .content
-    }
-
-    static func selectsCard(at point: NSPoint, in size: NSSize) -> Bool {
-        zone(at: point, in: size) == .content
-    }
-}
-
-enum ClipboardCardPresentation {
-    static func typeLabel(for kind: ClipboardHistoryKind) -> String {
-        switch kind {
-        case .text: return "文本"
-        case .image: return "图片"
-        case .file: return "文件"
-        }
-    }
-
-    static func displayTitle(for item: ClipboardHistoryItem) -> String {
-        if let customTitle = item.title?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !customTitle.isEmpty {
-            return customTitle
-        }
-        return typeLabel(for: item.kind)
-    }
-
-    static func metadata(for item: ClipboardHistoryItem) -> String {
-        switch item.kind {
-        case .text:
-            return "\((item.text ?? item.summary ?? "").count.formatted()) 个字符"
-        case .image:
-            let summary = item.summary ?? "图片"
-            return summary.hasPrefix("图片 ") ? String(summary.dropFirst(3)) : summary
-        case .file:
-            return item.summary ?? "文件"
-        }
-    }
-
-    static func relativeTime(for date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
-        if calendar.isDate(date, inSameDayAs: now) { return "今天" }
-        if calendar.isDateInYesterday(date) { return "昨天" }
-
-        let start = calendar.startOfDay(for: date)
-        let end = calendar.startOfDay(for: now)
-        let days = calendar.dateComponents([.day], from: start, to: end).day ?? 0
-        if days > 1, days < 7 { return "\(days) 天前" }
-        if days >= 7, days < 14 { return "上周" }
-
-        return date.formatted(.dateTime.year().month().day())
-    }
-}
 
 struct ClipboardCardBody: View, Equatable {
     let item: ClipboardHistoryItem
@@ -108,7 +21,6 @@ struct ClipboardCardBody: View, Equatable {
     var onCancelRename: (() -> Void)?
 
     @Environment(\.colorScheme) private var scheme
-    @State private var sourceHeaderColor: Color?
 
     static func == (lhs: ClipboardCardBody, rhs: ClipboardCardBody) -> Bool {
         lhs.item == rhs.item
@@ -124,12 +36,10 @@ struct ClipboardCardBody: View, Equatable {
             header
                 .frame(height: ClipboardCardMetrics.headerHeight)
             contentArea
+                .layoutPriority(-1)
             footer
                 .frame(height: ClipboardCardMetrics.footerHeight)
         }
-        // 固定尺寸必须由卡片主体接住。只在外层 cell 设 frame 时，文本/文件
-        // 内容会按固有高度收缩并被垂直居中，顶部就会露出一条 cell 背景；图片
-        // 预览因为本身是弹性视图所以看不出这个问题。
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.thumbnailBacking(scheme))
         .clipShape(cardShape)
@@ -138,15 +48,6 @@ struct ClipboardCardBody: View, Equatable {
             cardShape
                 .strokeBorder(rim.solidColor, lineWidth: rim.lineWidth)
                 .allowsHitTesting(false)
-        }
-        .task(id: item.sourceApp) {
-            if let cached = AppIconAccentColorProvider.shared.cached(forName: item.sourceApp) {
-                sourceHeaderColor = Color(nsColor: cached)
-            } else if let resolved = await AppIconAccentColorProvider.shared.accent(forName: item.sourceApp) {
-                sourceHeaderColor = Color(nsColor: resolved)
-            } else {
-                sourceHeaderColor = nil
-            }
         }
     }
 
@@ -221,13 +122,15 @@ struct ClipboardCardBody: View, Equatable {
                     .padding(DS.s3)
             case .image:
                 if let url = store.content(of: item).assetURL {
-                    CachedImage(
-                        url: url,
-                        key: item.thumbnailCacheKey,
-                        contentMode: .fill
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
+                    Color.clear
+                        .overlay {
+                            CachedImage(
+                                url: url,
+                                key: item.thumbnailCacheKey,
+                                contentMode: .fill
+                            )
+                        }
+                        .clipped()
                 } else {
                     placeholderIcon("photo")
                 }
@@ -267,7 +170,9 @@ struct ClipboardCardBody: View, Equatable {
     }
 
     private var headerColor: Color {
-        if let sourceHeaderColor { return sourceHeaderColor }
+        if let cached = AppIconAccentColorProvider.shared.cached(forName: item.sourceApp) {
+            return Color(nsColor: cached)
+        }
         switch item.kind {
         case .text: return DS.clipboardTextBar
         case .image: return DS.clipboardImageBar
@@ -487,8 +392,6 @@ private struct ClipboardCardTitleEditor: NSViewRepresentable {
                     editorView: editorView
                 ) else { return event }
 
-                // 普通 NSView 不会主动接管 first responder。点击编辑器外部时显式
-                // 结束 field editor，让卡片、空白区和窗口标题栏都能退出改名状态。
                 field.window?.makeFirstResponder(nil)
                 return event
             }
@@ -561,7 +464,7 @@ private final class ClipboardCardTitleEditorView: NSView {
 }
 
 /// 使用真正的 NSButton 作为卡片内操作控件。虚拟列表的原生单击识别器
-/// 可以据此区分“点卡片”和“点按钮”，避免选中刷新抢走按钮的 mouseUp。
+/// 可以据此区分"点卡片"和"点按钮"，避免选中刷新抢走按钮的 mouseUp。
 private struct ClipboardCardActionButton: NSViewRepresentable {
     let systemName: String
     let help: String
@@ -653,156 +556,5 @@ private struct ClipboardSourceAppIcon: View {
         if icon == nil {
             icon = await AppIconProvider.shared.icon(forName: appName)
         }
-    }
-}
-
-// MARK: 卡片装饰（rim + shadow + hover + selection）
-
-struct ClipboardCardChrome: ViewModifier {
-    let isSelected: Bool
-    let isHovering: Bool
-    var showsSelection: Bool = true
-    var selectionOrdinal: Int? = nil
-
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func body(content: Content) -> some View {
-        content
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous))
-            .overlay { cardRim }
-            .overlay { if showsSelection { selectionRing } }
-            .overlay(alignment: .topTrailing) { if showsSelection { selectionBadge } }
-            .contentShape(Rectangle())
-            .animation(DS.Motion.standard(reduced: reduceMotion), value: isSelected)
-    }
-
-    @ViewBuilder
-    private var selectionRing: some View {
-        if isSelected {
-            RoundedRectangle(
-                cornerRadius: DS.radiusOuter(inner: DS.radiusCard, offset: DS.Glow.ringOffset),
-                style: .continuous
-            )
-            .strokeBorder(
-                DS.accent.opacity(DS.Glow.ringOpacity(scheme)),
-                lineWidth: DS.Glow.ringWidth
-            )
-            .padding(-DS.Glow.ringOffset)
-            .transition(.opacity)
-            .allowsHitTesting(false)
-        }
-    }
-
-    @ViewBuilder
-    private var selectionBadge: some View {
-        if isSelected {
-            Group {
-                if let selectionOrdinal {
-                    Text("\(selectionOrdinal)")
-                } else {
-                    Image(systemName: "checkmark")
-                }
-            }
-                .font(.system(size: DS.font11, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 22, height: 22)
-                .background(DS.accent, in: Circle())
-                .overlay {
-                    Circle().strokeBorder(DS.badgeStroke, lineWidth: 1)
-                }
-                .padding(DS.s2)
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
-                .allowsHitTesting(false)
-        }
-    }
-
-    private var cardRim: some View {
-        let rim = DS.rim(isHovering ? .raised : .content, scheme, hovering: isHovering)
-        return RoundedRectangle(cornerRadius: DS.radiusCard, style: .continuous)
-            .strokeBorder(rim.solidColor, lineWidth: rim.lineWidth)
-            .allowsHitTesting(false)
-    }
-}
-
-// MARK: 类型过滤 + 搜索栏（浮动面板和主窗口 tab 共用）
-
-struct ClipboardFilterBar: View {
-    @ObservedObject var viewModel: ClipboardHistoryViewModel
-    var searchWidth: CGFloat = 140
-    var showsFilters = true
-    var showsSearch = true
-    var usesIconFilters = false
-
-    @ViewBuilder
-    var body: some View {
-        if showsFilters {
-            HStack(spacing: DS.s1) {
-                filterTab("全部", systemImage: "square.grid.2x2", kind: nil)
-                filterTab("文本", systemImage: "text.alignleft", kind: .text)
-                filterTab("图片", systemImage: "photo", kind: .image)
-                filterTab("文件", systemImage: "doc", kind: .file)
-            }
-        }
-        if showsSearch {
-            HStack(spacing: DS.s1) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: DS.font12))
-                    .foregroundStyle(.tertiary)
-                TextField("搜索", text: $viewModel.query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: DS.font13))
-                    .frame(width: searchWidth)
-                    .onChange(of: viewModel.query) { _, _ in
-                        viewModel.searchChanged()
-                    }
-            }
-            .padding(.horizontal, DS.s2)
-            .padding(.vertical, DS.s1)
-            .background(DS.iconPlaceholderFill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-        }
-    }
-
-    private func filterTab(
-        _ title: String,
-        systemImage: String,
-        kind: ClipboardHistoryKind?
-    ) -> some View {
-        Button {
-            viewModel.setTypeFilter(kind)
-        } label: {
-            Group {
-                if usesIconFilters {
-                    Image(systemName: systemImage)
-                        .font(.system(size: DS.font12, weight: .medium))
-                        .frame(width: 26, height: 22)
-                } else {
-                    Text(title)
-                        .font(.system(
-                            size: DS.font12,
-                            weight: viewModel.typeFilter == kind ? .semibold : .regular
-                        ))
-                        .padding(.horizontal, DS.s2)
-                        .padding(.vertical, DS.s1)
-                }
-            }
-            .background(
-                viewModel.typeFilter == kind
-                    ? DS.accent.opacity(0.15)
-                    : Color.clear,
-                in: RoundedRectangle(cornerRadius: DS.radiusSmall)
-            )
-            .foregroundStyle(viewModel.typeFilter == kind ? DS.accent : .secondary)
-        }
-        .buttonStyle(.plain)
-        .help(title)
-        .accessibilityLabel(title)
-    }
-}
-
-extension ClipboardHistoryItem {
-    var thumbnailCacheKey: String { "clipboard:\(contentHash)" }
-    var viewportIdentity: String {
-        id.map { "clipboard-item:\($0)" } ?? "clipboard-hash:\(contentHash)"
     }
 }

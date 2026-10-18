@@ -168,8 +168,12 @@ struct RecyclingCardCollectionView<
                         }
                     }
                     scheduleRefresh(in: host.collectionView, reloadData: false)
-                } else {
-                    scheduleRefresh(in: host.collectionView, reloadData: dataChanged)
+                } else if dataChanged {
+                    scheduleRefresh(in: host.collectionView, reloadData: true)
+                } else if parent.scrollTarget != lastScrollTarget {
+                    // sections 没变但 selection 变了（scrollTarget = primaryID）：
+                    // NSHostingView.rootView 必须更新，否则 isSelected 不反映最新状态。
+                    scheduleRefresh(in: host.collectionView, reloadData: false)
                 }
                 host.needsLayout = true
             }
