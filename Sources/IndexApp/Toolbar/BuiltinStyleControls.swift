@@ -482,6 +482,34 @@ struct FrameCaptureControl: ToolbarControl {
     }
 }
 
+/// 截图阶段切换壳样式：macOS ↔ 浏览器。
+/// 只在已经开壳时出现，避免未开壳时多占一个按钮。
+struct FrameStyleCycleControl: ToolbarControl {
+    let id = "frame.style"
+    var scopes: Set<ActionScope> { [.capture] }
+    var group: ToolbarGroup { .actions }
+    var order: Int { 306 }
+
+    func isVisible(_ context: ToolbarContext) -> Bool {
+        context.annotation.hasEffect(.frame)
+    }
+    func isSelected(_ context: ToolbarContext) -> Bool { false }
+    func accessibilityLabel(_ context: ToolbarContext) -> String {
+        let current = (context.annotation.frameStyle ?? .macos).displayName
+        return "切换壳样式（当前：\(current)）"
+    }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("rectangle.on.rectangle", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        guard context.annotation.hasEffect(.frame) else { return }
+        let current = context.annotation.frameStyle ?? .macos
+        context.annotation.setFrameStyle(current == .macos ? .browser : .macos)
+    }
+}
+
 // MARK: - 效果开关（美化 / 带壳 / 水印 / 捕获信息）
 
 /// 效果层的开关控件。效果不是画笔而是**输出选项** —— 点一下经

@@ -26,6 +26,9 @@ protocol OverlayGestureHost: AnyObject {
     var selectionAIResultLayout: OverlaySelectionAIResultLayout? { get }
     var selectionAIHostIsActive: Bool { get }
     var liveTextOverlay: ImageAnalysisOverlayView? { get }
+    /// 带壳预览卡片的位置（视图局部坐标）。落在卡片上的点击被吞掉，
+    /// 避免用户点预览时误起步一个新选区。
+    var framePreviewRect: CGRect? { get }
 
     func redraw()
     func redrawIfNeeded(_ changed: Bool)
@@ -90,13 +93,14 @@ final class OverlayInteractionRouter {
         self.targets = targets
     }
 
-    /// 默认优先级：AI 结果面板 → AI 任务板 → 工具条 → AI 选区手势 →
+    /// 默认优先级：AI 结果面板 → AI 任务板 → 工具条 → 带壳预览 → AI 选区手势 →
     /// ⌥ 整窗捕获 → plain 双击确认 → 标注 → 选区（兜底，恒消费）。
     static func defaultTargets() -> [any OverlayGestureTarget] {
         [
             OverlayAIResultPanelTarget(),
             OverlayAITaskPaletteTarget(),
             OverlayToolbarTarget(),
+            OverlayFramePreviewTarget(),
             OverlayAIGestureTarget(),
             OverlayFullWindowTarget(),
             OverlayPlainConfirmTarget(),

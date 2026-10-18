@@ -52,6 +52,7 @@ extension ToolbarRegistry {
         // 效果开关统一由 `EffectRegistry` 驱动，新增效果只需在注册表声明一处。
         // 截图阶段常驻的「带壳」入口；效果开关本身仍只给钉图。
         registry.register(FrameCaptureControl())
+        registry.register(FrameStyleCycleControl())
         for descriptor in EffectRegistry.displayOrdered {
             registry.register(EffectToggleControl(descriptor: descriptor))
         }

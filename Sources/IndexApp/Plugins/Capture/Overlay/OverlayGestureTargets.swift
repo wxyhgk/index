@@ -436,6 +436,24 @@ struct OverlayAnnotationTarget: OverlayGestureTarget {
 /// 选区：画新选区、调整已有选区、确认收尾。
 /// 数组里恒在最后，`mouseDown` 恒为 true —— 兜底。
 @MainActor
+extension OverlayGestureHost {
+    var framePreviewRect: CGRect? { nil }
+}
+
+/// 带壳预览卡片：只吞点击，不参与选区/标注。卡片画在 ChromeView 上，
+/// 没有自己的 NSView，所以必须由路由先截住。
+struct OverlayFramePreviewTarget: OverlayGestureTarget {
+    func mouseDown(local: CGPoint, event: NSEvent, host: OverlayGestureHost) -> Bool {
+        host.framePreviewRect?.contains(local) == true
+    }
+    func mouseDragged(local: CGPoint, event: NSEvent, host: OverlayGestureHost) {}
+    func mouseUp(local: CGPoint, event: NSEvent, host: OverlayGestureHost) {}
+    func hover(local: CGPoint, host: OverlayGestureHost) {}
+    func cursor(local: CGPoint, host: OverlayGestureHost) -> OverlayCursorDecision? {
+        host.framePreviewRect?.contains(local) == true ? .set(.arrow) : nil
+    }
+}
+
 struct OverlaySelectionTarget: OverlayGestureTarget {
 
     func mouseDown(local: CGPoint, event: NSEvent, host: OverlayGestureHost) -> Bool {

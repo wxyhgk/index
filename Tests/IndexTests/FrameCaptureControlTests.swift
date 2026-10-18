@@ -31,3 +31,40 @@ final class FrameCaptureControlTests: XCTestCase {
         XCTAssertFalse(control.scopes.contains(.pinned), "钉图已经有 EffectToggleControl，不能重复")
     }
 }
+
+@MainActor
+final class FrameStyleCycleControlTests: XCTestCase {
+
+    private func context(_ annotation: AnnotationState) -> ToolbarContext {
+        ToolbarContext(annotation: annotation, scope: .capture, perform: { _ in })
+    }
+
+    func testStyleControlOnlyVisibleWhenShellOn() {
+        let annotation = AnnotationState(styleStore: FakeStyleStore())
+        let control = FrameStyleCycleControl()
+        let ctx = context(annotation)
+
+        XCTAssertFalse(control.isVisible(ctx))
+        annotation.toggleEffect(.frame)
+        XCTAssertTrue(control.isVisible(ctx))
+    }
+
+    func testStyleControlCyclesMacOSAndBrowser() {
+        let annotation = AnnotationState(styleStore: FakeStyleStore())
+        let control = FrameStyleCycleControl()
+        let ctx = context(annotation)
+        annotation.toggleEffect(.frame)
+
+        XCTAssertEqual(annotation.frameStyle, .macos)
+        control.activate(ctx)
+        XCTAssertEqual(annotation.frameStyle, .browser)
+        control.activate(ctx)
+        XCTAssertEqual(annotation.frameStyle, .macos)
+    }
+
+    func testStyleControlIsNoOpWithoutShell() {
+        let annotation = AnnotationState(styleStore: FakeStyleStore())
+        FrameStyleCycleControl().activate(context(annotation))
+        XCTAssertNil(annotation.frameStyle)
+    }
+}

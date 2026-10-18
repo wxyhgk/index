@@ -12,6 +12,13 @@ import AppKit
 /// 此前 `draw` 有 19 个平铺参数，调用点读起来像配置清单；聚合成结构体后
 /// 「一帧画什么」变成一个可传递、可断言的值。
 @MainActor
+/// 带壳预览卡片：已经合成好的成品缩略图 + 在覆盖层里的位置。
+struct OverlayFramePreview {
+    let image: CGImage
+    let rect: CGRect
+    let styleName: String
+}
+
 struct OverlayRenderState {
     let model: SelectionModel
     let annotation: AnnotationState
@@ -40,6 +47,8 @@ struct OverlayRenderState {
     let hoveredCorner: SelectionModel.Corner?
     /// 鼠标是否在选区内（决定四角绿点显不显示）。
     let pointerInsideSelection: Bool
+    /// 带壳实时预览；nil = 未开壳或还没合成完。
+    let framePreview: OverlayFramePreview?
 }
 
 enum OverlayRenderer {
@@ -302,12 +311,87 @@ enum OverlayRenderer {
             }
         }
 
+        if let framePreview = state.framePreview, !model.isInactive {
+            drawFramePreview(framePreview, ctx: ctx)
+        }
+
         // 放大镜画在最上层，否则会被选区边框和工具条盖住。
         if let magnifier {
             MagnifierRenderer.draw(
                 sample: magnifier.sample, at: magnifier.cursor, in: bounds, ctx: ctx
             )
         }
+    }
+
+    // MARK: - 带壳预览
+
+    @MainActor
+    private static func drawFramePreview(_ preview: OverlayFramePreview, ctx: CGContext) {
+        let panel = preview.rect
+        guard panel.width > 1, panel.height > 1 else { return }
+        let radius: CGFloat = 10
+        let path = CGPath(
+            roundedRect: panel,
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
+        )
+
+        ctx.saveGState()
+        ctx.setShadow(
+            offset: CGSize(width: 0, height: -4),
+            blur: 18,
+            color: NSColor.black.withAlphaComponent(0.45).cgColor
+        )
+        ctx.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 0.9).cgColor)
+        ctx.addPath(path)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.18).cgColor)
+        ctx.setLineWidth(1)
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // 标题：左下原点，用 CoreText 直接排，避免额外翻转。
+        let title = "带壳预览 · \(preview.styleName)"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.85)
+        ]
+        let line = CTLineCreateWithAttributedString(
+            NSAttributedString(string: title, attributes: attrs)
+        )
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        ctx.saveGState()
+        ctx.textMatrix = .identity
+        ctx.textPosition = CGPoint(
+            x: panel.minX + 10,
+            y: panel.maxY - (FramePreviewLayout.headerHeight - (ascent + descent)) / 2 - descent
+        )
+        CTLineDraw(line, ctx)
+        ctx.restoreGState()
+
+        let imageRect = FramePreviewLayout.imageRect(
+            in: panel,
+            imageSize: CGSize(width: preview.image.width, height: preview.image.height)
+        )
+        guard imageRect.width > 0, imageRect.height > 0 else { return }
+        ctx.saveGState()
+        ctx.addPath(CGPath(
+            roundedRect: imageRect,
+            cornerWidth: 6,
+            cornerHeight: 6,
+            transform: nil
+        ))
+        ctx.clip()
+        ctx.interpolationQuality = .high
+        ctx.draw(preview.image, in: imageRect)
+        ctx.restoreGState()
     }
 
     // MARK: - 标注

@@ -109,11 +109,18 @@ final class SelectionOverlayController {
                 guard let self, let view else { return nil }
                 return self.buildCrossDisplayResult(from: view, actionID: actionID)
             }
+            view.buildRenderedPreview = { [weak self, weak view] in
+                guard let self, let view else { return nil }
+                return self.renderFramePreview(from: view)
+            }
             view.onFinish = { [weak self] result in self?.finish(result) }
             view.onSelectionEnded = { [weak self, weak view] in
                 guard let self, let view else { return }
                 // 只有跨屏选区才需要把工具栏切到指针所在屏；单屏保持原行为。
-                guard let region = view.model.confirmedRect,
+                // 壳属于每个 overlay 自己的 AnnotationState：开壳时先不切屏，
+                // 否则新活动屏没有壳层，工具栏会显示成关闭。
+                guard !view.annotation.hasEffect(.frame),
+                      let region = view.model.confirmedRect,
                       self.snapshots.filter({ $0.display.frame.intersects(region) }).count > 1
                 else { return }
                 let mouse = NSEvent.mouseLocation
@@ -219,6 +226,35 @@ final class SelectionOverlayController {
             layers: layers,
             windowCaptureRequest: nil
         )
+    }
+
+    /// 带壳预览的成品图：单屏直接裁，跨屏先拼接，再把所有屏的标注合并进去。
+    private func renderFramePreview(from view: OverlayView) -> CGImage? {
+        guard let region = view.model.confirmedRect else { return nil }
+        let intersecting = snapshots.filter { $0.display.frame.intersects(region) }
+        guard !intersecting.isEmpty else { return nil }
+        let scale = view.model.snapshot.scale
+
+        let base: CGImage?
+        let layers: Layers<ImageSpace>
+        if intersecting.count > 1 {
+            base = MultiDisplayComposer.stitch(
+                region: region,
+                snapshots: intersecting,
+                outputScale: scale
+            )
+            layers = Layers<ImageSpace>(
+                views.flatMap { $0.exportAnnotationLayers(for: region, scale: scale).elements }
+            )
+        } else {
+            base = view.model.makeCroppedImage()
+            layers = view.annotation.exportLayers(
+                selection: view.geometry.annotationRect(fromGlobal: region),
+                scale: scale
+            )
+        }
+        guard let base else { return nil }
+        return LayerRenderer.render(base: base, layers: layers)
     }
 
     /// 活动屏每次重绘后，把全局选区同步给其它屏；其它屏只重绘，不回写。

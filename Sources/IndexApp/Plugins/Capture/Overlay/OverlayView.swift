@@ -18,7 +18,10 @@ final class OverlayView: NSView {
     var buildCrossDisplayResult: ((String) -> SelectionResult?)?
     /// 选区刚确认：coordinator 可把工具栏切到指针所在屏。
     var onSelectionEnded: (() -> Void)?
+    /// 带壳实时预览：coordinator 用当前选区 + 所有图层合成成品缩略图。
+    var buildRenderedPreview: (() -> CGImage?)?
     var onBecameActive: ((OverlayView) -> Void)?
+    var framePreviewRect: CGRect? { framePreview?.rect }
 
     /// 简单模式：选区一确认（松手 / 单击窗口）立刻 emit，不停留在 confirmed 阶段，
     /// 工具条与标注都不会出现。滚动截图用它复用冻结选区来框选滚动区域。
@@ -49,6 +52,11 @@ final class OverlayView: NSView {
     private var hoveredCorner: SelectionModel.Corner?
     /// 鼠标是否在选区内：四角绿点只在 hover 选区时出现。
     private var pointerInsideSelection = false
+    /// 带壳预览：合成后的缩略图与它在覆盖层里的位置。
+    private var framePreview: OverlayFramePreview?
+    private var framePreviewTask: Task<Void, Never>?
+    private var framePreviewSignature: String?
+    private var framePreviewRegion: CGRect?
 
     // MARK: - 组合持有的子状态（原散在主视图的可变状态已下沉）
 
@@ -149,7 +157,8 @@ final class OverlayView: NSView {
             handleAlpha: handleAlpha,
             hoveredHandle: hoveredHandle,
             hoveredCorner: hoveredCorner,
-            pointerInsideSelection: pointerInsideSelection
+            pointerInsideSelection: pointerInsideSelection,
+            framePreview: framePreview
         )
     }
 
@@ -254,6 +263,7 @@ final class OverlayView: NSView {
     func redraw() {
         syncToolbarToolTips()
         chrome.needsDisplay = true
+        refreshFramePreviewIfNeeded()
         onSelectionChanged?()
     }
 
@@ -261,6 +271,73 @@ final class OverlayView: NSView {
     func redrawFromSharedSelection() {
         syncToolbarToolTips()
         chrome.needsDisplay = true
+        refreshFramePreviewIfNeeded()
+    }
+
+    /// 带壳预览只在「已确认 + 开壳 + 活动屏」时存在。
+    /// 合成 4K 成品较重，所以做 140ms 防抖；选区一变先撤掉旧卡片，避免错位。
+    private func refreshFramePreviewIfNeeded() {
+        guard mode == .capture,
+              !model.isInactive,
+              model.phase == .confirmed,
+              annotation.hasEffect(.frame),
+              let region = model.confirmedRect
+        else {
+            clearFramePreview()
+            return
+        }
+
+        let layerSignature = annotation.displayLayers.elements.map {
+            "\($0.id.uuidString.prefix(4)):\($0.rect.x),\($0.rect.y),\($0.rect.w),\($0.rect.h):\($0.text.count)"
+        }.joined(separator: "|")
+        let signature = "\(NSStringFromRect(region))|\(annotation.frameStyle?.rawValue ?? "-")|\(layerSignature)"
+
+        if framePreviewRegion != region, framePreview != nil {
+            framePreview = nil
+            chrome.needsDisplay = true
+        }
+        framePreviewRegion = region
+        guard signature != framePreviewSignature else { return }
+        framePreviewSignature = signature
+        framePreviewTask?.cancel()
+
+        framePreviewTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 140_000_000)
+            guard !Task.isCancelled, let self,
+                  self.framePreviewSignature == signature,
+                  let image = self.buildRenderedPreview?()
+            else { return }
+
+            let selection = self.geometry.viewLocal(fromGlobal: region)
+            let rect = FramePreviewLayout.panelRect(
+                imageSize: CGSize(width: image.width, height: image.height),
+                bounds: self.bounds,
+                selection: selection,
+                obstacles: self.slots.map(\.frame)
+            )
+            guard rect.width > 0, rect.height > 0 else { return }
+            self.framePreview = OverlayFramePreview(
+                image: image,
+                rect: rect,
+                styleName: self.annotation.frameStyle?.displayName ?? FrameSpec.Style.macos.displayName
+            )
+            self.chrome.needsDisplay = true
+        }
+    }
+
+    private func clearFramePreview() {
+        framePreviewTask?.cancel()
+        framePreviewTask = nil
+        framePreviewSignature = nil
+        framePreviewRegion = nil
+        if framePreview != nil {
+            framePreview = nil
+            chrome.needsDisplay = true
+        }
+    }
+
+    deinit {
+        framePreviewTask?.cancel()
     }
 
     private func syncToolbarToolTips() {
