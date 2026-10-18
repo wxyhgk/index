@@ -12,7 +12,7 @@ struct AgentLLMClient: Sendable {
     let model: String
     let apiKey: String
 
-    var isConfigured: Bool { !apiKey.isEmpty && !baseURL.isEmpty }
+    var isConfigured: Bool { !baseURL.isEmpty && !model.isEmpty }
 
     // MARK: - 请求
 
@@ -31,16 +31,18 @@ struct AgentLLMClient: Sendable {
             [
                 "role": "system",
                 "content": """
-                    你是 Index 截图软件的内置 agent。你可以调用工具来查询截图、管理插件、修改配置和计划批量动作。
+                    你是 Index 截图软件的内置 agent。你可以调用工具来查询截图、搜索剪贴板、管理插件、修改配置和计划批量动作。
                     回答用中文，简洁直接。
 
                     重要规则：
-                    - 当用户提到"查/搜/有没有/找"某个内容时，**必须**先调用 search_shots 在截图库里搜索，不要凭自己的知识回答。
+                    - 当用户提到"查/搜/有没有/找"某个截图时，**必须**先调用 search_shots 在截图库里搜索，不要凭自己的知识回答。
                     - search_shots 的 query 用简短核心关键词（如 "DeepSeek" 而非 "DeepSeek api 的价格"），多个关键词用空格分隔。
-                    - 搜索有结果时，基于结果回答；没结果时告诉用户"截图库里没搜到"，不要编造。
+                    - 当用户提到"剪贴板/复制过/最近复制"时，调用 search_clipboard 搜索剪贴板历史。
+                    - **剪贴板即上下文**：当用户说"刚才/之前/那个/复制的/帮我看看报错/用那个配置"且没明确指定内容时，**主动**调用 search_clipboard 获取最近记录作为上下文，不要反问"哪个？"。用 query 传关键词（如"报错"、"配置"），或用 tag 传分类（如"log"、"command"、"code:swift"）。
+                    - 搜索有结果时，基于结果回答；没结果时告诉用户没搜到，不要编造。
                     - 批量动作必须先调用 plan_agent_action，把命中数量和样例展示给用户；只有用户在看到本次预览后明确确认，才能调用 execute_agent_action。
                     - 不得代替用户确认，不得复用旧计划；删除等破坏性动作当前不开放。
-                    - 不要回答截图库之外的问题（如天气、新闻），告诉用户你只能查截图和管理配置。
+                    - 不要回答截图库和剪贴板之外的问题（如天气、新闻），告诉用户你只能查截图、搜剪贴板和管理配置。
                     """
             ]
         ]
@@ -135,6 +137,33 @@ struct AgentLLMClient: Sendable {
             }
         }
         return "（达到最大工具调用轮数）"
+    }
+
+    // MARK: - 单次调用（无 tool calling）
+
+    /// 直接发一次 chat completion，不走工具调用循环。
+    /// 用于剪贴板 AI 整理等"批量分析"场景。
+    func simpleChat(system: String, user: String) async -> String? {
+        guard isConfigured, let url = makeURL() else { return nil }
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": system],
+                ["role": "user", "content": user]
+            ]
+        ]
+        do {
+            let data = try await post(url: url, body: body)
+            guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = root["choices"] as? [[String: Any]],
+                  let message = choices.first?["message"] as? [String: Any],
+                  let content = message["content"] as? String
+            else { return nil }
+            return content
+        } catch {
+            NSLog("[Agent] simpleChat 失败: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     // MARK: - 工具执行

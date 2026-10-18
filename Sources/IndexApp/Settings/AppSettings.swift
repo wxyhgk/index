@@ -132,6 +132,8 @@ final class AppSettings: ObservableObject {
 
         static let clipboardHistoryEnabled = "clipboardHistoryEnabled"
         static let clipboardHistoryRetentionDays = "clipboardHistoryRetentionDays"
+        static let clipboardAIEnabled = "clipboardAIEnabled"
+        static let clipboardAIHour = "clipboardAIHour"
 
         static let enabledPluginIDs = "enabledPluginIDs"
         static let agentEnabled = "agentEnabled"
@@ -251,6 +253,8 @@ final class AppSettings: ObservableObject {
         didSet {
             defaults.set(clipboardHistory.enabled, forKey: Keys.clipboardHistoryEnabled)
             defaults.set(clipboardHistory.retentionDays, forKey: Keys.clipboardHistoryRetentionDays)
+            defaults.set(clipboardHistory.aiEnabled, forKey: Keys.clipboardAIEnabled)
+            defaults.set(clipboardHistory.aiHour, forKey: Keys.clipboardAIHour)
             onClipboardHistoryChanged?()
         }
     }
@@ -340,6 +344,8 @@ final class AppSettings: ObservableObject {
 
             Keys.clipboardHistoryEnabled: ClipboardHistoryPrefs.defaults.enabled,
             Keys.clipboardHistoryRetentionDays: ClipboardHistoryPrefs.defaults.retentionDays,
+            Keys.clipboardAIEnabled: ClipboardHistoryPrefs.defaults.aiEnabled,
+            Keys.clipboardAIHour: ClipboardHistoryPrefs.defaults.aiHour,
 
             // 未写过该偏好的旧用户默认启用全部内置插件。持久化空数组从现在起
             // 具有明确语义：用户关闭了全部插件，不能再被解释成“全开”。
@@ -426,7 +432,9 @@ final class AppSettings: ObservableObject {
         )
         clipboardHistory = ClipboardHistoryPrefs(
             enabled: defaults.bool(forKey: Keys.clipboardHistoryEnabled),
-            retentionDays: defaults.integer(forKey: Keys.clipboardHistoryRetentionDays)
+            retentionDays: defaults.integer(forKey: Keys.clipboardHistoryRetentionDays),
+            aiEnabled: defaults.bool(forKey: Keys.clipboardAIEnabled),
+            aiHour: defaults.integer(forKey: Keys.clipboardAIHour)
         )
         plugin = PluginPrefs(
             enabledPluginIDs: PluginPreferenceMigration.resolveEnabledPluginIDs(
@@ -540,6 +548,8 @@ extension AppSettings: CapturePreferences, RecordingPreferences, ExportPreferenc
 
     var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
     var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }
+    var clipboardAIEnabled: Bool { clipboardHistory.aiEnabled }
+    var clipboardAIHour: Int { clipboardHistory.aiHour }
 
     // Plugin
     var enabledPluginIDs: [String] { plugin.enabledPluginIDs }

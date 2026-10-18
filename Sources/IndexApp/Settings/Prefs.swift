@@ -143,17 +143,25 @@ struct UploadPrefs: Equatable {
     )
 }
 
-/// 剪贴板历史：开关 + 保留天数。
+/// 剪贴板历史：开关 + 保留天数 + AI 整理配置。
 struct ClipboardHistoryPrefs: Equatable {
     var enabled: Bool
     var retentionDays: Int
+    /// AI 每日整理开关（依赖 Agent LLM 配置）。
+    var aiEnabled: Bool
+    /// AI 整理触发时间（24h 制小时，默认 22:00）。
+    var aiHour: Int
 
     /// 保留天数可选值（UI 用）。
     static let retentionChoices = [7, 30, 90]
+    /// AI 整理可选小时（UI 用）。
+    static let aiHourChoices = Array(6...23)
 
     static let defaults = ClipboardHistoryPrefs(
         enabled: true,
-        retentionDays: 30
+        retentionDays: 30,
+        aiEnabled: false,
+        aiHour: 22
     )
 }
 

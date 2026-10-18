@@ -89,6 +89,8 @@ protocol ShortcutPreferences: AnyObject {
 protocol ClipboardHistoryPreferences: AnyObject {
     var clipboardHistoryEnabled: Bool { get }
     var clipboardHistoryRetentionDays: Int { get }
+    var clipboardAIEnabled: Bool { get }
+    var clipboardAIHour: Int { get }
 }
 
 protocol PluginPreferences: AnyObject {

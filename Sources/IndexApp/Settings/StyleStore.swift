@@ -132,6 +132,8 @@ final class FakeStyleStore: ObservableObject, StyleStore,
 
     var clipboardHistoryEnabled: Bool { clipboardHistory.enabled }
     var clipboardHistoryRetentionDays: Int { clipboardHistory.retentionDays }
+    var clipboardAIEnabled: Bool { clipboardHistory.aiEnabled }
+    var clipboardAIHour: Int { clipboardHistory.aiHour }
 
     var enabledPluginIDs: [String] { plugin.enabledPluginIDs }
     var agentEnabled: Bool { plugin.agentEnabled }

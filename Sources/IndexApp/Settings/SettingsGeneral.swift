@@ -101,6 +101,25 @@ struct GeneralSettings: View {
                 }
             }
 
+            // 剪贴板 AI 整理
+            SettingsCard("剪贴板", icon: "doc.on.clipboard") {
+                SettingsRow("AI 每日整理", icon: "wand.and.stars") {
+                    Toggle("", isOn: $settings.clipboardHistory.aiEnabled)
+                        .labelsHidden().toggleStyle(.switch)
+                }
+
+                if settings.clipboardHistory.aiEnabled {
+                    SettingsRow("整理时间", icon: "clock") {
+                        Picker("", selection: $settings.clipboardHistory.aiHour) {
+                            ForEach(ClipboardHistoryPrefs.aiHourChoices, id: \.self) { hour in
+                                Text("\(hour):00").tag(hour)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                }
+            }
+
             // 录屏：小卡片并排
             ToggleCardGrid {
                 ToggleCard(label: "系统声音", icon: "speaker.wave.2", isOn: $settings.recording.recordSystemAudio)

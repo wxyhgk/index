@@ -38,6 +38,18 @@ struct ClipboardHistoryItem: Codable, FetchableRecord, MutablePersistableRecord,
     var lastUsedAt: Date?
     var title: String?
     var isFavorite: Bool
+    /// 结构化标签（JSON 数组，如 ["url","code:swift"]）。本地规则分析 + AI 整理写入。
+    var tags: String?
+    /// AI 推断的工作上下文/项目名（如 "hermes-gateway调试"）。同一 session 的条目聚合展示。
+    var sessionLabel: String?
+
+    /// 判断是否含有指定前缀的标签（"code" 匹配 "code:swift"）。
+    func hasTag(_ tag: String) -> Bool {
+        guard let tags else { return false }
+        let data = Data(tags.utf8)
+        guard let arr = (try? JSONSerialization.jsonObject(with: data)) as? [String] else { return false }
+        return arr.contains { $0 == tag || $0.hasPrefix(tag + ":") }
+    }
 
     /// 展示名：用户起的 title 优先，否则回退 summary。
     var displayName: String {
@@ -110,7 +122,8 @@ final class ClipboardHistoryStore: @unchecked Sendable {
         text: String?,
         assetPath: String?,
         summary: String?,
-        sourceApp: String?
+        sourceApp: String?,
+        tags: String? = nil
     ) throws -> Bool {
         try writer.write { db in
             let existing = try ClipboardHistoryItem
@@ -120,6 +133,7 @@ final class ClipboardHistoryStore: @unchecked Sendable {
             if let existing {
                 var updated = existing
                 updated.capturedAt = now
+                if let tags { updated.tags = tags }
                 try updated.update(db)
                 return false
             }
@@ -135,7 +149,8 @@ final class ClipboardHistoryStore: @unchecked Sendable {
                 capturedAt: now,
                 lastUsedAt: nil,
                 title: nil,
-                isFavorite: false
+                isFavorite: false,
+                tags: tags
             )
             try item.insert(db)
             return true
@@ -152,7 +167,47 @@ final class ClipboardHistoryStore: @unchecked Sendable {
         return url.lastPathComponent
     }
 
+    /// AI 整理批量更新（标题 + tags 合并）。
+    /// tags 参数是新的 JSON 数组字符串，与已有 tags 合并（不覆盖）。
+    /// sessionLabel 为 AI 推断的工作上下文名（如 "hermes-gateway调试"），直接覆盖。
+    func applyAIUpdates(_ updates: [(id: Int64, title: String?, tags: String?, session: String?)]) throws {
+        try writer.write { db in
+            for update in updates {
+                guard var item = try ClipboardHistoryItem.fetchOne(db, key: update.id) else { continue }
+                // 用户自己命名了标题就不让 AI 覆盖；只填充空标题。
+                let hasUserTitle = item.title?.isEmpty == false
+                if let title = update.title, !title.isEmpty, !hasUserTitle {
+                    item.title = title
+                }
+                if let tagsJSON = update.tags, !tagsJSON.isEmpty {
+                    let newTags = ((try? JSONSerialization.jsonObject(with: Data(tagsJSON.utf8))) as? [String]) ?? []
+                    var existing: [String] = []
+                    if let existingTags = item.tags {
+                        existing = ((try? JSONSerialization.jsonObject(with: Data(existingTags.utf8))) as? [String]) ?? []
+                    }
+                    var merged = Set(existing)
+                    for tag in newTags where !merged.contains(where: { $0 == tag || $0.hasPrefix(tag + ":") }) {
+                        merged.insert(tag)
+                    }
+                    item.tags = (try? JSONSerialization.data(withJSONObject: Array(merged).sorted(), options: .sortedKeys))
+                        .flatMap { String(data: $0, encoding: .utf8) }
+                }
+                if let session = update.session, !session.isEmpty {
+                    item.sessionLabel = session
+                }
+                try item.update(db)
+            }
+        }
+    }
+
     // MARK: 查询
+
+    /// 数据库总条数（O(1) 索引扫描，不加载卡片）。
+    func totalCount() -> Int {
+        (try? writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM clipboardHistory") ?? 0
+        }) ?? 0
+    }
 
     /// 按时间倒序取最近 limit 条；query 非空时按 title/summary/text 模糊过滤。
     func recent(limit: Int = 100, query: String? = nil) throws -> [ClipboardHistoryItem] {

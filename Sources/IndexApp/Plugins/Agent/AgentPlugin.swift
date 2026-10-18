@@ -161,6 +161,47 @@ final class AgentPlugin: Plugin {
                 }
             ),
             AgentTool(
+                name: "search_clipboard",
+                description: "搜索剪贴板历史。支持关键词搜索、按 tag 过滤、查看最近记录。用户提到'刚才/之前/那个/复制的'时主动调用",
+                parameters: [
+                    "query": "搜索关键词（可为空）",
+                    "tag": "按标签过滤（如 url, command, log, code:swift, secret）",
+                    "limit": "返回条数（默认 10，最大 30）"
+                ],
+                requiredParameters: [],
+                execute: { input in
+                    let query = (input["query"] ?? "").trimmingCharacters(in: .whitespaces)
+                    let tag = (input["tag"] ?? "").trimmingCharacters(in: .whitespaces)
+                    let limit = min(Int(input["limit"] ?? "") ?? 10, 30)
+                    let items = (try? ClipboardHistoryStore.shared.recent(
+                        limit: limit,
+                        query: query.isEmpty ? nil : query
+                    )) ?? []
+                    let filtered: [ClipboardHistoryItem]
+                    if tag.isEmpty {
+                        filtered = items
+                    } else {
+                        filtered = items.filter { $0.hasTag(tag) }
+                    }
+                    guard !filtered.isEmpty else { return "未找到匹配的剪贴板记录" }
+                    return filtered.map { item in
+                        let time = Self.relativeTime(for: item.capturedAt)
+                        var line = "id=\(item.id ?? -1) [\(item.kind.rawValue)] \(item.displayName.prefix(60))（\(time)）"
+                        line += "\n来源: \(item.sourceApp ?? "未知")"
+                        if let session = item.sessionLabel, !session.isEmpty {
+                            line += "\n项目: \(session)"
+                        }
+                        if let tags = item.tags, tags != "[]" {
+                            line += "\ntags: \(tags)"
+                        }
+                        if let text = item.text {
+                            line += "\n内容: \(String(text.prefix(200)))"
+                        }
+                        return line
+                    }.joined(separator: "\n---\n")
+                }
+            ),
+            AgentTool(
                 name: "open_shot",
                 description: "在图库中打开指定截图（用户说'打开/查看'某张截图时用）",
                 parameters: ["id": "截图 id（数字）"],
@@ -177,5 +218,9 @@ final class AgentPlugin: Plugin {
                 }
             ),
         ]
+    }
+
+    nonisolated private static func relativeTime(for date: Date) -> String {
+        date.formatted(.relative(presentation: .named))
     }
 }

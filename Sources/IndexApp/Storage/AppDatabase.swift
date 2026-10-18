@@ -468,6 +468,19 @@ enum AppDatabase {
             }
         }
 
+        // 剪贴板文本结构化标签：本地规则分析后写入（JSON 数组，如 ["url","code:swift"]）。
+        // 用于面板分类过滤和搜索增强，AI 每日整理可进一步补充。
+        migrator.registerMigration("v18_clipboard_tags") { db in
+            try db.execute(sql: "ALTER TABLE clipboardHistory ADD COLUMN tags TEXT")
+        }
+
+        // AI 推断的工作上下文/项目名（如 "hermes-gateway调试"）。
+        // 同一 session 的条目在面板"项目"视图中聚合展示。
+        migrator.registerMigration("v19_clipboard_session") { db in
+            try db.execute(sql: "ALTER TABLE clipboardHistory ADD COLUMN sessionLabel TEXT")
+            try db.create(index: "clipboardHistory_sessionLabel_idx", on: "clipboardHistory", columns: ["sessionLabel"])
+        }
+
         return migrator
     }
 }

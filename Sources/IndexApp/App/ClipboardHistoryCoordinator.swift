@@ -175,14 +175,31 @@ private actor ClipboardHistoryRecorder {
     }
 
     private func recordText(_ text: String, sourceApp: String?) throws {
-        let hash = ClipboardHistoryCoordinator.hash(Data(text.utf8))
+        let analysis = ClipboardTextAnalyzer.analyze(text)
+
+        // 纯 URL 文本用归一化 URL 做 hash（去追踪参数/尾斜杠），
+        // 同一链接不同来源（带不带 utm 参数）合并为一条。
+        let hash: String
+        if analysis.category == .url, let firstURL = analysis.urls.first {
+            hash = ClipboardHistoryCoordinator.hash(
+                Data(ClipboardTextAnalyzer.normalizeURL(firstURL).utf8)
+            )
+        } else {
+            hash = ClipboardHistoryCoordinator.hash(Data(text.utf8))
+        }
+
+        let tags: String? = analysis.tags.isEmpty
+            ? nil
+            : String(data: try JSONSerialization.data(withJSONObject: analysis.tags), encoding: .utf8)
+
         try store.record(
             kind: .text,
             contentHash: hash,
             text: text,
             assetPath: nil,
             summary: ClipboardHistoryCoordinator.summary(for: text),
-            sourceApp: sourceApp
+            sourceApp: sourceApp,
+            tags: tags
         )
     }
 
