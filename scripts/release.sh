@@ -5,8 +5,12 @@
 #   ./scripts/release.sh patch|minor|major  先把版本号往上调，再发布
 #   ./scripts/release.sh --dry-run      只打印计划，不改任何文件
 #
-# 脚本**不会自动推送**。它跑完会打印最后一步：
-#   git push origin main --follow-tags
+# 脚本**不会自动推送**。它跑完会打印最后两步：
+#   git push origin main
+#   git push origin refs/tags/vX.Y.Z
+#
+# 不要用 `--follow-tags`：它只推 annotated tag。本脚本打的是轻量 tag，
+# 会被漏掉，反而把本地其它历史 annotated tag 一并推上去触发发布。
 #
 # 为什么默认不推送：tag 一旦推上去就会触发 release.yml 组装并公开附件。
 # 推送前应该由人确认签名、版本和 CHANGELOG。
@@ -157,4 +161,5 @@ echo "完成：$tag"
 echo "  $(git log -1 --format='%h %s')"
 echo
 echo "下一步（手动确认后执行）："
-echo "  git push origin main --follow-tags"
+echo "  git push origin main"
+echo "  git push origin refs/tags/${tag}"
