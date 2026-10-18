@@ -510,6 +510,31 @@ struct FrameStyleCycleControl: ToolbarControl {
     }
 }
 
+/// 截图阶段的「隐私打码」：一次检测 + 批量马赛克，不结束截图。
+/// 检测跑在后台，工具条用 `isBusy` 显示进行中。
+struct PrivacyMaskControl: ToolbarControl {
+    let id = ActionID.privacyMask
+    var scopes: Set<ActionScope> { [.capture] }
+    var group: ToolbarGroup { .actions }
+    var order: Int { 307 }
+
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+    func isBusy(_ context: ToolbarContext) -> Bool {
+        context.isActionExecuting(id)
+    }
+    func accessibilityLabel(_ context: ToolbarContext) -> String {
+        "隐私打码（邮箱 / 手机号 / 银行卡 / API 密钥 / 人脸）"
+    }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("lock.shield", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        context.perform(ActionID.privacyMask)
+    }
+}
+
 // MARK: - 效果开关（美化 / 带壳 / 水印 / 捕获信息）
 
 /// 效果层的开关控件。效果不是画笔而是**输出选项** —— 点一下经

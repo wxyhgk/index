@@ -58,6 +58,8 @@ enum ActionID {
     static let compactArrange = "compact-arrange"
     /// 自动马赛克：Vision OCR 检测文字区域，批量添加 pixelate 图层。
     static let autoMosaic = "auto-mosaic"
+    /// 隐私打码：Vision 检测邮箱/手机号/银行卡/API 密钥/人脸，批量添加 pixelate 图层。
+    static let privacyMask = "privacy-mask"
     /// 扫码：Core Image CIDetector 检测选区内二维码，内容复制到剪贴板。
     static let qrScan = "qr-scan"
     /// 水印：在截图右下角叠加半透明文字后复制到剪贴板。

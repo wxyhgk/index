@@ -57,6 +57,10 @@ final class OverlayView: NSView {
     private var framePreviewTask: Task<Void, Never>?
     private var framePreviewSignature: String?
     private var framePreviewRegion: CGRect?
+    /// 隐私打码：检测任务 + 短暂提示。
+    private var privacyMaskTask: Task<Void, Never>?
+    private var privacyMaskNotice: String?
+    private var privacyMaskNoticeTask: Task<Void, Never>?
 
     // MARK: - 组合持有的子状态（原散在主视图的可变状态已下沉）
 
@@ -112,7 +116,10 @@ final class OverlayView: NSView {
                         deactivate: { [weak self] in self?.deactivateSelectionAI() }
                     )
                 ])
-                : .none
+                : .none,
+            isActionExecuting: { [weak self] actionID in
+                actionID == ActionID.privacyMask && self?.privacyMaskTask != nil
+            }
         )
     }
 
@@ -158,7 +165,8 @@ final class OverlayView: NSView {
             hoveredHandle: hoveredHandle,
             hoveredCorner: hoveredCorner,
             pointerInsideSelection: pointerInsideSelection,
-            framePreview: framePreview
+            framePreview: framePreview,
+            privacyMaskNotice: privacyMaskNotice
         )
     }
 
@@ -334,6 +342,8 @@ final class OverlayView: NSView {
 
     deinit {
         framePreviewTask?.cancel()
+        privacyMaskTask?.cancel()
+        privacyMaskNoticeTask?.cancel()
     }
 
     private func syncToolbarToolTips() {
@@ -740,6 +750,11 @@ final class OverlayView: NSView {
             performAutoMosaic()
             return
         }
+        // 隐私打码：检测敏感文本 + 人脸，批量加 pixelate 图层，不结束截图。
+        if actionID == ActionID.privacyMask {
+            performPrivacyMask()
+            return
+        }
         // 跨屏选区：从所有相交的冻结画面拼接，而不是只裁活动屏。
         if let buildCrossDisplayResult,
            let result = buildCrossDisplayResult(actionID) {
@@ -768,6 +783,74 @@ final class OverlayView: NSView {
             layers: layers,
             windowCaptureRequest: nil
         ))
+    }
+
+    /// 隐私打码：对当前选区（跨屏时取活动屏交集）跑系统 Vision 检测，
+    /// 命中的邮箱/手机号/银行卡/密钥/人脸批量转成 pixelate 图层。
+    func performPrivacyMask() {
+        guard privacyMaskTask == nil,
+              model.phase == .confirmed,
+              let region = model.confirmedRect
+        else { return }
+
+        let activeRegion = model.snapshot.frame.intersection(region)
+        guard !activeRegion.isEmpty,
+              let image = model.snapshot.crop(globalRect: activeRegion)
+        else { return }
+
+        let startRegion = region
+        let scale = model.snapshot.scale
+        let displayFrame = model.snapshot.frame
+        redraw()
+        privacyMaskTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let regions = await Task.detached(priority: .userInitiated) {
+                await SensitiveContentDetector().detect(in: image)
+            }.value
+            self.privacyMaskTask = nil
+            guard !Task.isCancelled else { return }
+
+            guard self.model.confirmedRect == startRegion else {
+                self.redraw()
+                return
+            }
+            guard !regions.isEmpty else {
+                NSSound.beep()
+                self.showPrivacyMaskNotice("未检测到敏感内容")
+                NSLog("[Index] 隐私打码：未检测到敏感内容")
+                return
+            }
+
+            let rects = PrivacyMaskGeometry.canvasRects(
+                regions: regions,
+                activeRegion: activeRegion,
+                displayFrame: displayFrame,
+                scale: scale
+            )
+            guard !rects.isEmpty else {
+                NSSound.beep()
+                self.showPrivacyMaskNotice("未检测到敏感内容")
+                return
+            }
+            self.annotation.addAutoMosaic(in: rects, pixelSource: { [weak self] rect in
+                self?.frozenPixels(rect)
+            })
+            self.showPrivacyMaskNotice("已打码 \(rects.count) 处")
+            NSLog("[Index] 隐私打码：\(rects.count) 处")
+            self.redraw()
+        }
+    }
+
+    private func showPrivacyMaskNotice(_ text: String) {
+        privacyMaskNotice = text
+        redraw()
+        privacyMaskNoticeTask?.cancel()
+        privacyMaskNoticeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.privacyMaskNotice = nil
+            self?.chrome.needsDisplay = true
+        }
     }
 
     /// 自动马赛克：Vision API 检测选区内文字区域，批量添加 pixelate 图层。

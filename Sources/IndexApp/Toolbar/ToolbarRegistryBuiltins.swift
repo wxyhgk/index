@@ -53,6 +53,7 @@ extension ToolbarRegistry {
         // 截图阶段常驻的「带壳」入口；效果开关本身仍只给钉图。
         registry.register(FrameCaptureControl())
         registry.register(FrameStyleCycleControl())
+        registry.register(PrivacyMaskControl())
         for descriptor in EffectRegistry.displayOrdered {
             registry.register(EffectToggleControl(descriptor: descriptor))
         }

@@ -48,6 +48,8 @@ struct OverlayRenderState {
     let pointerInsideSelection: Bool
     /// 带壳实时预览；nil = 未开壳或还没合成完。
     let framePreview: OverlayFramePreview?
+    /// 隐私打码的短暂反馈（检测中/结果/未命中）。
+    let privacyMaskNotice: String?
 }
 
 enum OverlayRenderer {
@@ -249,6 +251,9 @@ enum OverlayRenderer {
         // 窗口吸附参考线（红色细线贯穿全屏）。
         if !model.isInactive {
             drawGuides(model.guides, in: bounds, model: model)
+            if let notice = state.privacyMaskNotice {
+                drawConfirmHint(notice, near: local, in: bounds)
+            }
             drawSizeLabel(
                 for: globalRect,
                 near: local,
