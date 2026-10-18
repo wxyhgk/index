@@ -454,6 +454,34 @@ struct ItalicControl: ToolbarControl {
     }
 }
 
+// MARK: - 截图阶段的带壳入口
+
+/// 截图工具条常驻的「带壳」按钮。
+///
+/// `EffectToggleControl` 被限定在钉图 scope，截图阶段一直没有开壳入口；
+/// 这里补一个。壳的参数由 `EffectRegistry.frame` 在点击时按真实窗口标题 /
+/// URL 烤入，导出时由 `LayerRenderer.applyFrame` 生效。
+struct FrameCaptureControl: ToolbarControl {
+    let id = "frame.capture"
+    var scopes: Set<ActionScope> { [.capture] }
+    var group: ToolbarGroup { .actions }
+    var order: Int { 305 }
+
+    func isVisible(_ context: ToolbarContext) -> Bool { true }
+    func isSelected(_ context: ToolbarContext) -> Bool {
+        context.annotation.hasEffect(.frame)
+    }
+    func accessibilityLabel(_ context: ToolbarContext) -> String { "带壳截图（macOS 窗口）" }
+
+    func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState) {
+        ToolbarStyle.drawCenteredSymbol("macwindow", in: frame)
+    }
+
+    func activate(_ context: ToolbarContext) {
+        context.annotation.toggleEffect(.frame)
+    }
+}
+
 // MARK: - 效果开关（美化 / 带壳 / 水印 / 捕获信息）
 
 /// 效果层的开关控件。效果不是画笔而是**输出选项** —— 点一下经
