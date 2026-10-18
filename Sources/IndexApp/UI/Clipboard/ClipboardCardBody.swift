@@ -11,7 +11,7 @@ import AppKit
 struct ClipboardCardBody: View, Equatable {
     let item: ClipboardHistoryItem
     var textLineLimit: Int = 6
-    var store: ClipboardHistoryStore = .shared
+    var store: ClipboardHistoryStore
     var showsRenameAction = false
     var isRenaming = false
     var renameText = ""

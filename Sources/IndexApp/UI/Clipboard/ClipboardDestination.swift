@@ -25,28 +25,11 @@ struct ClipboardContent: View {
     @State private var isScrolling = false
     @State private var isLiveResizing = false
 
-    init(
-        store: ClipboardHistoryStore = .shared,
-        viewModel: ClipboardHistoryViewModel? = nil,
-        selection: ClipboardSelection? = nil,
-        session: ClipboardPageSession? = nil
-    ) {
-        let resolvedSession: ClipboardPageSession
-        if let session {
-            resolvedSession = session
-        } else if viewModel == nil, selection == nil, store === ClipboardHistoryStore.shared {
-            resolvedSession = .shared
-        } else {
-            resolvedSession = ClipboardPageSession(
-                store: store,
-                viewModel: viewModel,
-                selection: selection ?? ClipboardSelection()
-            )
-        }
-        self.store = resolvedSession.viewModel.store
-        _session = ObservedObject(wrappedValue: resolvedSession)
-        _viewModel = ObservedObject(wrappedValue: resolvedSession.viewModel)
-        _selection = ObservedObject(wrappedValue: resolvedSession.selection)
+    init(session: ClipboardPageSession) {
+        self.store = session.viewModel.store
+        _session = ObservedObject(wrappedValue: session)
+        _viewModel = ObservedObject(wrappedValue: session.viewModel)
+        _selection = ObservedObject(wrappedValue: session.selection)
         _thumbnailPreheater = StateObject(wrappedValue: ViewportThumbnailPreheater())
     }
 
@@ -319,7 +302,7 @@ struct ClipboardGridCard: View, Equatable {
     var onBeginRename: (() -> Void)? = nil
     var onCommitRename: ((String) -> Void)? = nil
     var onCancelRename: (() -> Void)? = nil
-    var store: ClipboardHistoryStore = .shared
+    var store: ClipboardHistoryStore
 
     static func == (lhs: ClipboardGridCard, rhs: ClipboardGridCard) -> Bool {
         lhs.item == rhs.item

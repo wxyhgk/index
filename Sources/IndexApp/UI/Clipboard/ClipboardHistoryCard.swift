@@ -13,7 +13,7 @@ struct ClipboardHistoryCard: View, Equatable {
     let isSelected: Bool
     let selectionOrdinal: Int?
     var isHovering = false
-    var store: ClipboardHistoryStore = .shared
+    var store: ClipboardHistoryStore
     var isRenaming = false
     var renameText = ""
     var onRenameTextChange: ((String) -> Void)?

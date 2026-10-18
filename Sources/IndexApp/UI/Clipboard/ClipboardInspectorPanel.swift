@@ -7,21 +7,6 @@ import SwiftUI
 // 底部操作按钮：复制 / 固定 / 删除。
 // ============================================================
 
-struct ClipboardInspectorPanelHost: View {
-
-    @AppStorage(PagePreferences.galleryInspectorShown.key)
-    private var showInspector = PagePreferences.galleryInspectorShown.defaultValue
-    @ObservedObject private var session: ClipboardPageSession
-
-    init(session: ClipboardPageSession? = nil) {
-        _session = ObservedObject(wrappedValue: session ?? .shared)
-    }
-
-    var body: some View {
-        ClipboardInspectorPanel(isPresented: $showInspector, session: session)
-    }
-}
-
 struct ClipboardInspectorPanel: View {
 
     @Binding var isPresented: Bool
@@ -31,30 +16,12 @@ struct ClipboardInspectorPanel: View {
     @ObservedObject private var viewModel: ClipboardHistoryViewModel
     private let store: ClipboardHistoryStore
 
-    init(
-        isPresented: Binding<Bool>,
-        store: ClipboardHistoryStore = .shared,
-        viewModel: ClipboardHistoryViewModel? = nil,
-        selection: ClipboardSelection? = nil,
-        session: ClipboardPageSession? = nil
-    ) {
+    init(isPresented: Binding<Bool>, session: ClipboardPageSession) {
         self._isPresented = isPresented
-        let resolvedSession: ClipboardPageSession
-        if let session {
-            resolvedSession = session
-        } else if viewModel == nil, selection == nil, store === ClipboardHistoryStore.shared {
-            resolvedSession = .shared
-        } else {
-            resolvedSession = ClipboardPageSession(
-                store: store,
-                viewModel: viewModel,
-                selection: selection ?? ClipboardSelection()
-            )
-        }
-        self.store = resolvedSession.viewModel.store
-        _session = ObservedObject(wrappedValue: resolvedSession)
-        _selection = ObservedObject(wrappedValue: resolvedSession.selection)
-        _viewModel = ObservedObject(wrappedValue: resolvedSession.viewModel)
+        self.store = session.viewModel.store
+        _session = ObservedObject(wrappedValue: session)
+        _selection = ObservedObject(wrappedValue: session.selection)
+        _viewModel = ObservedObject(wrappedValue: session.viewModel)
     }
 
     var body: some View {

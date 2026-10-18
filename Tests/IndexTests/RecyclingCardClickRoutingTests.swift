@@ -1,4 +1,5 @@
 import AppKit
+import GRDB
 import SwiftUI
 import XCTest
 @testable import IndexApp
@@ -68,7 +69,8 @@ final class RecyclingCardClickRoutingTests: XCTestCase {
     }
 
     @MainActor
-    func testRenameFieldFocusesAfterLatePanelAttachment() {
+    func testRenameFieldFocusesAfterLatePanelAttachment() throws {
+        let store = try ClipboardHistoryStore(writer: DatabaseQueue())
         var committedTitles: [String] = []
         let item = ClipboardHistoryItem(
             id: 91,
@@ -86,6 +88,7 @@ final class RecyclingCardClickRoutingTests: XCTestCase {
         )
         let host = NSHostingView(rootView: ClipboardCardBody(
             item: item,
+            store: store,
             isRenaming: true,
             renameText: "旧名称",
             onCommitRename: { committedTitles.append($0) }
