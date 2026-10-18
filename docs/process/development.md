@@ -75,6 +75,11 @@ type(scope): 中文摘要
 
 ## 发布
 
+- 一键发布：`./scripts/release.sh patch|minor|major`；不带参数则发布 `Info.plist` 里的当前版本。
+  脚本会校验工作区干净、`main` 与远端同步、门禁全绿，然后生成 `CHANGELOG.md`、更新版本号、
+  提交并打 tag。**它不会自动推送**，最后一步由人执行：
+  `git push origin main --follow-tags`。
+- 先预览：`./scripts/release.sh --dry-run`（只打印版本与变更清单，不改文件）。
 - 版本号以 `Resources/Info.plist` 的 `CFBundleShortVersionString` 为准，tag 必须是 `vX.Y.Z` 且与之一致（`release.yml` 会校验）。
 - 组装只允许 `./build.sh release`；`check.sh --full` 会额外验证组装与签名。
 - 发布前确认工作区干净、`main` 与 `origin/main` 同步、门禁绿。
