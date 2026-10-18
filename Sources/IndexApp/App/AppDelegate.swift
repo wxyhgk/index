@@ -11,6 +11,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let moleculePinner: any MoleculePinning
     /// 录制中每秒刷一次菜单里的「停止录制（mm:ss）」计时。
     private var recordingTimer: Timer?
+    /// 搜索面板的依赖由这里注入，UI 不再自己取 ShotStore.shared。
+    private lazy var searchPanelCoordinator = SearchPanelCoordinator(
+        viewModel: SearchPanelViewModel(
+            shotStore: shotStore,
+            clipboardStore: ClipboardHistoryStore.shared,
+            clipboardViewModel: ClipboardHistoryViewModel.shared
+        )
+    )
 
     // MARK: - URL scheme（index://；兼容 macshot://）
 
@@ -462,7 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleSearchPanel() {
-        SearchPanelCoordinator.shared.togglePanel()
+        searchPanelCoordinator.togglePanel()
     }
 
     @objc private func newQuickNote() {

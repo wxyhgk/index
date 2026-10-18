@@ -17,14 +17,24 @@ final class SearchPanelViewModel: ObservableObject {
     @Published var isSearching = false
 
     private let store: any ShotReading & ShotWriting
+    private let clipboardStore: ClipboardHistoryStore
+    private let clipboardViewModel: ClipboardHistoryViewModel
+    /// 由 coordinator 注入：复制后恢复前台应用并粘贴。
+    var onPasteIntoPreviousApp: (() -> Void)?
     private var searchTask: Task<Void, Never>?
     private var previewLoadTask: Task<Void, Never>?
     private var shotThumbnails: [Int64: NSImage] = [:]
     private var clipboardThumbnails: [Int64: NSImage] = [:]
     private var shotOriginals: [Int64: NSImage] = [:]
 
-    init() {
-        self.store = ShotStore.shared
+    init(
+        shotStore: any ShotReading & ShotWriting,
+        clipboardStore: ClipboardHistoryStore,
+        clipboardViewModel: ClipboardHistoryViewModel
+    ) {
+        self.store = shotStore
+        self.clipboardStore = clipboardStore
+        self.clipboardViewModel = clipboardViewModel
     }
 
     var selectedEntry: SearchEntry? {
@@ -79,7 +89,7 @@ final class SearchPanelViewModel: ObservableObject {
         isSearching = true
         let previousSelectedID = selectedEntry?.id
         let shotStore = self.store
-        let clipboardStore = ClipboardHistoryStore.shared
+        let clipboardStore = self.clipboardStore
 
         Task { [weak self] in
             guard let self else { return }
@@ -191,11 +201,11 @@ final class SearchPanelViewModel: ObservableObject {
             case .image:
                 if let id = clip.id, let cached = clipboardThumbnails[id] {
                     previewImage = cached
-                } else if let url = ClipboardHistoryStore.shared.content(of: clip).assetURL {
+                } else if let url = clipboardStore.content(of: clip).assetURL {
                     previewImage = NSImage(contentsOf: url)
                 }
             case .file:
-                if let url = ClipboardHistoryStore.shared.content(of: clip).assetURL {
+                if let url = clipboardStore.content(of: clip).assetURL {
                     previewImage = NSImage(contentsOf: url)
                 }
             }
@@ -214,7 +224,7 @@ final class SearchPanelViewModel: ObservableObject {
                 }
             case .clipboard(let clip):
                 guard clip.kind == .image, let id = clip.id, clipboardThumbnails[id] == nil else { continue }
-                let url = ClipboardHistoryStore.shared.content(of: clip).assetURL
+                let url = clipboardStore.content(of: clip).assetURL
                 Task.detached { [weak self] in
                     guard let url, let image = NSImage(contentsOf: url) else { return }
                     await MainActor.run { self?.clipboardThumbnails[id] = image }
@@ -231,7 +241,7 @@ final class SearchPanelViewModel: ObservableObject {
         case .shot(let shot):
             return store.originalURL(for: shot)
         case .clipboard(let clip):
-            return ClipboardHistoryStore.shared.content(of: clip).assetURL
+            return clipboardStore.content(of: clip).assetURL
         }
     }
 
@@ -275,7 +285,7 @@ final class SearchPanelViewModel: ObservableObject {
                     parts.append("\(text.count) 字")
                 }
             case .image, .file:
-                if let url = ClipboardHistoryStore.shared.content(of: clip).assetURL,
+                if let url = clipboardStore.content(of: clip).assetURL,
                    let image = NSImage(contentsOf: url) {
                     parts.append("\(Int(image.size.width))×\(Int(image.size.height))")
                     if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -308,21 +318,21 @@ final class SearchPanelViewModel: ObservableObject {
                 Clipboard.copy(image)
             }
         case .clipboard(let clip):
-            ClipboardHistoryViewModel.shared.copyBack(clip)
+            clipboardViewModel.copyBack(clip)
         }
     }
 
     /// 复制 + 恢复前台应用 + Cmd+V（一步到位粘贴）。
     func copyAndPasteSelected() {
         copySelected()
-        SearchPanelCoordinator.shared.closeAndPasteIntoPreviousApp()
+        onPasteIntoPreviousApp?()
     }
 
     /// 剪贴板条目保存到截图库。
     func saveSelectedToLibrary() {
         guard let entry = selectedEntry,
               case .clipboard(let clip) = entry.source else { return }
-        let content = ClipboardHistoryStore.shared.content(of: clip)
+        let content = clipboardStore.content(of: clip)
         guard clip.kind == .image,
               let url = content.assetURL,
               let image = ImageCodec.load(from: url) else { return }
@@ -341,7 +351,7 @@ final class SearchPanelViewModel: ObservableObject {
     func deleteSelected() {
         guard let entry = selectedEntry,
               case .clipboard(let clip) = entry.source else { return }
-        ClipboardHistoryViewModel.shared.delete(clip)
+        clipboardViewModel.delete(clip)
         refresh()
     }
 
@@ -352,7 +362,7 @@ final class SearchPanelViewModel: ObservableObject {
             let url = store.originalURL(for: shot)
             return NSItemProvider(item: url as NSURL, typeIdentifier: UTType.fileURL.identifier)
         case .clipboard(let clip):
-            return ClipboardHistoryViewModel.shared.dragProvider(for: clip)
+            return clipboardViewModel.dragProvider(for: clip)
         }
     }
 }

@@ -334,6 +334,24 @@ else
     bad "UI 层出现 ShotStore.shared 直接方法调用 —— 请通过注入的 store 属性调用"
 fi
 
+section "UI 层直连 store 单例只减不增（棘轮）"
+# 目标：UI 不认识 ShotStore / GalleryViewModel / ClipboardHistoryStore 的单例，
+# 依赖一律由 App 组装层注入。全量替换是渐进式改造，这里用基线棘轮防回潮：
+# 只允许减少，不允许增加；删掉引用后同步下调 scripts/baselines/ui-store-shared.txt。
+ui_shared_baseline_file="scripts/baselines/ui-store-shared.txt"
+ui_shared_pattern='(ShotStore|GalleryViewModel|ClipboardHistoryStore|ClipboardHistoryViewModel)[[:space:]]*=[[:space:]]*\.shared|ShotStore\.shared|GalleryViewModel\.shared|ClipboardHistoryStore\.shared|ClipboardHistoryViewModel\.shared'
+ui_shared_hits=$(grep -rEn "$ui_shared_pattern" --include="*.swift" Sources/IndexApp/UI 2>/dev/null | code_only || true)
+ui_shared_count=$(printf "%s\n" "$ui_shared_hits" | grep -c . || true)
+ui_shared_baseline=$(tr -dc '0-9' < "$ui_shared_baseline_file" 2>/dev/null || true)
+if [ -z "$ui_shared_baseline" ]; then
+    bad "缺少基线文件 $ui_shared_baseline_file"
+elif [ "$ui_shared_count" -gt "$ui_shared_baseline" ]; then
+    printf "%s\n" "$ui_shared_hits" | sed 's/^/    /'
+    bad "UI 直连 store 单例从 $ui_shared_baseline 增加到 $ui_shared_count —— 请注入依赖"
+else
+    ok "UI 直连 store 单例 ${ui_shared_count} 处（基线 ${ui_shared_baseline}，只减不增）"
+fi
+
 # -------------------------------------------------------------------- 可选：打包
 
 if [ "${1:-}" = "--full" ]; then

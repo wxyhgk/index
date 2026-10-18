@@ -9,11 +9,17 @@ import SwiftUI
 
 @MainActor
 final class SearchPanelCoordinator {
-    static let shared = SearchPanelCoordinator()
 
     private var panel: SearchPanel?
-    private let viewModel = SearchPanelViewModel()
+    private let viewModel: SearchPanelViewModel
     private var previousFrontmostApp: NSRunningApplication?
+
+    init(viewModel: SearchPanelViewModel) {
+        self.viewModel = viewModel
+        viewModel.onPasteIntoPreviousApp = { [weak self] in
+            self?.closeAndPasteIntoPreviousApp()
+        }
+    }
 
     func togglePanel() {
         if let panel, panel.isVisible {
