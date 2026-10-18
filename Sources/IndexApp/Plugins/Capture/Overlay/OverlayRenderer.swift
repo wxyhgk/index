@@ -504,16 +504,16 @@ enum OverlayRenderer {
     ) {
         guard alpha > 0 else { return }
 
-        // 四个角只做预览弧线，不再各放一个可拖拽的点。
+        // 四个角只做预览弧线，统一用半透明黑线。
         let arcRadius = max(min(radius, 30), 8)
-        let arcAlpha = (isAdjusting || hovered != nil) ? 0.55 : 0.3
+        let arcAlpha = (isAdjusting || hovered != nil) ? 0.65 : 0.4
         let corners: [(CGPoint, CGFloat, CGFloat)] = [
             (CGPoint(x: local.minX, y: local.maxY), 90, 180),
             (CGPoint(x: local.maxX, y: local.maxY), 0, 90),
             (CGPoint(x: local.minX, y: local.minY), 180, 270),
             (CGPoint(x: local.maxX, y: local.minY), 270, 360)
         ]
-        NSColor.white.withAlphaComponent(arcAlpha * alpha).setStroke()
+        NSColor.black.withAlphaComponent(arcAlpha * alpha).setStroke()
         for (center, startAngle, endAngle) in corners {
             let path = NSBezierPath()
             path.appendArc(
@@ -523,7 +523,7 @@ enum OverlayRenderer {
                 endAngle: endAngle,
                 clockwise: false
             )
-            path.lineWidth = 1
+            path.lineWidth = (isAdjusting || hovered != nil) ? 1.4 : 1.0
             path.stroke()
         }
 
@@ -531,29 +531,26 @@ enum OverlayRenderer {
         let inset = min(22, max(8, min(local.width, local.height) / 3))
         let center = CGPoint(x: local.minX + inset, y: local.maxY - inset)
         let isHovered = hovered != nil || isAdjusting
+        let strokeAlpha = (isHovered ? 0.8 : 0.55) * alpha
+        NSColor.black.withAlphaComponent(strokeAlpha).setStroke()
 
+        // 空心圈 + 斜向握把线：不填充，避免盖住截图内容。
         let ringSize: CGFloat = isHovered ? 20 : 16
-        let dotSize: CGFloat = isHovered ? 7 : 5
-        NSColor.white.withAlphaComponent((isHovered ? 0.4 : 0.25) * alpha).setFill()
-        NSBezierPath(ovalIn: CGRect(
+        let ring = NSBezierPath(ovalIn: CGRect(
             x: center.x - ringSize / 2,
             y: center.y - ringSize / 2,
             width: ringSize,
             height: ringSize
-        )).fill()
+        ))
+        ring.lineWidth = isHovered ? 1.8 : 1.2
+        ring.stroke()
 
-        let dotRect = CGRect(
-            x: center.x - dotSize / 2,
-            y: center.y - dotSize / 2,
-            width: dotSize,
-            height: dotSize
-        )
-        let dot = NSBezierPath(ovalIn: dotRect)
-        NSColor.white.withAlphaComponent(alpha).setFill()
-        dot.fill()
-        NSColor.black.withAlphaComponent(0.35 * alpha).setStroke()
-        dot.lineWidth = 0.5
-        dot.stroke()
+        let gripLength: CGFloat = isHovered ? 10 : 8
+        let grip = NSBezierPath()
+        grip.move(to: CGPoint(x: center.x - gripLength / 2, y: center.y + gripLength / 2))
+        grip.line(to: CGPoint(x: center.x + gripLength / 2, y: center.y - gripLength / 2))
+        grip.lineWidth = isHovered ? 1.8 : 1.2
+        grip.stroke()
 
         if radius > 0 || isHovered, local.width >= 120 {
             drawRadiusLabel(radius: radius, near: center, in: local, alpha: alpha)
@@ -564,7 +561,7 @@ enum OverlayRenderer {
         let text = "圆角 \(Int(radius.rounded()))"
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: DS.font11, weight: .medium),
-            .foregroundColor: NSColor.white
+            .foregroundColor: NSColor.black.withAlphaComponent(0.85 * alpha)
         ]
         let textSize = (text as NSString).size(withAttributes: attrs)
         let padding: CGFloat = 5
@@ -578,7 +575,7 @@ enum OverlayRenderer {
         box.origin.x = max(local.minX + 4, box.origin.x)
         box.origin.y = min(max(local.minY + 4, box.origin.y), local.maxY - box.height - 4)
 
-        NSColor.black.withAlphaComponent(0.75 * alpha).setFill()
+        NSColor.white.withAlphaComponent(0.78 * alpha).setFill()
         NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
         (text as NSString).draw(
             at: NSPoint(x: box.minX + padding, y: box.minY + padding / 2),
