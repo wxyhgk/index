@@ -75,7 +75,7 @@ final class SelectionCornerRadiusTests: XCTestCase {
         }
     }
 
-    func testDragOutwardIncreasesRadiusFromEveryCorner() {
+    func testDragInwardIncreasesRadiusFromEveryCorner() {
         for corner in SelectionModel.Corner.allCases {
             let model = confirmedModel()
             let rect = try! XCTUnwrap(model.confirmedRect)
@@ -83,8 +83,9 @@ final class SelectionCornerRadiusTests: XCTestCase {
             let (dx, dy) = outwardDirection(for: corner)
 
             model.beginCornerAdjust(corner, at: handle)
+            // 向选区中心拖：即 outward 方向的反向。
             XCTAssertTrue(model.updateCornerAdjust(
-                to: CGPoint(x: handle.x + dx * 20, y: handle.y + dy * 20)
+                to: CGPoint(x: handle.x - dx * 20, y: handle.y - dy * 20)
             ))
             XCTAssertEqual(model.cornerRadius, 40 / CGFloat(2).squareRoot(), accuracy: 0.01, "\(corner)")
             model.endCornerAdjust()
@@ -102,14 +103,17 @@ final class SelectionCornerRadiusTests: XCTestCase {
         model.endCornerAdjust()
     }
 
-    func testDragInwardClampsToZero() {
+    func testDragOutwardClampsToZero() {
         let model = confirmedModel()
         let rect = try! XCTUnwrap(model.confirmedRect)
         let handle = model.cornerHandlePoint(for: .bottomLeft, in: rect)
+        let (dx, dy) = outwardDirection(for: .bottomLeft)
         XCTAssertTrue(model.setCornerRadius(20))
 
         model.beginCornerAdjust(.bottomLeft, at: handle)
-        model.updateCornerAdjust(to: CGPoint(x: handle.x + 100, y: handle.y + 100))
+        model.updateCornerAdjust(
+            to: CGPoint(x: handle.x + dx * 100, y: handle.y + dy * 100)
+        )
         XCTAssertEqual(model.cornerRadius, 0, accuracy: 0.001)
     }
 

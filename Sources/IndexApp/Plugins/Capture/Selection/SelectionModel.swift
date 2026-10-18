@@ -188,12 +188,13 @@ final class SelectionModel {
         guard let corner = adjustingCorner, let rect = confirmedRect else { return false }
         let dx = global.x - cornerAdjustStartPoint.x
         let dy = global.y - cornerAdjustStartPoint.y
-        // 向外拖（远离选区中心）= 增大圆角；四个角的方向各自不同。
+        // 向选区内侧拖（把角往里收）= 增大圆角；向外拖回直角。
+        // dirX/dirY 是「由内指向角外」的方向，所以取负号。
         let dirX: CGFloat = (corner == .topLeft || corner == .bottomLeft) ? -1 : 1
         let dirY: CGFloat = (corner == .topLeft || corner == .topRight) ? 1 : -1
         let outward = (dx * dirX + dy * dirY) / CGFloat(2).squareRoot()
         let maxRadius = max(0, min(rect.width, rect.height) / 2 - 1)
-        cornerRadius = max(0, min(cornerAdjustStartRadius + outward, maxRadius))
+        cornerRadius = max(0, min(cornerAdjustStartRadius - outward, maxRadius))
         return true
     }
 
