@@ -17,9 +17,28 @@ Index 只能在 macOS 上构建：AppKit、ScreenCaptureKit 和 Vision 在 Linux
 完整检查，再通过 `build.sh release` 组装 App，最后把 ZIP 与 SHA-256 上传到 GitHub
 Releases。工作流也支持手动选择一个已经存在、且与 `Info.plist` 版本一致的标签重新出包。
 
-仓库尚未配置 Developer ID 与 Apple 公证凭据，因此当前 CI 附件明确标记为未公证预览版，
-并使用 `INDEX_ALLOW_ADHOC=1` 这一显式例外。它适合体验，不代表正式签名发行；本地固定
-开发证书不会上传到公共 CI。
+Release job **硬性要求**以下仓库 secrets，缺任何一项都会在打包前失败：
+
+| Secret | 内容 |
+|---|---|
+| `MACOS_CERTIFICATE_P12_BASE64` | Developer ID Application 身份导出的 `.p12`，base64 后的一行 |
+| `MACOS_CERTIFICATE_PASSWORD` | 上述 `.p12` 的导出密码 |
+| `NOTARY_APPLE_ID` | Apple ID 邮箱 |
+| `NOTARY_APP_SPECIFIC_PASSWORD` | 在 appleid.apple.com 生成的 App 专用密码 |
+| `NOTARY_TEAM_ID` | 团队 ID（本仓库为 `6686SQS8QR`） |
+
+设置步骤：
+
+1. 钥匙串访问 → 我的证书 → 选中 `Developer ID Application: guan kun (6686SQS8QR)` →
+   右键导出为 `.p12` 并设置导出密码。**不要用 `security export`**——它会导出钥匙串里的全部身份。
+2. `base64 -i DeveloperID.p12 -o /tmp/cert.b64`
+3. `gh secret set MACOS_CERTIFICATE_P12_BASE64 < /tmp/cert.b64`
+4. `gh secret set MACOS_CERTIFICATE_PASSWORD`（交互输入，不要写进命令历史）
+5. `gh secret set NOTARY_APPLE_ID` / `gh secret set NOTARY_APP_SPECIFIC_PASSWORD`
+6. 删除 `/tmp/cert.b64`，然后重跑 release workflow。
+
+本地固定开发证书（`Index Dev`）不会上传到公共 CI；ad-hoc 只允许显式
+`INDEX_ALLOW_ADHOC=1`，且仅用于本地临时验证，不进 Release 流水线。
 
 ## 本地提交前
 
@@ -57,9 +76,8 @@ Release App 只能通过以下命令组装：
 [`docs/errors/2026-08-11-running-app-rebuild-tcc-identity.md`](errors/2026-08-11-running-app-rebuild-tcc-identity.md)。
 
 本地开发可先运行 `./scripts/make-dev-cert.sh` 创建固定的 `Index Dev` 身份。该证书只适合
-开发机，不适合向其他用户分发。GitHub Release 的正式可下载 App 应使用 Developer ID
-Application 签名并完成 Apple notarization；接入正式凭据后，应移除工作流中的 ad-hoc
-预览例外并取消 prerelease 标记。
+开发机，不适合向其他用户分发。GitHub Release 的附件由 `release.yml` 用 Developer ID
+签名并完成 Apple notarization；所需 secrets 见上方表格。
 
 ## GitLab 兼容
 
