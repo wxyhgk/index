@@ -1,0 +1,63 @@
+name: 开发任务
+description: 一个可独立验证、可独立回滚的变更
+title: "[任务] "
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标
+      description: 一句话说明要改变什么。先写问题，不写方案。
+      placeholder: 例如：截图选区内按 P 可以画多边形选区
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: 非目标
+      description: 这次明确不做什么，防止范围膨胀。
+      placeholder: 例如：不改图库编辑器里的选择逻辑
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 怎样算完成。写成可以判断真假的句子。
+      placeholder: |
+        - [ ] 按 P 进入多边形模式，⏎ 闭合
+        - [ ] 闭合后裁剪结果是多边形掩膜
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: 验证命令
+      description: 合并前必须跑的命令；需要人工验证的桌面行为也写在这里。
+      value: |
+        ./scripts/check.sh
+        # 真实桌面验证（需要时写清步骤）：
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响范围
+      description: 用来判断要不要走 PR、要不要人工验证。
+      multiple: true
+      options:
+        - 截图 / 覆盖层
+        - 标注
+        - 工具条
+        - 剪贴板
+        - 钉图
+        - 图库 / 内容库
+        - 录屏
+        - 输入法
+        - 同步 / 存储
+        - 平台 / 签名
+    validations:
+      required: true
