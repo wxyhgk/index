@@ -221,21 +221,3 @@ final class GalleryDestinationRegistry {
         id.flatMap { destination(id: $0) } ?? ordered().first
     }
 }
-
-/// 详情面板的现成宿主：自己接那个偏好开关，选项从装配上下文传入数据会话。
-struct GalleryInspectorPanelHost: View {
-
-    @AppStorage(PagePreferences.galleryInspectorShown.key)
-    private var showInspector = PagePreferences.galleryInspectorShown.defaultValue
-    let store: ShotStore
-    let viewModel: GalleryViewModel
-
-    init(store: ShotStore = .shared, viewModel: GalleryViewModel? = nil) {
-        self.store = store
-        self.viewModel = viewModel ?? .resolve(for: store)
-    }
-
-    var body: some View {
-        GalleryInspectorPanel(isPresented: $showInspector, store: store, viewModel: viewModel)
-    }
-}

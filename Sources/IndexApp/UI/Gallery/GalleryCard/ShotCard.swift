@@ -14,7 +14,7 @@ struct ShotCard: View, Equatable {
     let isRecording: Bool
     let isHovering: Bool
     let onToggleFavorite: () -> Void
-    var store: ShotStore = .shared
+    var store: ShotStore
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

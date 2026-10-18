@@ -25,15 +25,13 @@ struct GalleryPageHeader: View {
 
     @MainActor
     init(
-        store: ShotStore = .shared,
-        viewModel: GalleryViewModel? = nil,
+        store: ShotStore,
+        viewModel: GalleryViewModel,
         scope: GalleryContentScope = .library,
         style: GalleryPageHeaderStyle = .standard
     ) {
         _store = ObservedObject(wrappedValue: store)
-        let resolvedViewModel = viewModel
-            ?? .resolve(for: store)
-        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        _viewModel = ObservedObject(wrappedValue: viewModel)
         self.scope = scope
         self.style = style
     }

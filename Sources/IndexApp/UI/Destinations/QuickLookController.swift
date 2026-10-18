@@ -24,15 +24,13 @@ final class QuickLookController: NSObject {
     private var storeCancellable: AnyCancellable?
     /// 同步进行中标记，切断「面板 → 选中 → 面板」的回环。
     private var isSyncing = false
-    /// 可注入的读写源，默认 shared，单测可替。
-    var store: ShotStore = .shared
-    private var viewModel: GalleryViewModel = .shared
+    /// 由窗口装配点注入；不再有 `.shared` 默认值。
+    let store: ShotStore
+    private let viewModel: GalleryViewModel
 
-    override init() { super.init() }
-
-    init(store: ShotStore) {
+    init(store: ShotStore, viewModel: GalleryViewModel) {
         self.store = store
-        self.viewModel = .resolve(for: store)
+        self.viewModel = viewModel
         super.init()
     }
 

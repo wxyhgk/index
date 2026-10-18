@@ -17,12 +17,16 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting, NSWi
     /// 键盘导航。窗口级控制器，生命周期跟随窗口。
     let keyboard = GalleryKeyboard()
     /// 空格 Quick Look。窗口级控制器，生命周期跟随窗口。
-    let quickLook = QuickLookController()
+    lazy var quickLook = QuickLookController(store: shotStore, viewModel: galleryViewModel)
     /// 跨页批量复制/导出的单飞状态。窗口级会话状态，生命周期跟随窗口。
     let batchActivity = GalleryBatchActivity()
     /// 编辑器的同步保存握手。由窗口持有并显式下传，不能另建全局单例：
     /// `windowShouldClose` 与当前 EditorView 必须操作同一份会话。
     let editorSessionRelay = EditorSessionRelay()
+
+    /// 图库窗口的组装根：store 与 viewModel 只在这里取一次，往下全部注入。
+    private let shotStore = ShotStore.shared
+    private let galleryViewModel = GalleryViewModel.shared
 
     /// 订阅编辑模式切换：改窗口标题 + 进编辑时收掉 Quick Look 面板。
     private var editingCancellable: AnyCancellable?
@@ -35,7 +39,10 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting, NSWi
         let hosting = NSHostingController(
             rootView: GalleryView(
                 styleStore: AppSettings.shared,
-                editorSessionRelay: editorSessionRelay
+                editorSessionRelay: editorSessionRelay,
+                store: shotStore,
+                viewModel: galleryViewModel,
+                destinationRegistry: .shared
             )
                 .environmentObject(mode)
                 .environmentObject(selection)
@@ -183,7 +190,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting, NSWi
         guard !selection.selectedIDs.isEmpty else { return }
         guard !batchActivity.isBusy else { return }
         if let shots = GalleryBatch.loadedSelectedShots(
-            displayedShots: GalleryViewModel.shared.displayShots
+            displayedShots: galleryViewModel.displayShots
         ) {
             GalleryBatch.copyImages(shots)
         } else {
@@ -194,7 +201,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting, NSWi
     @objc override func selectAll(_ sender: Any?) {
         guard mode.mode == .library else { return }
         Task {
-            let ids = await GalleryViewModel.shared.allMatchingIDs()
+            let ids = await galleryViewModel.allMatchingIDs()
             selection.selectAll(ids)
         }
     }
@@ -237,7 +244,7 @@ final class GalleryWindowController: NSWindowController, GalleryPresenting, NSWi
         // 窗口先响应用户，再在 DatabasePool 的读连接上建立当前查询观察。
         // 多次 show 时取消旧等待；ShotStore 自己的 generation 会丢弃迟到快照。
         GallerySessionLifecycle.shared.runReplacing(.initialReload) {
-            await GalleryViewModel.shared.reloadInBackground()
+            await self.galleryViewModel.reloadInBackground()
         }
     }
 

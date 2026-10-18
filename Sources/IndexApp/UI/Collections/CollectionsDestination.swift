@@ -45,7 +45,7 @@ struct CollectionsDestination: GalleryDestination {
     let defaultChrome = GalleryDestinationChrome.overview
     private let navigation = CollectionsNavigationState()
 
-    func badge(store: ShotStore = .shared) -> Int? {
+    func badge(store: ShotStore) -> Int? {
         let count = store.collectionCount()
         return count > 0 ? count : nil
     }

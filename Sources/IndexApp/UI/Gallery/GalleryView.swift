@@ -47,14 +47,12 @@ struct GalleryView: View {
     init(
         styleStore: any AnnotationStylePreferences,
         editorSessionRelay: EditorSessionRelay,
-        store: ShotStore = .shared,
-        viewModel: GalleryViewModel? = nil,
-        destinationRegistry: GalleryDestinationRegistry = .shared
+        store: ShotStore,
+        viewModel: GalleryViewModel,
+        destinationRegistry: GalleryDestinationRegistry
     ) {
         _store = ObservedObject(wrappedValue: store)
-        let resolvedViewModel = viewModel
-            ?? .resolve(for: store)
-        self.viewModel = resolvedViewModel
+        self.viewModel = viewModel
         self.styleStore = styleStore
         self.editorSessionRelay = editorSessionRelay
         self.destinationRegistry = destinationRegistry

@@ -30,7 +30,7 @@ struct GalleryBottomBar: View {
     init(
         showInspector: Binding<Bool>,
         destinationID: Binding<String>,
-        viewModel: GalleryViewModel = .shared,
+        viewModel: GalleryViewModel,
         destinationRegistry: GalleryDestinationRegistry,
         destinationChrome: GalleryDestinationChromeState
     ) {

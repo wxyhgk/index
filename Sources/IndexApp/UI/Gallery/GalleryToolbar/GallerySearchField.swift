@@ -17,7 +17,7 @@ struct GallerySearchField: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(viewModel: GalleryViewModel = .shared, settings: AppSettings = .shared) {
+    init(viewModel: GalleryViewModel, settings: AppSettings = .shared) {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
         self._settings = ObservedObject(wrappedValue: settings)
     }

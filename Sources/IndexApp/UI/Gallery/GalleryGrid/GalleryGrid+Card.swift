@@ -85,7 +85,8 @@ extension GalleryGrid {
             isFavorite: shot.id.map(store.isFavorite) ?? false,
             isRecording: recordingAsset(for: shot).isRecording,
             isHovering: isHovering,
-            onToggleFavorite: { store.toggleFavorite(shot) }
+            onToggleFavorite: { store.toggleFavorite(shot) },
+            store: store
         )
         .equatable()
         .id(shot.id)

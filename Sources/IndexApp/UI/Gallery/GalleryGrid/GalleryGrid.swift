@@ -38,8 +38,8 @@ struct GalleryGrid: View {
     private let chrome: GalleryGridChrome
 
     init(
-        store: ShotStore = .shared,
-        viewModel: GalleryViewModel? = nil,
+        store: ShotStore,
+        viewModel: GalleryViewModel,
         sessionLifecycle: GallerySessionLifecycle? = nil,
         settings: AppSettings = .shared,
         scope: GalleryContentScope = .library,
@@ -47,13 +47,11 @@ struct GalleryGrid: View {
     ) {
         _store = ObservedObject(wrappedValue: store)
         _sessionLifecycle = ObservedObject(wrappedValue: sessionLifecycle ?? .shared)
-        let resolvedViewModel = viewModel
-            ?? .resolve(for: store)
-        self.viewModel = resolvedViewModel
-        let initialShots = resolvedViewModel.displayShots
+        self.viewModel = viewModel
+        let initialShots = viewModel.displayShots
         let initialSections: [ShotSection]
-        if resolvedViewModel.semanticMode,
-           resolvedViewModel.semanticResults != nil,
+        if viewModel.semanticMode,
+           viewModel.semanticResults != nil,
            !initialShots.isEmpty {
             initialSections = [ShotSection(
                 id: "语义",
@@ -66,7 +64,7 @@ struct GalleryGrid: View {
             initialSections = ShotSection.group(initialShots)
         }
         _sections = State(initialValue: initialSections)
-        _presentation = StateObject(wrappedValue: GalleryGridPresentation(viewModel: resolvedViewModel))
+        _presentation = StateObject(wrappedValue: GalleryGridPresentation(viewModel: viewModel))
         _thumbnailPreheater = StateObject(wrappedValue: ViewportThumbnailPreheater())
         _imageImporter = ObservedObject(wrappedValue: .resolve(for: store))
         _settings = ObservedObject(wrappedValue: settings)

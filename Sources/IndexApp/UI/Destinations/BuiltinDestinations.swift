@@ -84,7 +84,7 @@ struct LibraryDestination: GalleryDestination {
         self.clipboardSession = clipboardSession ?? ClipboardPageSession()
     }
 
-    func badge(reader: ShotReading = ShotStore.shared) -> Int? {
+    func badge(reader: ShotReading) -> Int? {
         let count = reader.totalCount
         return count > 0 ? count : nil
     }
@@ -163,8 +163,8 @@ struct ContentLibraryView: View {
     init(
         session: ContentLibrarySession = .shared,
         clipboardSession: ClipboardPageSession = .shared,
-        store: ShotStore = .shared,
-        viewModel: GalleryViewModel = .shared,
+        store: ShotStore,
+        viewModel: GalleryViewModel,
         destinationChrome: GalleryDestinationChromeState
     ) {
         _session = ObservedObject(wrappedValue: session)
@@ -318,14 +318,12 @@ private struct MediaLibraryContent: View {
     let scope: GalleryContentScope
 
     init(
-        store: ShotStore = .shared,
+        store: ShotStore,
         scope: GalleryContentScope,
-        viewModel: GalleryViewModel? = nil
+        viewModel: GalleryViewModel
     ) {
         _store = ObservedObject(wrappedValue: store)
-        let resolvedViewModel = viewModel
-            ?? .resolve(for: store)
-        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        _viewModel = ObservedObject(wrappedValue: viewModel)
         self.scope = scope
     }
 

@@ -52,15 +52,13 @@ private struct AppsContent: View {
     @ObservedObject private var viewModel: GalleryViewModel
 
     init(
-        store: ShotStore = .shared,
-        viewModel: GalleryViewModel? = nil,
+        store: ShotStore,
+        viewModel: GalleryViewModel,
         navigation: AppsNavigationState? = nil,
         destinationChrome: GalleryDestinationChromeState
     ) {
         _store = ObservedObject(wrappedValue: store)
-        let resolvedViewModel = viewModel
-            ?? .resolve(for: store)
-        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        _viewModel = ObservedObject(wrappedValue: viewModel)
         _navigation = ObservedObject(wrappedValue: navigation ?? AppsNavigationState())
         _destinationChrome = ObservedObject(wrappedValue: destinationChrome)
     }

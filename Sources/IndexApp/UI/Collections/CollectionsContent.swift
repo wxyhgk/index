@@ -27,15 +27,13 @@ struct CollectionsContent: View {
     @State private var collectionClipboardItems: [ClipboardHistoryItem] = []
 
     init(
-        store: ShotStore = .shared,
-        viewModel: GalleryViewModel? = nil,
+        store: ShotStore,
+        viewModel: GalleryViewModel,
         navigation: CollectionsNavigationState? = nil,
         destinationChrome: GalleryDestinationChromeState
     ) {
         _store = ObservedObject(wrappedValue: store)
-        let resolvedViewModel = viewModel
-            ?? .resolve(for: store)
-        _viewModel = ObservedObject(wrappedValue: resolvedViewModel)
+        _viewModel = ObservedObject(wrappedValue: viewModel)
         _navigation = ObservedObject(wrappedValue: navigation ?? CollectionsNavigationState())
         _destinationChrome = ObservedObject(wrappedValue: destinationChrome)
     }
