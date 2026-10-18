@@ -10,15 +10,16 @@ import AppKit
 /// 形成反馈回路 —— 窗口拖窄 → 工具条折行 → 底部条带变高 → 显示倍率变了。
 /// 现在工具条是独立的一块（钉图上更是独立的窗口），只有位置随宿主走。
 ///
-/// PixPin 形态：上行 = 工具 + 动作，下行 = 样式（颜色/粗细/字号等，仅当
-/// 当前工具声明了对应 `styleAxes` 时出现）。两行各自圆角底板，行距 `interRowGap`。
+/// 两栏形态：第一栏 = 入口（标注/放大/AI选区）+ 动作（复制/保存/录屏/GIF/更多）；
+/// 第二栏 = 标注子工具 + 样式 + 历史（仅标注模式激活时出现）。
+/// 两行各自圆角底板，行距 `interRowGap`。
 @MainActor
 enum ToolbarLayout {
 
     static var rowHeight: CGFloat { ToolbarStyle.rowHeight }
     /// 工具条与它依附的矩形之间的固定间距。
     static var gap: CGFloat { ToolbarStyle.anchorGap }
-    /// 两行之间的间距（仅当样式行存在时）。
+    /// 两行之间的间距（仅当第二栏存在时）。
     static var interRowGap: CGFloat { 8 }
 
     // MARK: - 内容
@@ -32,12 +33,17 @@ enum ToolbarLayout {
             .controls(for: context.scope)
             .filter { $0.isVisible(context) }
         guard let maximumWidth else { return natural }
-        let main = natural.filter { !isStyleRow($0.group) }
-        guard rowWidth(main, context: context) > maximumWidth else { return natural }
+        let main = natural.filter { !isDetailRow($0.group) }
+        let detail = natural.filter { isDetailRow($0.group) }
+
+        // 第二栏超宽时收起（标注子工具仍可通过快捷键激活）
+        let detailFits = rowWidth(detail, context: context) <= maximumWidth
+        let candidates = detailFits ? natural : main
+        guard rowWidth(main, context: context) > maximumWidth else { return candidates }
 
         // 窄屏先只收紧出口动作的文字，工具、历史和动作本身一个都不丢；
         // 完整名称仍由 tooltip 和键盘焦点提示提供。
-        return natural.map { control in
+        return candidates.map { control in
             guard let action = control as? ActionControl else { return control }
             return ActionControl(
                 descriptor: action.descriptor,
@@ -59,10 +65,13 @@ enum ToolbarLayout {
         return count
     }
 
-    // MARK: - 行切分（PixPin 两行）
+    // MARK: - 行切分（PixPin 两行：上行工具+操作，下行颜色+线宽+字号）
 
-    /// 样式行判定：仅 `style` 组进下行，其余（tools/history/actions）进上行。
-    private static func isStyleRow(_ group: ToolbarGroup) -> Bool { group == .style }
+    /// 第二栏判定：`.annotation` + `.style` + `.history` 进第二行，
+    /// 其余（`.entry` + `.actions`）进第一行。
+    private static func isDetailRow(_ group: ToolbarGroup) -> Bool {
+        group == .annotation || group == .style || group == .history
+    }
 
     private static func controlWidth(
         _ control: any ToolbarControl,
@@ -70,7 +79,7 @@ enum ToolbarLayout {
         compactMain: Bool
     ) -> CGFloat {
         let natural = control.width(context)
-        guard compactMain, !isStyleRow(control.group) else { return natural }
+        guard compactMain, !isDetailRow(control.group) else { return natural }
         return min(natural, ToolbarStyle.compactIconButtonWidth)
     }
 
@@ -106,12 +115,12 @@ enum ToolbarLayout {
     }
 
     /// 工具条尺寸。默认取自然宽；给出屏幕上限时可收起动作文字。
-    /// 有样式行时为两行高度 + 行距，否则单行。
+    /// 有第二栏时为两行高度 + 行距，否则单行。
     static func blockSize(_ context: ToolbarContext, maximumWidth: CGFloat? = nil) -> CGSize {
         let all = controls(context, maximumWidth: maximumWidth)
         guard !all.isEmpty else { return .zero }
-        let main = all.filter { !isStyleRow($0.group) }
-        let style = all.filter { isStyleRow($0.group) }
+        let main = all.filter { !isDetailRow($0.group) }
+        let style = all.filter { isDetailRow($0.group) }
         let compactMain = usesCompactMainSpacing(
             main,
             context: context,
@@ -158,16 +167,16 @@ enum ToolbarLayout {
 
     // MARK: - 落位
 
-    /// 从给定原点（整块左下角）铺开至多两行。无样式时退化为单行。
-    /// 有样式时：上行（main）在 `origin.y + rowHeight + interRowGap`，下行（style）在 `origin.y`。
+    /// 从给定原点（整块左下角）铺开至多两行。无第二栏时退化为单行。
+    /// 有第二栏时：上行（main）在 `origin.y + rowHeight + interRowGap`，下行（detail）在 `origin.y`。
     static func slots(
         origin: CGPoint,
         context: ToolbarContext,
         maximumWidth: CGFloat? = nil
     ) -> [ToolbarSlot] {
         let all = controls(context, maximumWidth: maximumWidth)
-        let main = all.filter { !isStyleRow($0.group) }
-        let style = all.filter { isStyleRow($0.group) }
+        let main = all.filter { !isDetailRow($0.group) }
+        let style = all.filter { isDetailRow($0.group) }
         let compactMain = usesCompactMainSpacing(
             main,
             context: context,
@@ -202,50 +211,47 @@ enum ToolbarLayout {
 
     /// 贴在锚点下方、相对锚点居中 —— 「内容 / 工具条」上下两块。
     ///
-    /// 下方放不下就翻到上方，再放不下就压在锚点内侧：这是屏幕边缘的物理约束，
-    /// 高度与控件集合不变；屏幕过窄时动作保留图标、收起文字。
+    /// **第一栏位置固定**：x 基于第一栏宽度居中，y 选区下方紧贴。
+    /// 第二栏在第一栏远离选区的一侧出现/消失，不影响第一栏位置。
+    /// 下方放不下就翻到上方，再放不下就压在锚点内侧。
     static func slots(in bounds: CGRect, anchor: CGRect, context: ToolbarContext) -> [ToolbarSlot] {
         let maximumWidth = max(0, bounds.width - 8)
-        let size = blockSize(context, maximumWidth: maximumWidth)
-        guard size.width > 0 else { return [] }
-
-        var y = anchor.minY - gap - size.height
-        if y < bounds.minY + 4 { y = anchor.maxY + gap }
-        if y + size.height > bounds.maxY - 4 { y = max(bounds.minY + 4, anchor.minY + gap) }
-
-        let leftLimit = bounds.minX + 4
-        let rightLimit = max(leftLimit, bounds.maxX - size.width - 4)
-        let x = min(max(leftLimit, anchor.midX - size.width / 2), rightLimit)
-
-        // 两行时主行始终最靠近锚点（PixPin：选区旁永远是工具行）。
         let all = controls(context, maximumWidth: maximumWidth)
-        let hasStyle = all.contains { isStyleRow($0.group) && $0.isVisible(context) }
-        if !hasStyle {
-            return slots(
-                origin: CGPoint(x: x, y: y),
-                context: context,
-                maximumWidth: maximumWidth
-            )
-        }
-        let main = all.filter { !isStyleRow($0.group) }
-        let style = all.filter { isStyleRow($0.group) }
-        let compactMain = usesCompactMainSpacing(
-            main,
-            context: context,
-            maximumWidth: maximumWidth
-        )
-        // y < anchor.minY → 贴在选区下方，主行在上；否则贴在上方，主行在下
-        let isBelow = y < anchor.minY
-        let mainY = isBelow ? y + rowHeight + interRowGap : y
-        let styleY = isBelow ? y : y + rowHeight + interRowGap
+        let main = all.filter { !isDetailRow($0.group) }
+        let detail = all.filter { isDetailRow($0.group) }
+        guard !main.isEmpty else { return [] }
+
+        let compactMain = usesCompactMainSpacing(main, context: context, maximumWidth: maximumWidth)
+        let mainW = rowWidth(main, context: context, compactMain: compactMain)
+        guard mainW > 0 else { return [] }
+
+        // 第一栏 x 基于自身宽度居中（不随第二栏变化）
+        let leftLimit = bounds.minX + 4
+        let rightLimit = max(leftLimit, bounds.maxX - mainW - 4)
+        let x = min(max(leftLimit, anchor.midX - mainW / 2), rightLimit)
+
+        // 第一栏 y 固定：选区下方紧贴
+        var mainY = anchor.minY - gap - rowHeight
+        if mainY < bounds.minY + 4 { mainY = anchor.maxY + gap }
+        if mainY + rowHeight > bounds.maxY - 4 { mainY = max(bounds.minY + 4, anchor.minY + gap) }
+
         var result: [ToolbarSlot] = []
-        result += rowSlots(
-            controls: main,
-            at: CGPoint(x: x, y: mainY),
-            context: context,
-            compactMain: compactMain
-        )
-        result += rowSlots(controls: style, at: CGPoint(x: x, y: styleY), context: context)
+        result += rowSlots(controls: main, at: CGPoint(x: x, y: mainY), context: context, compactMain: compactMain)
+
+        // 第二栏在第一栏远离选区的一侧
+        if !detail.isEmpty {
+            let detailW = rowWidth(detail, context: context)
+            let totalW = max(mainW, detailW)
+            let detailX = x + (totalW - detailW) / 2
+            let detailY: CGFloat
+            if mainY < anchor.minY {
+                detailY = mainY - rowHeight - interRowGap
+            } else {
+                detailY = mainY + rowHeight + interRowGap
+            }
+            result += rowSlots(controls: detail, at: CGPoint(x: detailX, y: detailY), context: context)
+        }
+
         return result
     }
 

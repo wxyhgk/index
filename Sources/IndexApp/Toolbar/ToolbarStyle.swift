@@ -13,7 +13,7 @@ enum ToolbarStyle {
     /// 极窄屏仍需保留全部主动作时，只压缩 1pt 点击格并缩短组间距。
     /// 29pt 仍明显大于图标本身，命中区域高度保持 34pt 不变。
     static let compactIconButtonWidth: CGFloat = 29
-    static let swatchWidth: CGFloat = 22
+    static let swatchWidth: CGFloat = 18
     static let separatorWidth: CGFloat = 9
     static let compactSeparatorWidth: CGFloat = 5
 
@@ -67,7 +67,7 @@ enum ToolbarStyle {
         guard
             let base = NSImage(systemSymbolName: name, accessibilityDescription: nil),
             let sized = base.withSymbolConfiguration(
-                NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+                NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
             )
         else { return nil }
 

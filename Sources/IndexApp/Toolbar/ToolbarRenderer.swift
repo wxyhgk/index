@@ -13,9 +13,11 @@ enum ToolbarRenderer {
     ) {
         guard !slots.isEmpty else { return }
 
-        // 两行各自圆角底板（PixPin 双胶囊），行间留 `interRowGap` 缝。
-        for row in ToolbarLayout.rowFrames(of: slots) {
-            let bg = row
+        // 每行独立宽度底板，左边缘对齐。第一栏不随第二栏拉宽。
+        let rows = ToolbarLayout.rowFrames(of: slots)
+        let leftEdge = rows.map { $0.minX }.min() ?? 0
+        for row in rows {
+            let bg = CGRect(x: leftEdge, y: row.minY, width: row.width, height: row.height)
             DS.toolbarBackground.setFill()
             let path = NSBezierPath(roundedRect: bg, xRadius: DS.radiusMedium, yRadius: DS.radiusMedium)
             path.fill()

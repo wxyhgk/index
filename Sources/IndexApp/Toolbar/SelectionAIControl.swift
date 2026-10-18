@@ -7,7 +7,7 @@ struct SelectionAIControl: ToolbarControl {
 
     var id: String { Self.controlID }
     var scopes: Set<ActionScope> { [.capture, .pinned] }
-    var group: ToolbarGroup { .tools }
+    var group: ToolbarGroup { .entry }
     var order: Int { 900 }
 
     func isVisible(_ context: ToolbarContext) -> Bool {

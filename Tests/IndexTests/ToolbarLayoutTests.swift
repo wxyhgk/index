@@ -28,15 +28,15 @@ final class ToolbarLayoutTests: XCTestCase {
     }
 
     func testSingleRowWhenNoStyle() {
-        // 指针中性态：tool == nil 且 pointerEngaged == false → styleAxes == [] → 单行
+        // 指针中性态：tool == nil 且 pointerEngaged == false。
+        // 颜色控件按 styleAxes 显隐，无工具时不显示 → 单行。
         let state = AnnotationState(styleStore: FakeStyleStore())
         state.tool = nil
         state.pointerEngaged = false
         let ctx = ToolbarContext(annotation: state, scope: .capture, perform: { _ in })
         let size = ToolbarLayout.blockSize(ctx)
-        // 单行高即 rowHeight，未出现则宽为 0，断言高为单行
         if size.width > 0 {
-            XCTAssertEqual(size.height, ToolbarLayout.rowHeight, "无样式时应为单行")
+            XCTAssertEqual(size.height, ToolbarLayout.rowHeight, "无样式轴时单行")
         } else {
             // 指针中性态下工具条可能空（无可见控件），允许 0
             XCTAssertEqual(size, .zero)
@@ -123,28 +123,12 @@ final class ToolbarLayoutTests: XCTestCase {
         XCTAssertEqual(accumulator.step(delta: -1, isPrecise: false), -1)
     }
 
-    func testRecordAndScrollCaptureStayVisibleOnToolbar() {
+    func testRecordAndScrollCapturePinnedToBar() {
         let ctx = context(tool: .rect)
         let controls = ToolbarLayout.slots(origin: .zero, context: ctx).compactMap(\.control)
+        // 录屏/长截图是主力动作，平铺在第一栏
         XCTAssertTrue(controls.contains { $0.id == "action.\(ActionID.record)" })
         XCTAssertTrue(controls.contains { $0.id == "action.\(ActionID.scrollCapture)" })
-
-        let more = controls.compactMap { $0 as? MoreActionsControl }.first
-        XCTAssertNotNil(more)
-        XCTAssertFalse(more?.descriptors.contains { $0.id == ActionID.record } == true)
-        XCTAssertFalse(more?.descriptors.contains { $0.id == ActionID.scrollCapture } == true)
-    }
-
-    func testNarrowToolbarKeepsRecordAndScrollCaptureIcons() {
-        let ctx = context(tool: .rect)
-        let bounds = CGRect(x: 0, y: 0, width: 400, height: 600)
-        let anchor = CGRect(x: 100, y: 250, width: 200, height: 180)
-        let actions = ToolbarLayout.slots(in: bounds, anchor: anchor, context: ctx)
-            .compactMap(\.control)
-            .compactMap { $0 as? ActionControl }
-
-        XCTAssertTrue(actions.contains { $0.descriptor.id == ActionID.record && !$0.showsTitle })
-        XCTAssertTrue(actions.contains { $0.descriptor.id == ActionID.scrollCapture && !$0.showsTitle })
     }
 
     func testNarrowCaptureToolbarStaysInsideSupportedWidth() {

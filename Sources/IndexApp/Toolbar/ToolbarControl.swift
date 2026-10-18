@@ -1,12 +1,16 @@
 import AppKit
 
-/// 控件分组。同组的挨在一起，组之间自动插分隔线；
-/// 空间不够时在 `.actions` 之前折行。
+/// 控件分组。同组的挨在一起，组之间自动插分隔线。
+///
+/// 两栏布局：
+/// - **第一栏（main）**：`.entry` + `.actions`
+/// - **第二栏（detail，仅标注模式）**：`.annotation` + `.style` + `.history`
 enum ToolbarGroup: Int, Comparable {
-    case tools = 0
-    case style = 1
-    case history = 2
-    case actions = 3
+    case entry = 0       // 第一栏：标注分组入口 + 放大 + AI 选区
+    case annotation = 1  // 第二栏：标注子工具（矩形/箭头/画笔/文字/马赛克/裁剪/橡皮擦）
+    case style = 2       // 第二栏：样式（形状变体/颜色/线宽/字号）
+    case history = 3     // 第二栏：撤销/重做
+    case actions = 4     // 第一栏：出口动作（复制/保存/录屏/GIF/钉图/更多）
 
     static func < (lhs: ToolbarGroup, rhs: ToolbarGroup) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -125,6 +129,14 @@ protocol ToolbarControl {
     func width(_ context: ToolbarContext) -> CGFloat
     func draw(in frame: CGRect, context: ToolbarContext, state: ToolbarRenderState)
     func activate(_ context: ToolbarContext)
+
+    /// 拖动更新（滑杆类控件用）。`local` 是视图局部坐标，`frame` 是控件视觉区。
+    /// 返回 true 表示消费了这次拖动（宿主跳过 hover 更新）。
+    @discardableResult
+    func drag(_ context: ToolbarContext, local: CGPoint, frame: CGRect) -> Bool
+
+    /// 是否支持拖动交互。true 时宿主在 mouseUp 跳过 activate（拖动已实时调完档位）。
+    var supportsDrag: Bool { get }
 }
 
 extension ToolbarControl {
@@ -134,6 +146,9 @@ extension ToolbarControl {
     func isSelected(_ context: ToolbarContext) -> Bool { false }
     func accessibilityLabel(_ context: ToolbarContext) -> String { id }
     func width(_ context: ToolbarContext) -> CGFloat { ToolbarStyle.iconButtonWidth }
+    @discardableResult
+    func drag(_ context: ToolbarContext, local: CGPoint, frame: CGRect) -> Bool { false }
+    var supportsDrag: Bool { false }
 }
 
 /// 布局算好的一个位置。绘制和命中测试用同一份结果。
