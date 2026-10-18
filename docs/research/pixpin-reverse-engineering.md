@@ -323,3 +323,87 @@ nm /Applications/PixPin.app/Contents/Frameworks/libPix*.dylib | grep " T " | c++
 # 字符串
 strings /Applications/PixPin.app/Contents/MacOS/PixPin | grep -iE "pattern" | sort -u
 ```
+
+---
+
+## 补充：跨显示器截图怎么做的（2026-10-18）
+
+### 结论
+
+PixPin 不是「每块屏一个独立选区」，而是**把整个虚拟桌面当成一张画布**：
+
+1. 枚举所有屏幕，取所有 `geometry` 的并集（`wholeRect`）；
+2. 逐屏抓图，把每屏 pixmap 按 `屏幕原点 - wholeRect 原点` 放进**同一个 QGraphicsScene**；
+3. 只创建一个 `ScreenShotWindow`，窗口 geometry 直接设为 `wholeRect`；
+4. 选区是一个虚拟桌面坐标系里的 `QRect`，所以可以自然跨屏；
+5. 输出时从共享 scene 里按选区裁一张图（`getSceneExportRectPixmap`）。
+
+### 证据
+
+`PixScreenManager`（`libPixScreenManager.dylib`）：
+
+- 符号：`screenList()`、`wholeRect()`、`screenAt(QPoint,bool,bool)`、`size()`；
+- `refresh()` 内调用 `QRect::operator|` 合并各屏 geometry（反汇编 `0x560c`）；
+- 运行日志（本机 4 屏）：
+
+```
+[PixScreenManager::refresh] screenCount= 4 wholeRect= QRect(-720,0 3992x2025)
+    Geometry: QRect(0,0 1920x1080)
+    Geometry: QRect(1920,0 1352x878)
+    Geometry: QRect(-720,0 720x1280)
+    Geometry: QRect(126,1080 1680x945)
+```
+
+单窗口、整张虚拟画布：
+
+- `ScreenShotWindow::ScreenShotWindow(ScreenShotBgLayer*, QWidget*)` 反汇编：
+  `bl PixScreenManager::wholeRect()` → `bl QWidget::setGeometry(QRect const&)`，
+  即窗口几何 = 虚拟桌面并集；
+- `PixPin::initScreenShotWindow` 只构造一次 `ScreenShotWindow`（日志也只有一条
+  `Screenshot window constructed`）；
+- `ScreenShotView::prepareScreenShotBgLayer` 调用一次 `screenList()`，为每屏创建
+  `ScreenPixmapItem`，并 `QGraphicsItem::setPos` 到 `屏幕 geometry - wholeRect 原点`；
+- 每屏抓图在 `ScreenPixmapItem::syncPixmap(PixScreen*)` 内完成，日志按屏串行：
+
+```
+Screen capture started geometry=0,0 1920x1080
+Screen capture finished geometry=0,0 1920x1080 isNull=false
+Screen capture started geometry=1920,0 1352x878
+...
+Screenshot background capture finished
+```
+
+输出：
+
+- `ScreenShotView::getRawPixmap(bool)` 调用
+  `getSceneExportRectPixmap(QGraphicsScene*, ...)`，即按选区从共享 scene 裁剪；
+  跨屏选区只是 scene 上的一个更大的矩形。
+
+### 代价与边界
+
+- 打开截图前要**串行抓完所有屏**：本机 4 屏约 230ms（每屏 50–70ms），窗口之后才显示。
+- `wholeRect` 是**包围盒**，不是屏幕并集：L 形布局里屏幕之间的空档也属于窗口矩形，
+  但不在任何显示器上，用户看不见；输出按选区裁剪时同样只会取到有画面的区域。
+- 混合 DPI 靠 Qt 每屏 pixmap 的 devicePixelRatio 处理；窗口/场景坐标是逻辑点。
+
+### 对 Index 的启示
+
+Index 现在是反过来的：`SelectionOverlayController` 为每块屏建一个 `SelectionModel`，
+`bounds = snapshot.frame`，所有落点/选区都 `intersection(bounds)` 夹在单屏内，
+因此天然不支持跨屏拖拽。
+
+两条可行路线：
+
+**A. 照搬 PixPin：一个跨屏大窗口**
+- 冻结帧拼成一张虚拟画布，一个 borderless window 覆盖 `wholeRect`，一个 selection。
+- 优点：坐标最简单，鼠标天然跨屏。
+- 风险：AppKit 单窗口只有一个 backing scale，混合 DPI 会糊；跨 Space/全屏、
+  4K+竖屏的大窗口合成成本高；与 Index 现有「每屏一张冻结图」架构冲突较大。
+
+**B. 保留每屏 overlay，共享一个虚拟选区（推荐）**
+- 新增 `VirtualSelection`（全局 rect + phase），由 `SelectionOverlayController` 持有；
+- 每屏 `OverlayView` 只负责把全局选区与自己的 `snapshot.frame` 求交并绘制；
+- 鼠标事件先转全局坐标再更新共享选区，不再按单屏 bounds 夹；
+- 输出按屏裁剪 `intersection(globalRect, display.frame)`，再按各屏 scale 拼回一张图；
+- 工具栏锚定在指针所在屏，Esc/确认仍走一个协调器。
+- 这样保留冻结帧、逐屏快照、混合 DPI 与现有 SCK 事务门。
