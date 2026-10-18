@@ -157,13 +157,13 @@ jobs:
         run: |
           if [[ "$PREVIEW" == "true" ]]; then
             cat > release-notes.md <<EOF
-          ## Index $RELEASE_TAG（未签名预览）
+          ## Index ${RELEASE_TAG}（未签名预览）
 
           此附件由 GitHub Actions 构建，**未使用 Developer ID 签名、未公证**。
           适合体验，不代表正式发行。首次打开时可能需要在「系统设置 → 隐私与安全性」
           中允许运行。
 
-          下载 $ARCHIVE，解压后运行其中的 Index.app。
+          下载 ${ARCHIVE}，解压后运行其中的 Index.app。
           EOF
           else
             cat > release-notes.md <<EOF
@@ -173,7 +173,7 @@ jobs:
 
           此附件已使用 Developer ID 签名、公证并 stapled，可直接移动到“应用程序”运行。
 
-          下载 $ARCHIVE，解压后运行其中的 Index.app。
+          下载 ${ARCHIVE}，解压后运行其中的 Index.app。
           EOF
           fi
 
