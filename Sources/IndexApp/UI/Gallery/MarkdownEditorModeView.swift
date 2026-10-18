@@ -18,7 +18,7 @@ struct MarkdownEditorModeView: View {
     @State private var saveError: String?
     @State private var saveTask: Task<Void, Never>?
 
-    init(shot: Shot, store: ShotStore = .shared) {
+    init(shot: Shot, store: ShotStore) {
         self.shot = shot
         self._store = ObservedObject(wrappedValue: store)
         let initialSource = store.markdownSource(for: shot) ?? MarkdownGenerator.generate(for: shot)

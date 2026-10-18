@@ -20,7 +20,7 @@ import SwiftUI
 /// `.thin` / `.ultraThin` 材质上）。
 struct TagSection: View {
     let shot: Shot
-    var store: ShotStore = .shared
+    var store: ShotStore
 
     /// 当前截图的标签，按添加顺序。
     @State private var tags: [String] = []

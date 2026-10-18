@@ -360,8 +360,8 @@ struct GalleryGrid: View {
             else { return }
             beginRename(shot)
         }
-        .sheet(item: $timelineShot) { TimelineSheet(shot: $0) }
-        .sheet(item: $similarShot) { SimilarShotsSheet(shot: $0) }
+        .sheet(item: $timelineShot) { TimelineSheet(shot: $0, store: store) }
+        .sheet(item: $similarShot) { SimilarShotsSheet(shot: $0, store: store) }
         .alert("修改图库名称", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }

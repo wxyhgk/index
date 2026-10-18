@@ -267,9 +267,9 @@ struct GalleryInspectorPanel: View {
     private var content: some View {
         let multi = multiSelectedShots
         if selection.isMultiple {
-            MultiSelectionPane(shots: multi)
+            MultiSelectionPane(shots: multi, store: store)
         } else if let shot = selectedShot ?? multi.first {
-            ShotDetailPane(shot: shot)
+            ShotDetailPane(shot: shot, store: store)
         } else {
             ContentUnavailableView(
                 "未选择截图",

@@ -23,7 +23,7 @@ struct MultiSelectionPane: View {
     @EnvironmentObject private var selection: GallerySelection
     @EnvironmentObject private var batchActivity: GalleryBatchActivity
 
-    init(shots: [Shot], store: ShotStore = .shared) {
+    init(shots: [Shot], store: ShotStore) {
         self.shots = shots
         _store = ObservedObject(wrappedValue: store)
     }

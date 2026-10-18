@@ -21,7 +21,7 @@ struct SimilarShotsSheet: View {
     let shot: Shot
     private let store: ShotStore
 
-    init(shot: Shot, store: ShotStore = .shared) {
+    init(shot: Shot, store: ShotStore) {
         self.shot = shot
         self.store = store
     }
@@ -118,7 +118,7 @@ private struct SimilarShotCard: View {
     let shot: Shot
     private let store: any ShotReading
 
-    init(shot: Shot, store: any ShotReading = ShotStore.shared) {
+    init(shot: Shot, store: any ShotReading) {
         self.shot = shot
         self.store = store
     }

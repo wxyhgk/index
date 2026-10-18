@@ -29,7 +29,7 @@ struct ShotInfoPage: View {
 
     @ObservedObject private var store: ShotStore
 
-    init(shot: Shot, onBack: @escaping () -> Void, store: ShotStore = .shared) {
+    init(shot: Shot, onBack: @escaping () -> Void, store: ShotStore) {
         self.shot = shot
         self.onBack = onBack
         _store = ObservedObject(wrappedValue: store)

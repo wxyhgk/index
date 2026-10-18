@@ -15,7 +15,7 @@ struct TimelineSheet: View {
     let shot: Shot
     @ObservedObject private var store: ShotStore
 
-    init(shot: Shot, store: ShotStore = .shared) {
+    init(shot: Shot, store: ShotStore) {
         self.shot = shot
         self._store = ObservedObject(wrappedValue: store)
     }
@@ -219,7 +219,7 @@ private struct TimelineThumb: View {
     let onTap: () -> Void
     private let store: ShotStore
 
-    init(shot: Shot, role: Role, onTap: @escaping () -> Void, store: ShotStore = .shared) {
+    init(shot: Shot, role: Role, onTap: @escaping () -> Void, store: ShotStore) {
         self.shot = shot
         self.role = role
         self.onTap = onTap
@@ -283,7 +283,7 @@ private struct LargeShotImage: View {
     let shot: Shot
     private let store: ShotStore
 
-    init(shot: Shot, store: ShotStore = .shared) {
+    init(shot: Shot, store: ShotStore) {
         self.shot = shot
         self.store = store
     }
@@ -321,7 +321,7 @@ struct DiffView: View {
     let b: Shot
     @ObservedObject private var store: ShotStore
 
-    init(a: Shot, b: Shot, store: ShotStore = .shared) {
+    init(a: Shot, b: Shot, store: ShotStore) {
         self.a = a
         self.b = b
         self._store = ObservedObject(wrappedValue: store)

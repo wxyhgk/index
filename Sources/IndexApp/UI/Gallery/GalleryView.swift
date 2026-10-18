@@ -91,7 +91,7 @@ struct GalleryView: View {
             if mode.isSettings {
                 settingsMode
             } else if let shot = mode.resolveMarkdownEditingShot() {
-                MarkdownEditorModeView(shot: shot)
+                MarkdownEditorModeView(shot: shot, store: store)
                     .id(shot.id)
             } else if let shot = mode.resolveCodeEditingShot() {
                 CodeEditorModeView(shot: shot)

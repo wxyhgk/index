@@ -38,7 +38,7 @@ struct ShotDetailPane: View {
     @EnvironmentObject private var selection: GallerySelection
     @ObservedObject private var settings: AppSettings
 
-    init(shot: Shot, store: ShotStore = .shared, settings: AppSettings = .shared) {
+    init(shot: Shot, store: ShotStore, settings: AppSettings = .shared) {
         self.shot = shot
         self._store = ObservedObject(wrappedValue: store)
         self._settings = ObservedObject(wrappedValue: settings)
@@ -92,10 +92,10 @@ struct ShotDetailPane: View {
                 customTitleDraft = title ?? ""
             }
             .sheet(isPresented: $showingSimilar) {
-                SimilarShotsSheet(shot: shot)
+                SimilarShotsSheet(shot: shot, store: store)
             }
             .sheet(isPresented: $showingTimeline) {
-                TimelineSheet(shot: shot)
+                TimelineSheet(shot: shot, store: store)
             }
             // 摘要页 ↔ 下钻页是同一块面板换面，走 standard（0.35 利落）；
             // ReduceMotion 下降级成短 easeOut，不是硬切 —— 突变会丢失
@@ -106,7 +106,7 @@ struct ShotDetailPane: View {
     @ViewBuilder
     private var content: some View {
         if showingAllInfo {
-            ShotInfoPage(shot: shot) { showingAllInfo = false }
+            ShotInfoPage(shot: shot, onBack: { showingAllInfo = false }, store: store)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
         } else {
             summary
@@ -124,7 +124,7 @@ struct ShotDetailPane: View {
                     sensitiveBanner
                 }
                 metaList
-                TagSection(shot: shot)
+                TagSection(shot: shot, store: store)
                 Divider()
                 InspectorDrillRow(title: "查看全部信息") { showingAllInfo = true }
             }
