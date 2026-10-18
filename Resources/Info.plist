@@ -2,80 +2,66 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>Index</string>
-    <key>CFBundleDisplayName</key>
-    <string>Index</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.wxyhgk.index</string>
-    <key>CFBundleIconFile</key>
-    <string>Index</string>
-    <key>CFBundleExecutable</key>
-    <string>Index</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
+	<key>CFBundleDisplayName</key>
+	<string>Index</string>
+	<key>CFBundleExecutable</key>
+	<string>Index</string>
+	<key>CFBundleIconFile</key>
+	<string>Index</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.wxyhgk.index</string>
+	<key>CFBundleName</key>
+	<string>Index</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.29</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.wxyhgk.index</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>index</string>
+				<string>macshot</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>31</string>
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.graphics-design</string>
-	<!-- Index 只使用系统 TLS / URLSession，不包含自研或非豁免加密。 -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.graphics-design</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
-    <!-- 菜单栏常驻，不占 Dock -->
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <!-- 本地 AI 模型服务器（vLLM/Ollama/LM Studio）通常只开 http -->
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
-    <!-- 取浏览器当前标签页地址需要 Apple Events 授权 -->
-    <key>NSAppleEventsUsageDescription</key>
-    <string>Index 需要询问浏览器当前页面的网址，以便把它记录到图片的来源信息里。</string>
-    <!-- 录屏可选录麦克风（设置里默认关，首次开启触发此弹窗） -->
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Index 需要使用麦克风，以便在录屏时把你的声音一起录进视频。</string>
-    <!-- index:// 是新品牌入口；macshot:// 为既有自动化与 Edge 连接器保留兼容。 -->
-    <key>CFBundleURLTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleURLName</key>
-            <string>com.wxyhgk.index</string>
-            <key>CFBundleURLSchemes</key>
-            <array>
-                <string>index</string>
-                <string>macshot</string>
-            </array>
-        </dict>
-    </array>
-    <!-- 应用内拖拽用的自定义类型：图库卡片拖到侧边栏标签上时传的是「一串截图 ID」的 JSON，
-         而不是图像本身（图像走同一次拖拽里优先级更高的 public.png 表示）。
-         必须在这里导出声明，UTType(exportedAs:) 才能拿到稳定类型，见 UI/ShotCard.swift。 -->
-    <!-- 这里曾经导出过一个纯应用内的 UTType（com.wxyhgk.index.shot-ids），
-         给「拖截图到侧边栏标签上打标签」用。那批投放目标在简化侧边栏时删掉了，
-         图库拖拽也改成了真实文件 URL，这个类型随之没有任何消费方。 -->
-    <!-- 服务菜单：无输入类型 → 出现在所有 App 的「服务」菜单里。
-         注意：服务注册按签名+路径缓存，改动后可能要 pbs -update 或重新登录才生效。 -->
-    <key>NSServices</key>
-    <array>
-        <dict>
-            <key>NSMenuItem</key>
-            <dict>
-                <key>default</key>
-                <string>用 Index 截图</string>
-            </dict>
-            <key>NSMessage</key>
-            <string>captureService</string>
-            <key>NSPortName</key>
-            <string>Index</string>
-        </dict>
-    </array>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Index 需要询问浏览器当前页面的网址，以便把它记录到图片的来源信息里。</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Index 需要使用麦克风，以便在录屏时把你的声音一起录进视频。</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>用 Index 截图</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>captureService</string>
+			<key>NSPortName</key>
+			<string>Index</string>
+		</dict>
+	</array>
 </dict>
 </plist>
