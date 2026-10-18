@@ -182,7 +182,8 @@ jobs:
               gh release edit "$RELEASE_TAG" --prerelease \
                 --title "Index $RELEASE_TAG" --notes-file release-notes.md
             else
-              gh release edit "$RELEASE_TAG" \
+              # 从预览升级为正式签名包时，必须显式取消 prerelease
+              gh release edit "$RELEASE_TAG" --prerelease=false \
                 --title "Index $RELEASE_TAG" --notes-file release-notes.md
             fi
           else
